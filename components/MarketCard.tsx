@@ -39,8 +39,14 @@ function ExplorerMarketCard({ market }: { market: MarketSummary }) {
         <h3 className="line-clamp-3 flex-1 text-sm font-medium leading-snug text-white">
           {market.question}
         </h3>
-        <span className="shrink-0 rounded-full bg-slate-700 px-2 py-0.5 text-xs font-medium text-slate-400">
-          Polymarket
+        <span
+          className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
+            market.source === "kalshi"
+              ? "bg-teal-900 text-teal-400"
+              : "bg-slate-700 text-slate-400"
+          }`}
+        >
+          {market.source === "kalshi" ? "Kalshi" : "Polymarket"}
         </span>
       </div>
 
@@ -126,18 +132,18 @@ export default function MarketCard({
     >
       <article>
         <div className="mb-3 flex items-start justify-between gap-3">
-          <h3 className="line-clamp-2 text-sm font-medium leading-snug text-white">
+          <h3 className="line-clamp-3 text-sm font-medium leading-snug text-white">
             {market.question}
           </h3>
           <div className="flex shrink-0 gap-1">
             <span
               className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                market.source === "predictit"
-                  ? "bg-purple-900 text-purple-400"
+                market.source === "kalshi"
+                  ? "bg-teal-900 text-teal-400"
                   : "bg-slate-700 text-slate-400"
               }`}
             >
-              {market.source === "predictit" ? "PredictIt" : "Polymarket"}
+              {market.source === "kalshi" ? "Kalshi" : "Polymarket"}
             </span>
             <span
               className={`rounded-full px-2 py-0.5 text-xs font-medium ${

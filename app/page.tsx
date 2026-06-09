@@ -5,7 +5,6 @@ import { useCallback, useEffect, useState } from "react";
 import BeginnerGuide from "@/components/BeginnerGuide";
 import MarketFeed from "@/components/MarketFeed";
 import MarketMovers from "@/components/MarketMovers";
-import PredictItFeed from "@/components/PredictItFeed";
 import TradesFeed from "@/components/TradesFeed";
 import WelcomeBanner from "@/components/WelcomeBanner";
 import WhaleTracker from "@/components/WhaleTracker";
@@ -15,16 +14,18 @@ import { getPortfolio, getPortfolioStats } from "@/lib/portfolio";
 import type { MarketSummary, TradeSummary } from "@/lib/polymarket";
 
 const POLYMARKET_REFRESH_MS = 10_000;
-const PREDICTIT_REFRESH_MS = 120_000;
+const KALSHI_REFRESH_MS = 120_000;
 
 export default function Home() {
   const [pmMarkets, setPmMarkets] = useState<MarketSummary[]>([]);
-  const [predictItMarkets, setPredictItMarkets] = useState<MarketSummary[]>(
-    []
-  );
+  const [kalshiMarkets, setKalshiMarkets] = useState<MarketSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [kalshiLoading, setKalshiLoading] = useState(true);
   const [pmError, setPmError] = useState<string | null>(null);
-  const [predictItError, setPredictItError] = useState<string | null>(null);
+  const [kalshiError, setKalshiError] = useState<string | null>(null);
+  const [kalshiLastUpdated, setKalshiLastUpdated] = useState<Date | null>(
+    null
+  );
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [portfolioTotal, setPortfolioTotal] = useState(1000);
   const [explorerMode, setExplorerModeState] = useState(false);
@@ -69,22 +70,25 @@ export default function Home() {
     }
   }, []);
 
-  const loadPredictIt = useCallback(async () => {
+  const loadKalshi = useCallback(async () => {
     try {
       const res = await fetch("/api/kalshi");
       const data: { markets?: MarketSummary[]; error?: string } =
         await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error ?? "Failed to load PredictIt markets");
+        throw new Error(data.error ?? "Failed to load Kalshi markets");
       }
 
-      setPredictItMarkets(data.markets ?? []);
-      setPredictItError(null);
+      setKalshiMarkets(data.markets ?? []);
+      setKalshiError(null);
+      setKalshiLastUpdated(new Date());
     } catch (err) {
-      setPredictItError(
-        err instanceof Error ? err.message : "PredictIt fetch failed"
+      setKalshiError(
+        err instanceof Error ? err.message : "Kalshi fetch failed"
       );
+    } finally {
+      setKalshiLoading(false);
     }
   }, []);
 
@@ -95,10 +99,10 @@ export default function Home() {
   }, [loadPolymarket]);
 
   useEffect(() => {
-    loadPredictIt();
-    const interval = setInterval(loadPredictIt, PREDICTIT_REFRESH_MS);
+    loadKalshi();
+    const interval = setInterval(loadKalshi, KALSHI_REFRESH_MS);
     return () => clearInterval(interval);
-  }, [loadPredictIt]);
+  }, [loadKalshi]);
 
   useEffect(() => {
     refreshPortfolioTotal();
@@ -197,13 +201,17 @@ export default function Home() {
 
           <section>
             <h2 className="mb-4 text-lg font-semibold text-white">
-              📊 Political Markets · PredictIt
+              📈 Kalshi Markets
             </h2>
-            {predictItError && (
-              <p className="mb-4 text-sm text-amber-400">{predictItError}</p>
-            )}
-            <PredictItFeed
-              markets={predictItMarkets}
+            <MarketFeed
+              markets={kalshiMarkets}
+              loading={kalshiLoading}
+              error={kalshiError}
+              lastUpdated={kalshiLastUpdated}
+              onRetry={() => {
+                setKalshiLoading(true);
+                loadKalshi();
+              }}
               explorerMode={explorerMode}
             />
           </section>

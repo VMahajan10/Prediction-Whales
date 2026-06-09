@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import MarketPriceChart from "@/components/MarketPriceChart";
 import type { MarketSummary, TradeSummary } from "@/lib/polymarket";
 import { formatVolumeUsd } from "@/lib/polymarket";
 import {
@@ -25,6 +26,39 @@ import {
 } from "@/lib/tradeDetail";
 
 const NEARBY_MIN_SIZE = 50;
+
+function getTradeDirectionInsight(
+  delta: number,
+  side: "BUY" | "SELL"
+): { text: string; className: string } | null {
+  const direction = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
+  if (direction === "flat") return null;
+  if (direction === "up" && side === "BUY") {
+    return {
+      text: "📈 Price moved in the trader's favor since this trade",
+      className: "text-green-400",
+    };
+  }
+  if (direction === "down" && side === "BUY") {
+    return {
+      text: "📉 Price moved against the trader since this trade",
+      className: "text-red-400",
+    };
+  }
+  if (direction === "up" && side === "SELL") {
+    return {
+      text: "📉 Price rose after they sold — they may have sold too early",
+      className: "text-yellow-400",
+    };
+  }
+  if (direction === "down" && side === "SELL") {
+    return {
+      text: "📈 Price fell after they sold — the sell looks correct",
+      className: "text-green-400",
+    };
+  }
+  return null;
+}
 
 function SizeBar({ filled }: { filled: number }) {
   return (
@@ -53,6 +87,7 @@ export default function TradeDetailPage() {
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [showAllNearby, setShowAllNearby] = useState(false);
+  const [currentProbability, setCurrentProbability] = useState(0);
 
   const loadTrade = useCallback(async () => {
     if (!hash) return;
@@ -82,9 +117,11 @@ export default function TradeDetailPage() {
         ...(piData.markets ?? []),
       ];
 
+      const market = findMarketForTrade(found, allMarkets);
       setTrade(found);
       setRelatedTrades(findRelatedTrades(trades, found));
-      setMatchedMarket(findMarketForTrade(found, allMarkets));
+      setMatchedMarket(market);
+      setCurrentProbability(market?.probability ?? found.price);
       setNotFound(false);
     } catch {
       setNotFound(true);
@@ -97,6 +134,30 @@ export default function TradeDetailPage() {
     setLoading(true);
     loadTrade();
   }, [loadTrade]);
+
+  useEffect(() => {
+    if (!trade?.title) return;
+
+    const fetchCurrentPrice = async () => {
+      try {
+        const res = await fetch("/api/markets");
+        const data: { markets?: MarketSummary[] } = await res.json();
+        const needle = trade.title.toLowerCase().slice(0, 20);
+        const matched = data.markets?.find((m) =>
+          m.question?.toLowerCase().includes(needle)
+        );
+        if (matched) {
+          setCurrentProbability(matched.probability);
+        }
+      } catch {
+        // Keep last known probability on failure
+      }
+    };
+
+    fetchCurrentPrice();
+    const interval = setInterval(fetchCurrentPrice, 10000);
+    return () => clearInterval(interval);
+  }, [trade?.title]);
 
   const filteredNearby = useMemo(() => {
     return relatedTrades
@@ -146,13 +207,24 @@ export default function TradeDetailPage() {
   const quickTake = getQuickTake(trade);
 
   const tradePricePct = price * 100;
-  const currentProbPct = matchedMarket
-    ? matchedMarket.probability * 100
-    : null;
-  const delta =
-    currentProbPct != null ? currentProbPct - tradePricePct : 0;
+  const currentProbPct = currentProbability * 100;
+  const delta = currentProbPct - tradePricePct;
   const priceMovedInFavor =
     trade.side === "BUY" ? delta > 0 : delta < 0;
+  const directionInsight = getTradeDirectionInsight(delta, trade.side);
+  const tokenId =
+    matchedMarket?.source === "polymarket" &&
+    matchedMarket.clobTokenIds[0]
+      ? matchedMarket.clobTokenIds[0]
+      : null;
+
+  const liveShares = price > 0 ? size / price : 0;
+  const liveValue =
+    trade.side === "BUY"
+      ? liveShares * currentProbability
+      : size;
+  const livePnl =
+    trade.side === "BUY" ? liveValue - size : size - liveShares * currentProbability;
 
   return (
     <main className="mx-auto min-h-screen max-w-4xl px-4 py-8 sm:px-6">
@@ -278,6 +350,89 @@ export default function TradeDetailPage() {
                 <li>They&apos;re freeing up cash for another trade</li>
               </ul>
             </>
+          )}
+        </div>
+      </section>
+
+      {/* LIVE PRICE CHART */}
+      <section className="mb-6 rounded-xl bg-slate-800 p-6">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-white">
+            📈 Live Price Chart
+          </h2>
+          <span className="text-xs text-slate-400">
+            Market probability over time
+          </span>
+        </div>
+
+        <p className="mb-4 text-sm text-slate-300">
+          Current market probability:{" "}
+          <strong className="text-white">{currentProbPct.toFixed(1)}%</strong>
+          {" "}(was <strong className="text-white">{tradePricePct.toFixed(1)}%</strong>{" "}
+          when this trade was placed)
+        </p>
+
+        {tokenId ? (
+          <MarketPriceChart
+            tokenId={tokenId}
+            currentPrice={currentProbability}
+            marketQuestion={trade.title}
+          />
+        ) : (
+          <div className="py-8 text-center text-sm text-slate-500">
+            Chart unavailable — market data not found
+          </div>
+        )}
+
+        <div className="mt-6 space-y-3">
+          <div>
+            <div className="mb-1 flex justify-between text-xs text-slate-400">
+              <span>When trade was placed</span>
+              <span>{tradePricePct.toFixed(1)}%</span>
+            </div>
+            <div className="h-3 overflow-hidden rounded-full bg-slate-700">
+              <div
+                className="h-full rounded-full bg-slate-500"
+                style={{ width: `${Math.min(100, tradePricePct)}%` }}
+              />
+            </div>
+          </div>
+          <div>
+            <div className="mb-1 flex justify-between text-xs text-slate-400">
+              <span>Current probability</span>
+              <span>{currentProbPct.toFixed(1)}%</span>
+            </div>
+            <div className="h-3 overflow-hidden rounded-full bg-slate-700">
+              <div
+                className="h-full rounded-full bg-pulse-accent"
+                style={{ width: `${Math.min(100, currentProbPct)}%` }}
+              />
+            </div>
+          </div>
+          <p
+            className={`text-sm font-medium ${
+              delta > 0
+                ? "text-green-400"
+                : delta < 0
+                  ? "text-red-400"
+                  : "text-slate-400"
+            }`}
+          >
+            {delta > 0 ? "↑" : delta < 0 ? "↓" : "—"}{" "}
+            {delta > 0 ? "+" : ""}
+            {delta.toFixed(1)}% since this trade
+          </p>
+          {directionInsight && (
+            <p className={`text-sm ${directionInsight.className}`}>
+              {directionInsight.text}
+            </p>
+          )}
+          {trade.side === "BUY" && (
+            <p className="text-xs text-slate-500">
+              Estimated position value now: ${liveValue.toFixed(2)} (
+              {livePnl >= 0 ? "+" : ""}
+              ${livePnl.toFixed(2)} vs entry)
+            </p>
           )}
         </div>
       </section>
@@ -440,9 +595,9 @@ export default function TradeDetailPage() {
               <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
                 <span className="text-slate-400">
                   Was {tradePricePct.toFixed(1)}% when traded → Now{" "}
-                  {currentProbPct?.toFixed(1)}%
+                  {currentProbPct.toFixed(1)}%
                 </span>
-                {currentProbPct != null && Math.abs(delta) >= 0.5 && (
+                {Math.abs(delta) >= 0.5 && (
                   <span
                     className={
                       priceMovedInFavor ? "text-pulse-yes" : "text-red-400"
@@ -457,7 +612,7 @@ export default function TradeDetailPage() {
                 <div>
                   <p className="text-xs text-pulse-muted">Probability</p>
                   <p className="font-semibold text-pulse-accent">
-                    {(matchedMarket.probability * 100).toFixed(1)}%
+                    {currentProbPct.toFixed(1)}%
                   </p>
                 </div>
                 <div>
@@ -482,9 +637,12 @@ export default function TradeDetailPage() {
                 View full market →
               </Link>
             </div>
-            {currentProbPct != null && (
-              <p className="mt-4 text-sm text-slate-400">
-                {getPriceMovementMessage(delta, trade.side)}
+            <p className="mt-4 text-sm text-slate-400">
+              {getPriceMovementMessage(delta, trade.side)}
+            </p>
+            {directionInsight && (
+              <p className={`mt-2 text-sm ${directionInsight.className}`}>
+                {directionInsight.text}
               </p>
             )}
           </>

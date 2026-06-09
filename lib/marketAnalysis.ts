@@ -51,7 +51,7 @@ function getSpreadInsight(spread: number): string {
 }
 
 function getVolumeInsight(market: Market): string {
-  if (market.source === "predictit" || market.volume === 0) {
+  if (market.volume === 0) {
     return "";
   }
 
@@ -104,12 +104,6 @@ function getVerdict(probability: number, spread: number): string {
 }
 
 function getConfidence(market: Market, spread: number): AnalysisResult["confidence"] {
-  if (market.source === "predictit") {
-    if (spread < 2) return "High";
-    if (spread > 10) return "Low";
-    return "Medium";
-  }
-
   const { volume } = market;
   if (spread < 2 && volume > 100_000) return "High";
   if (spread > 10 || volume < 1_000) return "Low";

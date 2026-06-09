@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { fetchMarkets } from "@/lib/polymarket";
-import { fetchPredictItMarkets } from "@/lib/predictit";
+import { fetchMarkets, type MarketSummary } from "@/lib/polymarket";
 import {
   buildMarketContext,
   findMarketForTrade,
@@ -8,6 +7,23 @@ import {
   findTradeByHash,
 } from "@/lib/whaleProfile";
 import type { TradeSummary } from "@/lib/polymarket";
+
+async function fetchKalshiMarkets(): Promise<MarketSummary[]> {
+  try {
+    const base =
+      process.env.VERCEL_URL != null
+        ? `https://${process.env.VERCEL_URL}`
+        : "http://localhost:3000";
+    const res = await fetch(`${base}/api/kalshi`, {
+      next: { revalidate: 60 },
+    });
+    if (!res.ok) return [];
+    const data: { markets?: MarketSummary[] } = await res.json();
+    return data.markets ?? [];
+  } catch {
+    return [];
+  }
+}
 
 async function fetchAllTrades(): Promise<TradeSummary[]> {
   const res = await fetch("https://data-api.polymarket.com/trades?limit=200", {
@@ -63,15 +79,15 @@ export async function GET(request: Request) {
       );
     }
 
-    const [trades, pmMarkets, piMarkets] = await Promise.all([
+    const [trades, pmMarkets, kalshiMarkets] = await Promise.all([
       fetchAllTrades(),
       fetchMarkets().catch(() => []),
-      fetchPredictItMarkets().catch(() => []),
+      fetchKalshiMarkets(),
     ]);
 
     const trade = findTradeByHash(trades, hash);
     const relatedTrades = trade ? findRelatedTrades(trades, trade) : [];
-    const allMarkets = [...pmMarkets, ...piMarkets];
+    const allMarkets = [...pmMarkets, ...kalshiMarkets];
     const matchedMarket = trade ? findMarketForTrade(trade, allMarkets) : null;
     const marketContext = trade
       ? buildMarketContext(trade, matchedMarket)

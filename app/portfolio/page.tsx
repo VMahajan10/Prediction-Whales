@@ -247,8 +247,8 @@ export default function PortfolioPage() {
                         {position.question}
                       </h3>
                       <p className="mb-4 text-xs text-slate-400">
-                        {position.source === "predictit"
-                          ? "PredictIt"
+                        {position.source === "kalshi"
+                          ? "Kalshi"
                           : "Polymarket"}
                       </p>
                       <p className="mb-3 text-sm text-slate-300">
@@ -330,14 +330,12 @@ export default function PortfolioPage() {
                             </Link>
                             <span
                               className={`ml-2 rounded-full px-1.5 py-0.5 text-xs ${
-                                position.source === "predictit"
-                                  ? "bg-purple-900 text-purple-400"
+                                position.source === "kalshi"
+                                  ? "bg-teal-900 text-teal-400"
                                   : "bg-slate-700 text-slate-400"
                               }`}
                             >
-                              {position.source === "predictit"
-                                ? "PredictIt"
-                                : "PM"}
+                              {position.source === "kalshi" ? "Kalshi" : "PM"}
                             </span>
                           </td>
                           <td className="px-4 py-3">

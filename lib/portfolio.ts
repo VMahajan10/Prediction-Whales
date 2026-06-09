@@ -7,7 +7,7 @@ export interface Position {
   id: string;
   marketId: string;
   question: string;
-  source: "polymarket" | "predictit";
+  source: "polymarket" | "kalshi";
   side: "YES" | "NO";
   shares: number;
   entryPrice: number;

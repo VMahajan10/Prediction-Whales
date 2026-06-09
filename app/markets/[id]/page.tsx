@@ -116,16 +116,16 @@ export default function MarketDetailPage() {
 
   const loadMarket = useCallback(async () => {
     try {
-      const [pmRes, piRes] = await Promise.all([
+      const [pmRes, kalshiRes] = await Promise.all([
         fetch("/api/markets"),
         fetch("/api/kalshi"),
       ]);
 
       const pmData: { markets?: Market[] } = await pmRes.json();
-      const piData: { markets?: Market[] } = await piRes.json();
+      const kalshiData: { markets?: Market[] } = await kalshiRes.json();
 
       const found =
-        [...(pmData.markets ?? []), ...(piData.markets ?? [])].find(
+        [...(pmData.markets ?? []), ...(kalshiData.markets ?? [])].find(
           (m) => m.id === id
         ) ?? null;
 
@@ -238,6 +238,7 @@ export default function MarketDetailPage() {
   }
 
   const isPolymarket = market.source === "polymarket";
+  const isKalshi = market.source === "kalshi";
   const prob = market.probability;
   const probDisplay = formatProbDisplay(prob);
   const noProbDisplay = formatProbDisplay(1 - prob);
@@ -282,12 +283,12 @@ export default function MarketDetailPage() {
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <span
               className={`rounded-full px-3 py-1 text-xs font-medium ${
-                isPolymarket
-                  ? "bg-slate-700 text-slate-400"
-                  : "bg-purple-900 text-purple-400"
+                isKalshi
+                  ? "bg-teal-900 text-teal-400"
+                  : "bg-slate-700 text-slate-400"
               }`}
             >
-              {isPolymarket ? "Polymarket" : "PredictIt"}
+              {isKalshi ? "Kalshi" : "Polymarket"}
             </span>
           </div>
           <h1 className="text-2xl font-bold leading-snug text-white sm:text-3xl">
@@ -523,12 +524,12 @@ export default function MarketDetailPage() {
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <span
             className={`rounded-full px-3 py-1 text-xs font-medium ${
-              isPolymarket
-                ? "bg-slate-700 text-slate-400"
-                : "bg-purple-900 text-purple-400"
+              isKalshi
+                ? "bg-teal-900 text-teal-400"
+                : "bg-slate-700 text-slate-400"
             }`}
           >
-            {isPolymarket ? "Polymarket" : "PredictIt"}
+            {isKalshi ? "Kalshi" : "Polymarket"}
           </span>
           <span
             className={`rounded-full px-3 py-1 text-xs font-medium ${
@@ -555,7 +556,9 @@ export default function MarketDetailPage() {
           <div>
             <p className="text-xs text-pulse-muted">Volume</p>
             <p className="text-lg font-semibold text-white">
-              {isPolymarket ? formatVolumeUsd(market.volume) : "N/A"}
+              {isPolymarket || isKalshi
+                ? formatVolumeUsd(market.volume)
+                : "N/A"}
             </p>
           </div>
           <div>
@@ -782,17 +785,20 @@ export default function MarketDetailPage() {
                 >
                   View on Polymarket →
                 </a>
-              ) : market.url ? (
+              ) : isKalshi ? (
                 <a
-                  href={market.url}
+                  href={
+                    market.url ??
+                    `https://kalshi.com/markets/${market.id}`
+                  }
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-pulse-accent hover:underline"
                 >
-                  View on PredictIt →
+                  View on Kalshi →
                 </a>
               ) : (
-                <span className="text-white">PredictIt</span>
+                <span className="text-white">{market.source}</span>
               )}
             </dd>
           </div>

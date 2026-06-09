@@ -41,7 +41,7 @@ export interface MarketSummary {
   spread: number | null;
   active: boolean;
   clobTokenIds: string[];
-  source: "polymarket" | "predictit";
+  source: "polymarket" | "kalshi";
   rawContracts?: Contract[];
   url?: string;
 }
