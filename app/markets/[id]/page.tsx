@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import GlossaryTooltip from "@/components/GlossaryTooltip";
-import PriceHistoryChart from "@/components/PriceHistoryChart";
+import KalshiPriceTracker from "@/components/KalshiPriceTracker";
+import MarketPriceChart from "@/components/MarketPriceChart";
 import Toast from "@/components/Toast";
 import {
   getBeginnerAdvice,
@@ -27,6 +28,30 @@ import {
 function formatProbDisplay(probability: number): string {
   const pct = probability * 100;
   return pct % 1 === 0 ? pct.toFixed(0) : pct.toFixed(1);
+}
+
+function getImpliedChance(p: number): string {
+  if (p <= 0) return "—";
+  if (p > 0.9) return "9 in 10";
+  if (p > 0.8) return "4 in 5";
+  if (p > 0.75) return "3 in 4";
+  if (p > 0.65) return "2 in 3";
+  if (p > 0.55) return "~1 in 2";
+  if (p > 0.45) return "~1 in 2";
+  if (p > 0.33) return "1 in 3";
+  if (p > 0.25) return "1 in 4";
+  if (p > 0.2) return "1 in 5";
+  if (p > 0.1) return "1 in 10";
+  return `1 in ${Math.round(1 / p)}`;
+}
+
+function getMarketSentiment(p: number): {
+  label: string;
+  className: string;
+} {
+  if (p > 0.6) return { label: "🐂 Bullish", className: "text-green-400" };
+  if (p < 0.4) return { label: "🐻 Bearish", className: "text-red-400" };
+  return { label: "😐 Neutral", className: "text-slate-400" };
 }
 
 function formatContractPct(bestBuyYesCost: number): string {
@@ -101,6 +126,7 @@ export default function MarketDetailPage() {
     visible: boolean;
   }>({ message: "", type: "success", visible: false });
   const [explorerMode, setExplorerMode] = useState(false);
+  const [liveProbability, setLiveProbability] = useState(0);
 
   useEffect(() => {
     setExplorerMode(getExplorerMode());
@@ -134,6 +160,7 @@ export default function MarketDetailPage() {
         setMarket(null);
       } else {
         setMarket(found);
+        setLiveProbability(found.probability);
         setNotFound(false);
       }
     } catch {
@@ -162,9 +189,25 @@ export default function MarketDetailPage() {
   }, [loadMarket]);
 
   useEffect(() => {
-    const interval = setInterval(loadMarket, 10_000);
+    if (!market) return;
+
+    const refresh = async () => {
+      try {
+        const endpoint =
+          market.source === "kalshi" ? "/api/kalshi" : "/api/markets";
+        const res = await fetch(endpoint);
+        const data: { markets?: Market[] } = await res.json();
+        const updated = data.markets?.find((m) => m.id === market.id);
+        if (updated) setLiveProbability(updated.probability);
+      } catch {
+        // Keep last known probability on failure
+      }
+    };
+
+    refresh();
+    const interval = setInterval(refresh, 10000);
     return () => clearInterval(interval);
-  }, [loadMarket]);
+  }, [market]);
 
   useEffect(() => {
     if (market?.source === "polymarket") {
@@ -185,7 +228,7 @@ export default function MarketDetailPage() {
   function handleBuy(side: "YES" | "NO") {
     if (!market) return;
     const amount = Math.min(dollarAmount, cash);
-    const result = buyPosition(market, side, amount, market.probability);
+    const result = buyPosition(market, side, amount, liveProbability);
     if (result.success) {
       setToast({
         message: "✓ Position opened!",
@@ -204,7 +247,7 @@ export default function MarketDetailPage() {
 
   function handleClosePosition() {
     if (!market || !openPosition) return;
-    closePosition(openPosition.id, market.probability);
+    closePosition(openPosition.id, liveProbability);
     setToast({
       message: "✓ Position closed!",
       type: "success",
@@ -214,8 +257,11 @@ export default function MarketDetailPage() {
   }
 
   const analysis = useMemo(
-    () => (market ? generateAnalysis(market) : null),
-    [market]
+    () =>
+      market
+        ? generateAnalysis({ ...market, probability: liveProbability })
+        : null,
+    [market, liveProbability]
   );
 
   if (loading) {
@@ -239,7 +285,8 @@ export default function MarketDetailPage() {
 
   const isPolymarket = market.source === "polymarket";
   const isKalshi = market.source === "kalshi";
-  const prob = market.probability;
+  const prob = liveProbability;
+  const sentiment = getMarketSentiment(prob);
   const probDisplay = formatProbDisplay(prob);
   const noProbDisplay = formatProbDisplay(1 - prob);
   const amount = Math.min(Math.max(1, dollarAmount), cash);
@@ -549,9 +596,14 @@ export default function MarketDetailPage() {
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <div>
             <p className="text-xs text-pulse-muted">Probability</p>
-            <p className="text-lg font-semibold text-pulse-accent">
-              {formatProbDisplay(market.probability)}%
-            </p>
+            <div className="flex items-baseline gap-2">
+              <span className="text-2xl font-bold text-blue-400">
+                {formatProbDisplay(prob)}%
+              </span>
+              <span className="animate-pulse text-xs text-green-400">
+                ● LIVE
+              </span>
+            </div>
           </div>
           <div>
             <p className="text-xs text-pulse-muted">Volume</p>
@@ -576,15 +628,69 @@ export default function MarketDetailPage() {
         </div>
       </header>
 
-      {/* CHART */}
-      <section className="mb-8 rounded-xl border border-pulse-border bg-pulse-card/40 p-6">
-        <h2 className="mb-4 text-lg font-semibold text-white">
-          {isPolymarket ? "Price History (1h)" : "Outcome Distribution"}
-        </h2>
-        {isPolymarket && market.clobTokenIds[0] ? (
-          <PriceHistoryChart tokenId={market.clobTokenIds[0]} />
+      {/* PRICE AT A GLANCE */}
+      <section className="mb-6 grid gap-4 sm:grid-cols-3">
+        <div className="rounded-xl border border-slate-700 bg-slate-800 p-4">
+          <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-500">
+            Current Odds
+          </p>
+          <p className="text-xl font-bold text-white">
+            {(prob * 100).toFixed(1)}¢
+          </p>
+          <p className="mt-1 text-xs text-slate-500">per share</p>
+        </div>
+        <div className="rounded-xl border border-slate-700 bg-slate-800 p-4">
+          <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-500">
+            Implied Chance
+          </p>
+          <p className="text-xl font-bold text-white">
+            {getImpliedChance(prob)}
+          </p>
+          <p className="mt-1 text-xs text-slate-500">chance of YES</p>
+        </div>
+        <div className="rounded-xl border border-slate-700 bg-slate-800 p-4">
+          <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-500">
+            Market Sentiment
+          </p>
+          <p className={`text-xl font-bold ${sentiment.className}`}>
+            {sentiment.label}
+          </p>
+        </div>
+      </section>
+
+      {/* LIVE PRICE CHART */}
+      <section className="mb-6 rounded-xl bg-slate-800 p-6">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-white">
+            📈 Live Price Chart
+          </h2>
+          <div className="flex items-center gap-2">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
+            </span>
+            <span className="text-xs text-green-400">Live</span>
+            <span className="ml-2 text-xs text-slate-400">
+              Updates every 10s
+            </span>
+          </div>
+        </div>
+
+        {market.source === "polymarket" && market.clobTokenIds?.[0] ? (
+          <MarketPriceChart
+            tokenId={market.clobTokenIds[0]}
+            currentPrice={liveProbability}
+            marketQuestion={market.question}
+            refreshInterval={10000}
+          />
+        ) : market.source === "kalshi" ? (
+          <KalshiPriceTracker
+            market={{ ...market, probability: liveProbability }}
+          />
         ) : (
-          <OutcomeDistributionLarge market={market} />
+          <div className="py-8 text-center text-sm text-slate-500">
+            Price history not available for this market
+          </div>
         )}
       </section>
 
