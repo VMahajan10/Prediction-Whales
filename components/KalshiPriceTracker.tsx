@@ -92,33 +92,82 @@ export default function KalshiPriceTracker({ market }: KalshiPriceTrackerProps) 
   }, []);
 
   useEffect(() => {
-    const poll = async () => {
+    const loadHistory = async () => {
       try {
-        const res = await fetch("/api/kalshi");
-        const data: { markets?: Market[] } = await res.json();
-        const updated = data.markets?.find((m) => m.id === market.id);
-        if (!updated) return;
+        const res = await fetch(
+          `/api/kalshi-history?ticker=${encodeURIComponent(market.id)}`
+        );
+        const data: { history?: HistoryPoint[] } = await res.json();
 
-        setCurrentPrice(updated.probability);
-        setLastUpdated(new Date());
+        if (data.history && data.history.length > 0) {
+          setLiveHistory(data.history);
+          setCurrentPrice(data.history[data.history.length - 1].p);
+        } else {
+          setLiveHistory([
+            {
+              t: Math.floor(Date.now() / 1000),
+              p: market.probability,
+            },
+          ]);
+        }
+      } catch {
+        setLiveHistory([
+          {
+            t: Math.floor(Date.now() / 1000),
+            p: market.probability,
+          },
+        ]);
+      }
+    };
+
+    loadHistory();
+  }, [market.id, market.probability]);
+
+  useEffect(() => {
+    let lastKnownPrice = market.probability;
+
+    const refresh = async () => {
+      try {
+        const res = await fetch(
+          `/api/kalshi-history?ticker=${encodeURIComponent(market.id)}`
+        );
+        const data: { history?: HistoryPoint[] } = await res.json();
+
         setLiveHistory((prev) => {
-          const last = prev[prev.length - 1];
-          if (last && last.p === updated.probability) return prev;
-          const now = Math.floor(Date.now() / 1000);
-          if (last?.t === now) {
-            return [...prev.slice(0, -1), { t: now, p: updated.probability }];
+          if (data.history && data.history.length > prev.length) {
+            return data.history;
           }
-          return [...prev, { t: now, p: updated.probability }];
+          return prev;
         });
+
+        const mRes = await fetch("/api/kalshi");
+        const mData: { markets?: Market[] } = await mRes.json();
+        const updated = mData.markets?.find((m) => m.id === market.id);
+
+        if (updated) {
+          setCurrentPrice(updated.probability);
+          setLastUpdated(new Date());
+
+          if (Math.abs(updated.probability - lastKnownPrice) > 0.001) {
+            lastKnownPrice = updated.probability;
+            const hRes = await fetch(
+              `/api/kalshi-history?ticker=${encodeURIComponent(market.id)}`
+            );
+            const hData: { history?: HistoryPoint[] } = await hRes.json();
+            if (hData.history) {
+              setLiveHistory(hData.history);
+            }
+          }
+        }
       } catch {
         // Keep session history on failure
       }
     };
 
-    poll();
-    const interval = setInterval(poll, REFRESH_MS);
+    refresh();
+    const interval = setInterval(refresh, REFRESH_MS);
     return () => clearInterval(interval);
-  }, [market.id]);
+  }, [market.id, market.probability]);
 
   useEffect(() => {
     const timer = setInterval(() => {

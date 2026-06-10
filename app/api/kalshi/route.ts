@@ -1,8 +1,9 @@
 import { KalshiClient } from "@kalshi/sdk";
+import { recordPrices } from "@/lib/kalshiPriceStore";
 import { NextResponse } from "next/server";
 
 let cache: { data: { markets: unknown[] }; timestamp: number } | null = null;
-const CACHE_TTL = 60000; // 1 minute
+const CACHE_TTL = 10000; // 10 seconds
 
 const cleanTitle = (title: string): string => {
   if (!title) return title;
@@ -19,6 +20,7 @@ export async function GET() {
   try {
     const now = Date.now();
     if (cache && now - cache.timestamp < CACHE_TTL) {
+      await recordPrices(cache.data.markets as { id: string; probability: number }[]);
       return NextResponse.json(cache.data);
     }
 
@@ -102,6 +104,8 @@ export async function GET() {
         source: "kalshi" as const,
         rawContracts: [],
       }));
+
+    await recordPrices(simple);
 
     const response = { markets: simple };
     cache = { data: response, timestamp: now };
