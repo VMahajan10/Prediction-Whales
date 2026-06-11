@@ -14,7 +14,7 @@ import {
 } from "@/lib/explorer";
 import { generateAnalysis } from "@/lib/marketAnalysis";
 import type { Market, TradeSummary } from "@/lib/polymarket";
-import { formatVolumeUsd } from "@/lib/polymarket";
+import { formatVolumeUsd, toPolymarketSlug } from "@/lib/polymarket";
 import {
   buyPosition,
   closePosition,
@@ -883,14 +883,24 @@ export default function MarketDetailPage() {
             <dt className="text-pulse-muted">Source Platform</dt>
             <dd>
               {isPolymarket ? (
-                <a
-                  href={`https://polymarket.com/event/${market.conditionId}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-pulse-accent hover:underline"
-                >
-                  View on Polymarket →
-                </a>
+                <div className="space-y-2">
+                  <a
+                    href={`https://polymarket.com/event/${toPolymarketSlug(market.question)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-pulse-accent hover:underline"
+                  >
+                    View on Polymarket →
+                  </a>
+                  <a
+                    href={`https://polymarket.com/markets?q=${encodeURIComponent(market.question)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block text-sm text-slate-400 hover:text-pulse-accent hover:underline"
+                  >
+                    Search on Polymarket
+                  </a>
+                </div>
               ) : isKalshi ? (
                 <a
                   href={

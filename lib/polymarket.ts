@@ -48,6 +48,16 @@ export interface MarketSummary {
 
 export type Market = MarketSummary;
 
+export function toPolymarketSlug(question: string): string {
+  return question
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 100);
+}
+
 /** Raw trade from Data API */
 export interface DataTrade {
   proxyWallet: string;

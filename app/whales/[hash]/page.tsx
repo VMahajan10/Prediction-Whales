@@ -3,15 +3,24 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { trackCopyTap } from "@/lib/copyTracking";
 import {
   findMarketForTrade,
   findRelatedTrades,
   findTradeByHash,
-  scoreWhale,
   truncateTxHash,
 } from "@/lib/whaleProfile";
+import {
+  calculateCopyVerdict,
+  getDirectionSignal,
+  getLiquiditySignal,
+  getPriceSignal,
+  getSizeSignal,
+  getTimingSignal,
+  VERDICT_BADGE_CLASSES,
+  type WhaleSignal,
+} from "@/lib/whaleSignals";
 import type { MarketSummary, TradeSummary } from "@/lib/polymarket";
-import { formatVolumeUsd } from "@/lib/polymarket";
 import { getFullDate, getTimeAgo, getUtcString } from "@/lib/time";
 
 interface WhaleProfileResponse {
@@ -52,45 +61,26 @@ function getOddsComparison(prob: number): string {
   return "Rolling anything but a 1 on a dice";
 }
 
-function getResearchAdvice(title: string): string {
-  const t = title.toLowerCase();
+const formatVol = (v: number): string => {
+  if (v >= 1000000) return `$${(v / 1000000).toFixed(1)}M`;
+  if (v >= 1000) return `$${(v / 1000).toFixed(0)}k`;
+  return `$${v.toFixed(0)}`;
+};
 
-  if (t.includes("bitcoin") || t.includes("crypto") || t.includes("ethereum")) {
-    return "Check recent Bitcoin price action and macro news.";
-  }
-  if (t.includes("election") || t.includes("president") || t.includes("vote")) {
-    return "Look up recent polls for this election.";
-  }
+function findMarketLoose(
+  tradeTitle: string,
+  markets: MarketSummary[]
+): MarketSummary | null {
+  const t = tradeTitle.toLowerCase();
+  const words = t.split(" ").filter((w) => w.length > 4);
+  if (words.length === 0) return null;
 
-  const countries = [
-    "peru",
-    "france",
-    "spain",
-    "brazil",
-    "mexico",
-    "ukraine",
-    "israel",
-    "china",
-    "india",
-    "germany",
-    "uk",
-    "canada",
-  ];
-  for (const country of countries) {
-    if (t.includes(country)) {
-      const name = country.charAt(0).toUpperCase() + country.slice(1);
-      return `Research ${name}'s political situation and recent news.`;
-    }
-  }
-
-  const nameMatch = title.match(
-    /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b/
+  return (
+    markets.find((m) => {
+      const q = m.question?.toLowerCase() ?? "";
+      return words.some((w) => q.includes(w));
+    }) ?? null
   );
-  if (nameMatch) {
-    return `Research ${nameMatch[1]}'s recent performance and injury status.`;
-  }
-
-  return "Research the specific event and form your own view.";
 }
 
 function getTopPercentTier(size: number): string {
@@ -198,6 +188,9 @@ export default function WhaleProfilePage() {
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [showAllNearby, setShowAllNearby] = useState(false);
+  const [currentProbability, setCurrentProbability] = useState<number | null>(
+    null
+  );
 
   const loadProfile = useCallback(async () => {
     if (!hash) return;
@@ -236,11 +229,13 @@ export default function WhaleProfilePage() {
         nearby.length > 0 ? nearby : profileData.relatedTrades
       );
 
+      const pmMarkets = pmData.markets ?? [];
       const market =
+        findMarketLoose(foundTrade.title, pmMarkets) ??
         profileData.matchedMarket ??
         findMarketForTrade(foundTrade, allMarkets);
       setMatchedMarket(market);
-      setMarketContext(
+      const ctx =
         profileData.marketContext ?? {
           currentProbability: market?.probability ?? null,
           priceAtTrade: foundTrade.price,
@@ -248,8 +243,9 @@ export default function WhaleProfilePage() {
             market != null
               ? (market.probability - foundTrade.price) * 100
               : 0,
-        }
-      );
+        };
+      setMarketContext(ctx);
+      setCurrentProbability(ctx.currentProbability);
       setNotFound(false);
     } catch {
       setNotFound(true);
@@ -263,10 +259,28 @@ export default function WhaleProfilePage() {
     loadProfile();
   }, [loadProfile]);
 
-  const whaleScore = useMemo(
-    () => (trade ? scoreWhale(trade) : null),
-    [trade]
-  );
+  useEffect(() => {
+    if (!matchedMarket) return;
+
+    const refresh = async () => {
+      try {
+        const endpoint =
+          matchedMarket.source === "kalshi" ? "/api/kalshi" : "/api/markets";
+        const res = await fetch(endpoint);
+        const data: { markets?: MarketSummary[] } = await res.json();
+        const updated = data.markets?.find((m) => m.id === matchedMarket.id);
+        if (updated) {
+          setCurrentProbability(updated.probability);
+        }
+      } catch {
+        // Keep last known probability on failure
+      }
+    };
+
+    refresh();
+    const interval = setInterval(refresh, 10000);
+    return () => clearInterval(interval);
+  }, [matchedMarket]);
 
   const filteredNearby = useMemo(() => {
     return relatedTrades
@@ -286,7 +300,7 @@ export default function WhaleProfilePage() {
     );
   }
 
-  if (notFound || !trade || !whaleScore) {
+  if (notFound || !trade) {
     return (
       <main className="mx-auto max-w-4xl px-4 py-8">
         <Link href="/" className="text-sm text-pulse-accent hover:underline">
@@ -299,6 +313,10 @@ export default function WhaleProfilePage() {
 
   const price = trade.price;
   const priceCents = (price * 100).toFixed(1);
+  const isSell = trade.side === "SELL";
+  const marketProb =
+    matchedMarket?.probability ?? currentProbability ?? price;
+  const marketProbPct = (marketProb * 100).toFixed(1);
   const probPct = (price * 100).toFixed(1);
   const size = trade.size;
   const shares = price > 0 ? size / price : 0;
@@ -309,56 +327,34 @@ export default function WhaleProfilePage() {
   const salaryWeeks = Math.round(size / US_WEEKLY_WAGE);
   const sizeMultiple = (size / MIN_WHALE_THRESHOLD).toFixed(1);
   const topPercent = getTopPercentTier(size);
-  const filledCircles = Math.round(price * 10);
-  const whaleImpliedProb = Math.min(price + 0.1, 0.99);
-  const whaleEv = whaleImpliedProb * payout - size;
-  const loseOutOf10 = Math.round((1 - price) * 10);
+  const filledCircles = Math.round(marketProb * 10);
+  const currentMarketProb = marketProb;
+  const impliedProb = Math.min(
+    (currentMarketProb || trade.price) + 0.1,
+    0.99
+  );
+  const whaleEv = impliedProb * payout - size;
   const avgBars = Math.min(10, Math.max(1, Math.round(MIN_WHALE_THRESHOLD / BAR_UNIT)));
   const tradeBars = Math.min(10, Math.max(1, Math.round(size / BAR_UNIT)));
   const volumeContext = matchedMarket
     ? getMarketVolumeContext(size, matchedMarket.volume)
     : null;
-  const researchAdvice = getResearchAdvice(trade.title);
   const plainBet = getPlainEnglishBet(trade);
-  const oddsComparison = getOddsComparison(price);
+  const oddsComparison = getOddsComparison(marketProb);
   const timingAnalysis = getTimingAnalysis(trade.timestamp);
 
-  const verdictPositives: string[] = [];
-  const verdictCautions: string[] = [];
-
-  if (size >= 1000) {
-    verdictPositives.push(
-      `$${size.toLocaleString()} is serious money — not a casual bet`
-    );
-  } else {
-    verdictPositives.push(
-      `$${size.toLocaleString()} exceeds the whale threshold — worth noting`
-    );
-  }
-
-  if (trade.side === "BUY" && price < 0.5) {
-    verdictPositives.push(
-      `Buying the underdog at ${probPct}% suggests the whale believes the crowd is wrong`
-    );
-  } else if (trade.side === "BUY") {
-    verdictPositives.push(
-      `Buying at ${probPct}% shows conviction in a likely outcome`
-    );
-  } else {
-    verdictCautions.push(
-      "This is a SELL — could be profit-taking rather than a new conviction bet"
-    );
-  }
-
-  if (price < 0.5) {
-    verdictCautions.push(
-      `${probPct}% is still a longshot — this whale will lose this bet ${loseOutOf10} out of 10 times`
-    );
-  }
-
-  verdictCautions.push(
-    "We can't verify if this is informed trading or just a large gamble"
-  );
+  const copySignals: WhaleSignal[] = [
+    getSizeSignal(size),
+    getPriceSignal(price, currentProbability, trade.side),
+    getTimingSignal(trade.timestamp),
+    getLiquiditySignal(
+      matchedMarket?.spread ?? null,
+      matchedMarket?.volume ?? 0
+    ),
+    getDirectionSignal(price, trade.side),
+  ];
+  const copyVerdict = calculateCopyVerdict(copySignals);
+  const canCopyOnPolymarket = matchedMarket?.source === "polymarket";
 
   const outcomeSubject =
     trade.outcome.toLowerCase() === "yes" || trade.outcome.toLowerCase() === "no"
@@ -373,6 +369,74 @@ export default function WhaleProfilePage() {
       >
         ← Back to Dashboard
       </Link>
+
+      {/* SHOULD I COPY THIS BET */}
+      <section className="mb-8 rounded-xl border border-pulse-border bg-slate-800 p-6">
+        {isSell && (
+          <div className="mb-6 rounded-xl border border-yellow-500/40 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-300">
+            ⚠️ This whale is SELLING — they&apos;re exiting a position, not
+            opening one. Exit signals are harder to copy directly.
+          </div>
+        )}
+        <div
+          className={`mb-6 rounded-xl border px-4 py-3 text-center ${VERDICT_BADGE_CLASSES[copyVerdict.verdictColor]}`}
+        >
+          <p className="text-2xl font-bold">
+            {copyVerdict.verdictEmoji} {copyVerdict.verdict}
+          </p>
+        </div>
+
+        <div className="mb-6">
+          <h2 className="text-lg font-semibold text-white">
+            {isSell
+              ? "🎯 Should You Follow This Exit?"
+              : "🎯 Should You Copy This Bet?"}
+          </h2>
+          <p className="text-sm text-slate-400">
+            {isSell
+              ? "5 signals analyzed · This is an EXIT trade"
+              : "5 signals analyzed · Updated live"}
+          </p>
+        </div>
+
+        <div className="space-y-4">
+          {copySignals.map((signal) => (
+            <div
+              key={signal.label}
+              className="rounded-lg border border-slate-700 bg-slate-900/50 p-4"
+            >
+              <p className="text-sm font-bold text-white">
+                {signal.emoji} {signal.label}
+              </p>
+              <p className="mt-1 text-sm text-slate-400">{signal.plain}</p>
+            </div>
+          ))}
+        </div>
+
+        {canCopyOnPolymarket && (
+          <div className="mt-6">
+            <a
+              href={`https://polymarket.com/markets?q=${encodeURIComponent(trade.title ?? "")}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() =>
+                trackCopyTap(
+                  matchedMarket!.id,
+                  trade.size,
+                  copyVerdict.verdict
+                )
+              }
+              className="block w-full rounded-xl bg-green-600 px-6 py-4 text-center text-lg font-semibold text-white transition-colors hover:bg-green-500"
+            >
+              Find This Market on Polymarket →
+            </a>
+            <p className="mt-3 text-center text-sm text-slate-500">
+              You&apos;ll be taken to Polymarket to place this bet with real
+              money. Only invest what you can afford to lose.
+            </p>
+          </div>
+        )}
+      </section>
 
       {/* SECTION 1: WHALE IDENTITY */}
       <section className="mb-8 rounded-xl border border-pulse-border bg-slate-800 p-6">
@@ -516,11 +580,11 @@ export default function WhaleProfilePage() {
       {/* SECTION 4: PROBABILITY */}
       <section className="mb-8 rounded-xl border border-pulse-border bg-pulse-card/40 p-6">
         <h2 className="mb-4 text-lg font-semibold text-white">
-          🎯 What Does {probPct}% Actually Mean?
+          🎯 What Does {marketProbPct}% Actually Mean?
         </h2>
         <p className="mb-4 text-sm text-slate-300">
-          The market currently prices this at {probPct}%. Here&apos;s what that
-          means in real terms:
+          The market currently prices this at {marketProbPct}%. Here&apos;s what
+          that means in real terms:
         </p>
         <div className="mb-4 flex gap-1">
           {Array.from({ length: 10 }).map((_, i) => (
@@ -536,30 +600,44 @@ export default function WhaleProfilePage() {
         <div className="mb-4 rounded-lg bg-slate-900/60 p-4 text-sm text-slate-300">
           <p className="mb-1 font-medium text-white">Odds comparison</p>
           <p>
-            {probPct}% is roughly the same odds as:{" "}
+            {marketProbPct}% is roughly the same odds as:{" "}
             <strong className="text-white">{oddsComparison}</strong>
           </p>
         </div>
         <div className="text-sm leading-relaxed text-slate-300">
           <p className="mb-3">
-            By placing this bet, the whale is signaling they believe the TRUE
-            probability is <strong className="text-white">HIGHER</strong> than{" "}
-            {probPct}%. They think the market is underpricing this outcome.
+            {trade.side === "BUY"
+              ? `By placing this bet, the whale is signaling they believe the TRUE probability is HIGHER than ${(currentMarketProb * 100).toFixed(1)}%. They think the market is underpricing this outcome.`
+              : `By selling, the whale is signaling they believe the TRUE probability is LOWER than ${(currentMarketProb * 100).toFixed(1)}%. By selling, they think this outcome is LESS likely than the market suggests.`}
           </p>
-          <p>
-            If they think the real probability is even{" "}
-            {(whaleImpliedProb * 100).toFixed(0)}%, this bet has positive
-            expected value:
-          </p>
-          <p className="mt-2 font-mono text-slate-200">
-            EV = ({(whaleImpliedProb * 100).toFixed(0)}% × $
-            {payout.toLocaleString(undefined, { maximumFractionDigits: 0 })}) -
-            ${size.toLocaleString()} ={" "}
-            <span className={whaleEv >= 0 ? "text-pulse-yes" : "text-red-400"}>
-              {whaleEv >= 0 ? "+" : ""}$
-              {whaleEv.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-            </span>
-          </p>
+          {trade.side === "SELL" ? (
+            <p>
+              This whale is EXITING — EV analysis applies to buyers, not
+              sellers. The seller believes the current{" "}
+              {(currentMarketProb * 100).toFixed(1)}% probability is too HIGH.
+            </p>
+          ) : (
+            <>
+              <p>
+                If they think the real probability is even{" "}
+                {(impliedProb * 100).toFixed(0)}%, this bet has positive
+                expected value:
+              </p>
+              <p className="mt-2 font-mono text-slate-200">
+                EV = ({(impliedProb * 100).toFixed(0)}% × $
+                {payout.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                ) - ${size.toLocaleString()} ={" "}
+                <span
+                  className={whaleEv >= 0 ? "text-pulse-yes" : "text-red-400"}
+                >
+                  {whaleEv >= 0 ? "+" : ""}$
+                  {whaleEv.toLocaleString(undefined, {
+                    maximumFractionDigits: 0,
+                  })}
+                </span>
+              </p>
+            </>
+          )}
         </div>
       </section>
 
@@ -595,11 +673,16 @@ export default function WhaleProfilePage() {
               Signal 2 — Price Entry Analysis
             </p>
             <p className="text-sm leading-relaxed text-slate-400">
-              This whale {trade.side === "SELL" ? "sold" : "bought"} at{" "}
-              {priceCents}¢.
-              {price < 0.5 ? (
+              {trade.side === "SELL" ? (
                 <>
-                  {" "}
+                  This whale SOLD at {(trade.price * 100).toFixed(1)}¢. Selling
+                  at a low price means they&apos;re exiting a position they
+                  previously bought, likely at a higher price. They may be
+                  cutting losses or believe the probability will drop further.
+                </>
+              ) : price < 0.5 ? (
+                <>
+                  This whale bought at {(trade.price * 100).toFixed(1)}¢.
                   Buying below 50¢ means betting on an UNDERDOG. Underdogs pay
                   more if they win ({multiplier}x here) but lose more often.
                   Smart money often bets underdogs when they believe the crowd
@@ -608,10 +691,9 @@ export default function WhaleProfilePage() {
                 </>
               ) : (
                 <>
-                  {" "}
-                  Buying above 50¢ means betting on a FAVORITE. Favorites win
-                  more often but pay less. This whale is paying a premium for a
-                  higher-probability outcome.
+                  This whale bought at {(trade.price * 100).toFixed(1)}¢.
+                  Buying above 50¢ means betting on the FAVORITE. Lower payout
+                  but higher probability of winning.
                 </>
               )}
             </p>
@@ -634,7 +716,7 @@ export default function WhaleProfilePage() {
                 Signal 4 — Market Significance
               </p>
               <p className="text-sm leading-relaxed text-slate-400">
-                This market has {formatVolumeUsd(matchedMarket.volume)} in
+                This market has {formatVol(matchedMarket.volume)} in
                 total trading. This whale&apos;s ${size.toLocaleString()}{" "}
                 represents {volumeContext.pct.toFixed(2)}% of all money bet on
                 this market. {volumeContext.message}
@@ -653,52 +735,7 @@ export default function WhaleProfilePage() {
         </div>
       </section>
 
-      {/* SECTION 6: VERDICT */}
-      <section className="mb-8 rounded-xl border-2 border-yellow-500/40 bg-slate-800 p-6">
-        <h2 className="mb-4 text-lg font-semibold text-white">
-          ⚖️ The Verdict — Should You Pay Attention?
-        </h2>
-        <div className="rounded-xl border border-slate-700 bg-slate-900/50 p-5">
-          <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">
-            Our Assessment
-          </p>
-          <p className="mb-4 text-xl font-bold text-white">
-            {whaleScore.verdict.toUpperCase()} {whaleScore.emoji}
-          </p>
-          <p className="mb-4 text-sm font-medium text-slate-300">
-            Here&apos;s exactly why:
-          </p>
-          <ul className="mb-4 space-y-2 text-sm">
-            {verdictPositives.map((item) => (
-              <li key={item} className="text-pulse-yes">
-                ✅ {item}
-              </li>
-            ))}
-            {verdictCautions.map((item) => (
-              <li key={item} className="text-yellow-400">
-                ⚠️ {item}
-              </li>
-            ))}
-          </ul>
-          <div className="rounded-lg bg-slate-800 p-4">
-            <p className="mb-2 text-sm font-medium text-white">💡 What to do:</p>
-            <p className="text-sm text-slate-300">{researchAdvice}</p>
-            {matchedMarket && (
-              <Link
-                href={`/markets/${matchedMarket.id}`}
-                className="mt-3 inline-block text-sm text-pulse-accent hover:underline"
-              >
-                View the full market →
-              </Link>
-            )}
-          </div>
-          <p className="mt-4 text-xs text-slate-500">
-            Never bet more than you can afford to lose entirely.
-          </p>
-        </div>
-      </section>
-
-      {/* SECTION 7: NEARBY TRADES */}
+      {/* SECTION 6: NEARBY TRADES */}
       <section className="mb-8 rounded-xl border border-pulse-border bg-pulse-card/40 p-6">
         <h2 className="mb-4 text-lg font-semibold text-white">
           🔗 Other Activity at the Same Time

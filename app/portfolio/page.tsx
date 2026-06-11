@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { getExplorerMode, getPositionNarrative } from "@/lib/explorer";
 import { fetchMarketProbabilities } from "@/lib/marketPrices";
+import { getCopyStats } from "@/lib/copyTracking";
 import {
   closePosition,
   getPortfolio,
@@ -61,6 +62,7 @@ export default function PortfolioPage() {
   }, [refresh]);
 
   const stats = getPortfolioStats(portfolio, probabilities);
+  const copyStats = getCopyStats();
   const openPositions = portfolio.positions.filter((p) => !p.resolved);
   const closedPositions = portfolio.positions.filter((p) => p.resolved);
 
@@ -441,6 +443,32 @@ export default function PortfolioPage() {
           )}
         </>
       )}
+
+      <section className="mt-10 rounded-xl border border-pulse-border bg-pulse-card/40 p-6">
+        <h2 className="mb-4 text-lg font-semibold text-white">
+          📊 Copy Bet Activity
+        </h2>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-4">
+            <p className="text-xs text-pulse-muted">Total Copy Taps</p>
+            <p className="mt-1 text-2xl font-bold text-white">
+              {copyStats.total}
+            </p>
+          </div>
+          <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-4">
+            <p className="text-xs text-pulse-muted">Last 7 Days</p>
+            <p className="mt-1 text-2xl font-bold text-white">
+              {copyStats.last7days}
+            </p>
+          </div>
+          <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-4">
+            <p className="text-xs text-pulse-muted">Avg Whale Size Followed</p>
+            <p className="mt-1 text-2xl font-bold text-white">
+              ${copyStats.avgWhaleSize.toLocaleString()}
+            </p>
+          </div>
+        </div>
+      </section>
     </main>
   );
 }
