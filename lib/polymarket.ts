@@ -20,6 +20,7 @@ export interface GammaMarket {
   liquidity?: string;
   endDate?: string;
   clobTokenIds: string | string[];
+  events?: Array<{ slug?: string | null }>;
 }
 
 export interface Contract {
@@ -36,6 +37,8 @@ export interface MarketSummary {
   id: string;
   conditionId: string;
   question: string;
+  slug?: string;
+  eventSlug?: string;
   probability: number;
   volume: number;
   spread: number | null;
@@ -68,9 +71,9 @@ export interface DataTrade {
   price: number;
   timestamp: number;
   title: string;
-  slug: string;
-  icon: string;
-  eventSlug: string;
+  slug?: string;
+  icon?: string;
+  eventSlug?: string;
   outcome: string;
   outcomeIndex: number;
   name: string;
@@ -87,6 +90,25 @@ export interface TradeSummary {
   size: number;
   timestamp: number;
   transactionHash: string;
+  eventSlug?: string;
+  slug?: string;
+  conditionId?: string;
+}
+
+export function getPolymarketTradeUrl(
+  trade: Pick<TradeSummary, "eventSlug" | "slug" | "title">
+): string {
+  const eventSlug = trade.eventSlug ?? trade.slug;
+  if (eventSlug) {
+    return `https://polymarket.com/event/${eventSlug}`;
+  }
+  return `https://polymarket.com/markets?q=${encodeURIComponent(trade.title ?? "")}`;
+}
+
+export function hasDirectPolymarketLink(
+  trade: Pick<TradeSummary, "eventSlug" | "slug">
+): boolean {
+  return !!(trade.eventSlug ?? trade.slug);
 }
 
 function parseJsonArray<T>(value: string): T[] {
@@ -131,6 +153,8 @@ export function normalizeMarket(raw: GammaMarket): MarketSummary {
     conditionId: raw.conditionId,
     clobTokenIds,
     question: raw.question ?? "Untitled market",
+    slug: raw.slug ?? undefined,
+    eventSlug: raw.events?.[0]?.slug ?? undefined,
     probability: getPrimaryProbability(raw.outcomePrices),
     volume: Number.isFinite(volume) ? volume : 0,
     spread:
@@ -152,6 +176,9 @@ export function normalizeTrade(raw: DataTrade, index: number): TradeSummary {
     size: raw.size,
     timestamp: raw.timestamp,
     transactionHash: raw.transactionHash,
+    eventSlug: raw.eventSlug || undefined,
+    slug: raw.slug || undefined,
+    conditionId: raw.conditionId || undefined,
   };
 }
 
@@ -175,7 +202,8 @@ export function formatSpread(spread: number | null): string {
 }
 
 export async function fetchMarkets(): Promise<MarketSummary[]> {
-  const url = `${GAMMA_API_BASE}/markets?limit=20&active=true&closed=false`;
+  const url = `${GAMMA_API_BASE}/markets?limit=100&active=true&closed=false`;
+  console.log("Fetching markets from:", url);
   const res = await fetch(url, {
     headers: { Accept: "application/json" },
     next: { revalidate: 0 },
@@ -194,7 +222,7 @@ export async function fetchMarkets(): Promise<MarketSummary[]> {
 }
 
 export async function fetchTrades(): Promise<TradeSummary[]> {
-  const url = `${DATA_API_BASE}/trades?limit=50`;
+  const url = `${DATA_API_BASE}/trades?limit=200`;
   const res = await fetch(url, {
     headers: { Accept: "application/json" },
     next: { revalidate: 0 },

@@ -20,7 +20,11 @@ import {
   VERDICT_BADGE_CLASSES,
   type WhaleSignal,
 } from "@/lib/whaleSignals";
-import type { MarketSummary, TradeSummary } from "@/lib/polymarket";
+import {
+  getPolymarketTradeUrl,
+  type MarketSummary,
+  type TradeSummary,
+} from "@/lib/polymarket";
 import { getFullDate, getTimeAgo, getUtcString } from "@/lib/time";
 
 interface WhaleProfileResponse {
@@ -61,26 +65,95 @@ function getOddsComparison(prob: number): string {
   return "Rolling anything but a 1 on a dice";
 }
 
-const formatVol = (v: number): string => {
-  if (v >= 1000000) return `$${(v / 1000000).toFixed(1)}M`;
-  if (v >= 1000) return `$${(v / 1000).toFixed(0)}k`;
-  return `$${v.toFixed(0)}`;
+const formatDollars = (n: number): string => {
+  if (n >= 1000000) return `$${(n / 1000000).toFixed(2)}M`;
+  if (n >= 1000)
+    return `$${n.toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+  return `$${n.toFixed(2)}`;
 };
 
-function findMarketLoose(
+const formatVol = (v: number): string => {
+  const n = Number(v);
+  if (n >= 1000000) return "$" + (n / 1000000).toFixed(1) + "M";
+  if (n >= 1000) return "$" + (n / 1000).toFixed(0) + "k";
+  return "$" + n.toFixed(0);
+};
+
+type MatchConfidence = "high" | "low";
+
+interface MarketMatchResult {
+  market: MarketSummary;
+  confidence: MatchConfidence;
+}
+
+function findMatchingMarket(
   tradeTitle: string,
   markets: MarketSummary[]
-): MarketSummary | null {
-  const t = tradeTitle.toLowerCase();
-  const words = t.split(" ").filter((w) => w.length > 4);
-  if (words.length === 0) return null;
+): MarketMatchResult | null {
+  if (!tradeTitle || !markets?.length) return null;
 
-  return (
-    markets.find((m) => {
-      const q = m.question?.toLowerCase() ?? "";
-      return words.some((w) => q.includes(w));
-    }) ?? null
+  const title = tradeTitle.toLowerCase().trim();
+
+  const exact = markets.find(
+    (m) => m.question?.toLowerCase().trim() === title
   );
+  if (exact) return { market: exact, confidence: "high" };
+
+  const strong = markets.find((m) => {
+    const q = m.question?.toLowerCase().trim() ?? "";
+    return title.includes(q) || q.includes(title);
+  });
+  if (strong) return { market: strong, confidence: "low" };
+
+  const titleWords = title.split(" ").filter((w) => w.length > 4);
+
+  for (const m of markets) {
+    const q = m.question?.toLowerCase() ?? "";
+    const matchCount = titleWords.filter((w) => q.includes(w)).length;
+    if (matchCount >= 4) {
+      return { market: m, confidence: "low" };
+    }
+  }
+
+  return null;
+}
+
+function getButtonConfig(verdict: string, side: string) {
+  if (side === "SELL") {
+    return {
+      text: "View This Market on Polymarket →",
+      className: "bg-slate-700 hover:bg-slate-600 text-white",
+    };
+  }
+
+  if (verdict === "Strong Copy Signal") {
+    return {
+      text: "Copy This Bet on Polymarket →",
+      className: "bg-green-600 hover:bg-green-500 text-white",
+    };
+  }
+
+  if (verdict === "Worth Considering") {
+    return {
+      text: "Consider This Bet on Polymarket →",
+      className: "bg-blue-600 hover:bg-blue-500 text-white",
+    };
+  }
+
+  if (verdict === "Proceed With Caution") {
+    return {
+      text: "View This Market on Polymarket →",
+      className: "bg-yellow-600 hover:bg-yellow-500 text-white",
+    };
+  }
+
+  return {
+    text: "View This Market on Polymarket →",
+    className: "bg-slate-700 hover:bg-slate-600 text-white",
+  };
 }
 
 function getTopPercentTier(size: number): string {
@@ -178,6 +251,9 @@ export default function WhaleProfilePage() {
   const [matchedMarket, setMatchedMarket] = useState<MarketSummary | null>(
     null
   );
+  const [matchConfidence, setMatchConfidence] = useState<MatchConfidence | null>(
+    null
+  );
   const [marketContext, setMarketContext] = useState<
     WhaleProfileResponse["marketContext"]
   >({
@@ -191,7 +267,6 @@ export default function WhaleProfilePage() {
   const [currentProbability, setCurrentProbability] = useState<number | null>(
     null
   );
-
   const loadProfile = useCallback(async () => {
     if (!hash) return;
 
@@ -230,11 +305,19 @@ export default function WhaleProfilePage() {
       );
 
       const pmMarkets = pmData.markets ?? [];
-      const market =
-        findMarketLoose(foundTrade.title, pmMarkets) ??
-        profileData.matchedMarket ??
-        findMarketForTrade(foundTrade, allMarkets);
+      const matchResult = findMatchingMarket(foundTrade.title, pmMarkets);
+      let market = matchResult?.market ?? null;
+      let confidence = matchResult?.confidence ?? null;
+
+      if (!market) {
+        market =
+          profileData.matchedMarket ??
+          findMarketForTrade(foundTrade, allMarkets);
+        if (market) confidence = "low";
+      }
+
       setMatchedMarket(market);
+      setMatchConfidence(confidence);
       const ctx =
         profileData.marketContext ?? {
           currentProbability: market?.probability ?? null,
@@ -314,9 +397,14 @@ export default function WhaleProfilePage() {
   const price = trade.price;
   const priceCents = (price * 100).toFixed(1);
   const isSell = trade.side === "SELL";
-  const marketProb =
-    matchedMarket?.probability ?? currentProbability ?? price;
-  const marketProbPct = (marketProb * 100).toFixed(1);
+  const isNoBet =
+    trade.outcome?.toLowerCase() === "no" ||
+    trade.outcome?.toLowerCase() === "no ";
+  const displayProbability =
+    matchConfidence === "high" && matchedMarket?.probability !== undefined
+      ? matchedMarket.probability
+      : trade.price ?? 0;
+  const marketProbPct = (displayProbability * 100).toFixed(1);
   const probPct = (price * 100).toFixed(1);
   const size = trade.size;
   const shares = price > 0 ? size / price : 0;
@@ -327,10 +415,9 @@ export default function WhaleProfilePage() {
   const salaryWeeks = Math.round(size / US_WEEKLY_WAGE);
   const sizeMultiple = (size / MIN_WHALE_THRESHOLD).toFixed(1);
   const topPercent = getTopPercentTier(size);
-  const filledCircles = Math.round(marketProb * 10);
-  const currentMarketProb = marketProb;
+  const filledCircles = Math.round(displayProbability * 10);
   const impliedProb = Math.min(
-    (currentMarketProb || trade.price) + 0.1,
+    (displayProbability || trade.price) + 0.1,
     0.99
   );
   const whaleEv = impliedProb * payout - size;
@@ -340,7 +427,7 @@ export default function WhaleProfilePage() {
     ? getMarketVolumeContext(size, matchedMarket.volume)
     : null;
   const plainBet = getPlainEnglishBet(trade);
-  const oddsComparison = getOddsComparison(marketProb);
+  const oddsComparison = getOddsComparison(displayProbability);
   const timingAnalysis = getTimingAnalysis(trade.timestamp);
 
   const copySignals: WhaleSignal[] = [
@@ -354,7 +441,9 @@ export default function WhaleProfilePage() {
     getDirectionSignal(price, trade.side),
   ];
   const copyVerdict = calculateCopyVerdict(copySignals);
-  const canCopyOnPolymarket = matchedMarket?.source === "polymarket";
+  const verdict = copyVerdict.verdict;
+  const polymarketUrl = getPolymarketTradeUrl(trade);
+  const buttonConfig = getButtonConfig(verdict, trade.side);
 
   const outcomeSubject =
     trade.outcome.toLowerCase() === "yes" || trade.outcome.toLowerCase() === "no"
@@ -413,29 +502,25 @@ export default function WhaleProfilePage() {
           ))}
         </div>
 
-        {canCopyOnPolymarket && (
-          <div className="mt-6">
-            <a
-              href={`https://polymarket.com/markets?q=${encodeURIComponent(trade.title ?? "")}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={() =>
-                trackCopyTap(
-                  matchedMarket!.id,
-                  trade.size,
-                  copyVerdict.verdict
-                )
-              }
-              className="block w-full rounded-xl bg-green-600 px-6 py-4 text-center text-lg font-semibold text-white transition-colors hover:bg-green-500"
-            >
-              Find This Market on Polymarket →
-            </a>
-            <p className="mt-3 text-center text-sm text-slate-500">
-              You&apos;ll be taken to Polymarket to place this bet with real
-              money. Only invest what you can afford to lose.
-            </p>
-          </div>
-        )}
+        <div className="mt-6">
+          <a
+            href={polymarketUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() =>
+              trackCopyTap(trade?.title ?? "", trade?.size ?? 0, verdict)
+            }
+            className={`block w-full rounded-xl px-6 py-4 text-center text-lg font-semibold transition-colors ${buttonConfig.className}`}
+          >
+            {buttonConfig.text}
+          </a>
+          <p className="mt-2 text-center text-xs text-slate-500">
+            {verdict === "Strong Copy Signal" ||
+            verdict === "Worth Considering"
+              ? "You'll be taken to Polymarket to place this bet with real money. Only invest what you can afford to lose."
+              : "View the market on Polymarket to research before deciding."}
+          </p>
+        </div>
       </section>
 
       {/* SECTION 1: WHALE IDENTITY */}
@@ -497,9 +582,7 @@ export default function WhaleProfilePage() {
         <div className="space-y-3 text-sm leading-relaxed text-slate-300">
           <p>
             At {getTimeAgo(trade.timestamp)}, someone placed a{" "}
-            <strong className="text-white">
-              ${size.toLocaleString()}
-            </strong>{" "}
+            <strong className="text-white">{formatDollars(size)}</strong>{" "}
             {trade.side === "SELL" ? "sell order on" : "bet that"}{" "}
             <strong className="text-white">{trade.outcome}</strong> on &ldquo;
             {trade.title}&rdquo;.
@@ -523,9 +606,7 @@ export default function WhaleProfilePage() {
             ) : (
               <>
                 they&apos;re betting{" "}
-                <strong className="text-white">
-                  ${size.toLocaleString()}
-                </strong>{" "}
+                <strong className="text-white">{formatDollars(size)}</strong>{" "}
                 that <strong className="text-white">{plainBet}</strong>.
               </>
             )}
@@ -533,15 +614,11 @@ export default function WhaleProfilePage() {
           {trade.side === "BUY" && (
             <p>
               If they&apos;re right, they&apos;ll collect{" "}
-              <strong className="text-pulse-yes">
-                ${payout.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-              </strong>{" "}
+              <strong className="text-pulse-yes">{formatDollars(payout)}</strong>{" "}
               — a profit of{" "}
-              <strong className="text-pulse-yes">
-                ${profit.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-              </strong>{" "}
+              <strong className="text-pulse-yes">{formatDollars(profit)}</strong>{" "}
               ({profitPct}% return). If they&apos;re wrong, they lose their
-              entire ${size.toLocaleString()}.
+              entire {formatDollars(size)}.
             </p>
           )}
         </div>
@@ -554,9 +631,9 @@ export default function WhaleProfilePage() {
         </h2>
         <div className="grid gap-4 sm:grid-cols-2">
           <StatBox
-            value={`$${size.toLocaleString()}`}
+            value={formatDollars(size)}
             label="Money at stake"
-            explain={`This is real money on the line. $${size.toLocaleString()} is roughly ${salaryWeeks} weeks of average US salary. This person is serious.`}
+            explain={`This is real money on the line. ${formatDollars(size)} is roughly ${salaryWeeks} weeks of average US salary. This person is serious.`}
           />
           <StatBox
             value={`${priceCents}¢ per share`}
@@ -569,10 +646,10 @@ export default function WhaleProfilePage() {
             explain={`Like buying ${Math.round(shares).toLocaleString()} lottery tickets that each pay $1 if you win. The more shares, the bigger the position.`}
           />
           <StatBox
-            value={`$${payout.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+            value={formatDollars(payout)}
             label="If they win"
             valueClassName="text-pulse-yes"
-            explain={`This is what they collect if correct. That's a $${profit.toLocaleString(undefined, { maximumFractionDigits: 0 })} profit on a $${size.toLocaleString()} bet — a ${profitPct}% return if the market resolves YES.`}
+            explain={`This is what they collect if correct. That's a ${formatDollars(profit)} profit on a ${formatDollars(size)} bet — a ${profitPct}% return if the market resolves YES.`}
           />
         </div>
       </section>
@@ -606,15 +683,23 @@ export default function WhaleProfilePage() {
         </div>
         <div className="text-sm leading-relaxed text-slate-300">
           <p className="mb-3">
-            {trade.side === "BUY"
-              ? `By placing this bet, the whale is signaling they believe the TRUE probability is HIGHER than ${(currentMarketProb * 100).toFixed(1)}%. They think the market is underpricing this outcome.`
-              : `By selling, the whale is signaling they believe the TRUE probability is LOWER than ${(currentMarketProb * 100).toFixed(1)}%. By selling, they think this outcome is LESS likely than the market suggests.`}
+            {trade.side === "SELL"
+              ? `By selling, the whale is signaling they believe the TRUE probability is LOWER than ${(displayProbability * 100).toFixed(1)}%. By selling, they think this outcome is LESS likely than the market suggests.`
+              : isNoBet
+                ? `By betting NO, the whale believes this is LESS likely than the market suggests. They think the probability should be LOWER than ${(displayProbability * 100).toFixed(1)}%.`
+                : `By placing this bet, the whale is signaling they believe the TRUE probability is HIGHER than ${(displayProbability * 100).toFixed(1)}%. They think the market is underpricing this outcome.`}
           </p>
           {trade.side === "SELL" ? (
             <p>
               This whale is EXITING — EV analysis applies to buyers, not
               sellers. The seller believes the current{" "}
-              {(currentMarketProb * 100).toFixed(1)}% probability is too HIGH.
+              {(displayProbability * 100).toFixed(1)}% probability is too HIGH.
+            </p>
+          ) : isNoBet ? (
+            <p>
+              This whale bet NO at {priceCents}¢ — they expect this outcome to
+              be LESS likely than {marketProbPct}%. If wrong, they lose{" "}
+              {formatDollars(size)}.
             </p>
           ) : (
             <>
@@ -624,16 +709,13 @@ export default function WhaleProfilePage() {
                 expected value:
               </p>
               <p className="mt-2 font-mono text-slate-200">
-                EV = ({(impliedProb * 100).toFixed(0)}% × $
-                {payout.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                ) - ${size.toLocaleString()} ={" "}
+                EV = ({(impliedProb * 100).toFixed(0)}% × {formatDollars(payout)}
+                ) - {formatDollars(size)} ={" "}
                 <span
                   className={whaleEv >= 0 ? "text-pulse-yes" : "text-red-400"}
                 >
-                  {whaleEv >= 0 ? "+" : ""}$
-                  {whaleEv.toLocaleString(undefined, {
-                    maximumFractionDigits: 0,
-                  })}
+                  {whaleEv >= 0 ? "+" : ""}
+                  {formatDollars(whaleEv)}
                 </span>
               </p>
             </>
@@ -658,11 +740,11 @@ export default function WhaleProfilePage() {
             />
             <BarComparison
               label="This trade"
-              amount={`$${size.toLocaleString()}`}
+              amount={formatDollars(size)}
               filled={tradeBars}
             />
             <p className="mt-2 text-sm text-slate-400">
-              ${size.toLocaleString()} is {sizeMultiple}x larger than the
+              {formatDollars(size)} is {sizeMultiple}x larger than the
               minimum whale threshold (${MIN_WHALE_THRESHOLD}). This puts it in
               the top {topPercent}% of all trades on this platform.
             </p>
@@ -717,7 +799,7 @@ export default function WhaleProfilePage() {
               </p>
               <p className="text-sm leading-relaxed text-slate-400">
                 This market has {formatVol(matchedMarket.volume)} in
-                total trading. This whale&apos;s ${size.toLocaleString()}{" "}
+                total trading. This whale&apos;s {formatDollars(size)}{" "}
                 represents {volumeContext.pct.toFixed(2)}% of all money bet on
                 this market. {volumeContext.message}
               </p>

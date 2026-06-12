@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
-import { fetchMarkets, type MarketSummary } from "@/lib/polymarket";
+import {
+  fetchMarkets,
+  fetchTrades,
+  type MarketSummary,
+} from "@/lib/polymarket";
 import {
   buildMarketContext,
   findMarketForTrade,
   findRelatedTrades,
   findTradeByHash,
 } from "@/lib/whaleProfile";
-import type { TradeSummary } from "@/lib/polymarket";
 
 async function fetchKalshiMarkets(): Promise<MarketSummary[]> {
   try {
@@ -25,48 +28,6 @@ async function fetchKalshiMarkets(): Promise<MarketSummary[]> {
   }
 }
 
-async function fetchAllTrades(): Promise<TradeSummary[]> {
-  const res = await fetch("https://data-api.polymarket.com/trades?limit=200", {
-    next: { revalidate: 0 },
-  });
-
-  if (!res.ok) {
-    throw new Error(`Trades API error: ${res.status}`);
-  }
-
-  const data = await res.json();
-  const raw = Array.isArray(data) ? data : (data.trades ?? []);
-
-  return raw.map(
-    (
-      t: {
-        id?: string;
-        market?: string;
-        title?: string;
-        side: "BUY" | "SELL";
-        outcome?: string;
-        outcomeIndex?: string;
-        price: number;
-        size?: number | string;
-        usdcSize?: number | string;
-        timestamp?: number;
-        transactionHash?: string;
-        txHash?: string;
-      },
-      index: number
-    ): TradeSummary => ({
-      id: t.id ?? `trade-${index}`,
-      title: t.market ?? t.title ?? "Unknown",
-      side: t.side,
-      outcome: t.outcome ?? String(t.outcomeIndex ?? ""),
-      price: t.price,
-      size: parseFloat(String(t.size ?? t.usdcSize ?? 0)),
-      timestamp: t.timestamp ?? Math.floor(Date.now() / 1000),
-      transactionHash: t.transactionHash ?? t.txHash ?? "",
-    })
-  );
-}
-
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -80,7 +41,7 @@ export async function GET(request: Request) {
     }
 
     const [trades, pmMarkets, kalshiMarkets] = await Promise.all([
-      fetchAllTrades(),
+      fetchTrades(),
       fetchMarkets().catch(() => []),
       fetchKalshiMarkets(),
     ]);
