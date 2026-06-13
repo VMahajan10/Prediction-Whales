@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { trackCopyTap } from "@/lib/copyTracking";
+import { getCachedWhaleTrade } from "@/lib/whaleCache";
 import {
   findMarketForTrade,
   findRelatedTrades,
@@ -41,6 +42,8 @@ interface WhaleProfileResponse {
 
 const MIN_WHALE_THRESHOLD = 500;
 const NEARBY_MIN_SIZE = 100;
+const MAX_RETRIES = 6;
+const RETRY_INTERVAL_MS = 5000;
 const US_WEEKLY_WAGE = 1154;
 const BAR_UNIT = 125;
 
@@ -263,10 +266,14 @@ export default function WhaleProfilePage() {
   });
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [showAllNearby, setShowAllNearby] = useState(false);
   const [currentProbability, setCurrentProbability] = useState<number | null>(
     null
   );
+  const retryCount = useRef(0);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const loadProfile = useCallback(async () => {
     if (!hash) return;
 
@@ -289,14 +296,35 @@ export default function WhaleProfilePage() {
         ...(piData.markets ?? []),
       ];
 
+      // REST first (backward compatible for older trades), then the
+      // client-side live cache (instant for just-detected WebSocket whales).
       const foundTrade =
-        findTradeByHash(trades, hash) ?? profileData.trade ?? null;
+        findTradeByHash(trades, hash) ??
+        profileData.trade ??
+        getCachedWhaleTrade(hash) ??
+        null;
 
       if (!foundTrade) {
+        // Live trade not yet in the ~300s-cached REST API and no local cache
+        // (e.g. a shared link on another device). Retry a few times before
+        // giving up, since it will land in REST shortly.
+        if (retryCount.current < MAX_RETRIES) {
+          retryCount.current += 1;
+          setRetrying(true);
+          setLoading(false);
+          retryTimer.current = setTimeout(() => {
+            void loadProfile();
+          }, RETRY_INTERVAL_MS);
+          return;
+        }
+        setRetrying(false);
         setNotFound(true);
         setTrade(null);
         return;
       }
+
+      retryCount.current = 0;
+      setRetrying(false);
 
       setTrade(foundTrade);
       const nearby = findRelatedTrades(trades, foundTrade);
@@ -338,8 +366,14 @@ export default function WhaleProfilePage() {
   }, [hash]);
 
   useEffect(() => {
+    retryCount.current = 0;
+    setRetrying(false);
+    setNotFound(false);
     setLoading(true);
     loadProfile();
+    return () => {
+      if (retryTimer.current) clearTimeout(retryTimer.current);
+    };
   }, [loadProfile]);
 
   useEffect(() => {
@@ -379,6 +413,25 @@ export default function WhaleProfilePage() {
     return (
       <main className="mx-auto max-w-4xl px-4 py-8">
         <p className="text-pulse-muted animate-pulse">Loading whale profile…</p>
+      </main>
+    );
+  }
+
+  if (retrying && !trade) {
+    return (
+      <main className="mx-auto max-w-4xl px-4 py-8">
+        <Link href="/" className="text-sm text-pulse-accent hover:underline">
+          ← Back to Dashboard
+        </Link>
+        <div className="mt-8 rounded-xl border border-pulse-border bg-slate-800 p-6">
+          <p className="animate-pulse font-medium text-white">
+            Syncing this whale trade…
+          </p>
+          <p className="mt-2 text-sm text-slate-400">
+            This trade was just detected live and is still propagating to the
+            data feed. Hang tight — this usually takes a few seconds.
+          </p>
+        </div>
       </main>
     );
   }

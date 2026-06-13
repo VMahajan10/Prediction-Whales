@@ -3,14 +3,12 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { getTimeAgo } from "@/lib/time";
-import {
-  usePolymarketSocket,
-  type SocketTrade,
-} from "@/lib/usePolymarketSocket";
+import { isWhaleNotional } from "@/lib/whaleTrades";
+import { usePolymarketSocketContext } from "@/lib/PolymarketSocketProvider";
+import type { SocketTrade } from "@/lib/usePolymarketSocket";
 
 export default function TradesFeed() {
-  const { trades: socketTrades, connected } = usePolymarketSocket(50);
-
+  const { trades: socketTrades, connected } = usePolymarketSocketContext();
   const [polledTrades, setPolledTrades] = useState<SocketTrade[]>([]);
   const [newTradeIds, setNewTradeIds] = useState<Set<string>>(new Set());
   const prevLatestId = useRef<string | null>(null);
@@ -19,20 +17,33 @@ export default function TradesFeed() {
     const fetchTrades = async () => {
       try {
         const res = await fetch("/api/trades");
-        const data: { trades?: SocketTrade[] } = await res.json();
-        setPolledTrades(data.trades ?? []);
+        const data = await res.json();
+        const raw = (data.trades ?? []) as Array<{
+          id: string;
+          title: string;
+          side: "BUY" | "SELL";
+          outcome: string;
+          price: number;
+          size: number;
+          timestamp: number;
+          transactionHash: string;
+        }>;
+        setPolledTrades(
+          raw.map((t) => ({
+            ...t,
+            usdNotional: t.size,
+          }))
+        );
       } catch {
         // Keep existing polled trades on failure
       }
     };
 
-    fetchTrades();
-    const interval = setInterval(fetchTrades, 10000);
-    return () => clearInterval(interval);
+    void fetchTrades();
   }, []);
 
   const trades = socketTrades.length > 0 ? socketTrades : polledTrades;
-  const whales = trades.filter((t) => t.size >= 500);
+  const whales = trades.filter((t) => isWhaleNotional(t.usdNotional));
 
   useEffect(() => {
     if (!connected || socketTrades.length === 0) return;
@@ -73,7 +84,7 @@ export default function TradesFeed() {
           ) : (
             <span className="flex items-center gap-1 text-xs text-slate-400">
               <span className="h-2 w-2 rounded-full bg-slate-500" />
-              Polling
+              Connecting
             </span>
           )}
         </div>
@@ -87,7 +98,7 @@ export default function TradesFeed() {
       <div className="max-h-[480px] flex-1 space-y-1 overflow-y-auto">
         {trades.length === 0 ? (
           <div className="py-8 text-center text-sm text-slate-500">
-            {connected ? "Waiting for trades..." : "Loading trades..."}
+            {connected ? "Waiting for trades..." : "Connecting..."}
           </div>
         ) : (
           trades.map((trade, index) => (
@@ -95,7 +106,9 @@ export default function TradesFeed() {
               key={trade.id || trade.transactionHash || index}
               href={`/trades/${encodeURIComponent(trade.transactionHash)}`}
               className={`block cursor-pointer rounded-lg border border-transparent p-2 transition-colors hover:border-slate-600 hover:bg-slate-700 ${
-                trade.size >= 500 ? "border-l-2 border-l-yellow-500" : ""
+                isWhaleNotional(trade.usdNotional)
+                  ? "border-l-2 border-l-yellow-500"
+                  : ""
               } ${newTradeIds.has(trade.id) ? "animate-trade-in" : ""}`}
             >
               <div className="flex items-start justify-between gap-2">
@@ -105,7 +118,7 @@ export default function TradesFeed() {
                   </p>
                   <p className="text-xs text-slate-400">
                     {trade.outcome} @ {(trade.price * 100).toFixed(1)}¢ · $
-                    {trade.size.toLocaleString(undefined, {
+                    {trade.usdNotional.toLocaleString(undefined, {
                       maximumFractionDigits: 0,
                     })}
                   </p>
@@ -120,7 +133,7 @@ export default function TradesFeed() {
                   >
                     {trade.side}
                   </span>
-                  {trade.size >= 500 && (
+                  {isWhaleNotional(trade.usdNotional) && (
                     <span className="text-xs">🐋</span>
                   )}
                   <span className="text-xs text-slate-500">

@@ -1,14 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import type { TradeSummary } from "@/lib/polymarket";
+import { useEffect, useState } from "react";
 import { formatTradeTimeLocal, getTimeAgo } from "@/lib/time";
+import {
+  windowProgress,
+  windowRemainingSec,
+  type WhaleTrade,
+} from "@/lib/whaleTrades";
 
-const MIN_WHALE_SIZE = 500;
 const TOP_WHALE_COUNT = 10;
 
 interface WhaleTrackerProps {
-  trades: TradeSummary[];
+  whales: WhaleTrade[];
+  connected: boolean;
+  soundEnabled: boolean;
+  onToggleSound: () => void;
 }
 
 function truncateTitle(title: string, maxLen: number): string {
@@ -25,15 +32,118 @@ function truncateTxHash(hash: string): string {
   return `${hash.slice(0, 6)}...${hash.slice(-4)}`;
 }
 
-function filterWhales(trades: TradeSummary[]): TradeSummary[] {
-  return trades
-    .filter((trade) => trade.size >= MIN_WHALE_SIZE)
-    .sort((a, b) => b.size - a.size);
+function secondsAgo(detectedAt: number, now: number): number {
+  return Math.max(0, Math.floor((now - detectedAt) / 1000));
 }
 
-export default function WhaleTracker({ trades }: WhaleTrackerProps) {
-  const whales = filterWhales(trades);
+function WhaleRow({ trade, now }: { trade: WhaleTrade; now: number }) {
+  const ageSec = secondsAgo(trade.detectedAt, now);
+  const progress = trade.isLive ? windowProgress(trade.detectedAt, now) : 100;
+  const remaining = trade.isLive
+    ? windowRemainingSec(trade.detectedAt, now)
+    : 0;
+
+  return (
+    <li>
+      <Link
+        href={`/whales/${encodeURIComponent(trade.transactionHash)}`}
+        className={`block cursor-pointer rounded-lg border px-3 py-2 transition-colors hover:bg-slate-700 ${
+          trade.isLive
+            ? "border-green-500/30 bg-green-500/5"
+            : "border-pulse-border bg-pulse-card/60"
+        }`}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <p className="min-w-0 flex-1 text-sm font-medium text-white">
+            {truncateTitle(trade.title, 50)}
+          </p>
+          <div className="flex shrink-0 items-center gap-2">
+            {trade.isLive && (
+              <span className="rounded-full bg-green-500/20 px-2 py-0.5 text-xs font-semibold text-green-400">
+                LIVE
+              </span>
+            )}
+            <span
+              className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                trade.side === "BUY"
+                  ? "bg-pulse-yes/20 text-pulse-yes"
+                  : "bg-red-500/20 text-red-400"
+              }`}
+            >
+              {trade.side}
+            </span>
+          </div>
+        </div>
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-pulse-muted">
+          <span className="text-white">{trade.outcome}</span>
+          <span className="font-semibold text-white">
+            {formatWhaleSize(trade.usdNotional)}
+          </span>
+          <span>{(trade.price * 100).toFixed(1)}¢</span>
+          <span>{formatTradeTimeLocal(trade.timestamp)}</span>
+          <span className="text-pulse-accent">
+            detected {ageSec}s ago
+          </span>
+          <span
+            role="link"
+            tabIndex={0}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              window.open(
+                `https://polygonscan.com/tx/${trade.transactionHash}`,
+                "_blank",
+                "noopener,noreferrer"
+              );
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                e.stopPropagation();
+                window.open(
+                  `https://polygonscan.com/tx/${trade.transactionHash}`,
+                  "_blank",
+                  "noopener,noreferrer"
+                );
+              }
+            }}
+            className="font-mono text-pulse-accent hover:underline"
+          >
+            {truncateTxHash(trade.transactionHash)}
+          </span>
+        </div>
+        {trade.isLive && remaining > 0 && (
+          <div className="mt-2">
+            <div className="mb-1 flex justify-between text-[10px] text-slate-500">
+              <span>Window closing (est.)</span>
+              <span>{remaining}s left</span>
+            </div>
+            <div className="h-1 overflow-hidden rounded-full bg-slate-700">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-green-500 to-yellow-500 transition-all duration-1000"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          </div>
+        )}
+      </Link>
+    </li>
+  );
+}
+
+export default function WhaleTracker({
+  whales,
+  connected,
+  soundEnabled,
+  onToggleSound,
+}: WhaleTrackerProps) {
   const topWhales = whales.slice(0, TOP_WHALE_COUNT);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   return (
     <div className="mb-8">
@@ -41,79 +151,44 @@ export default function WhaleTracker({ trades }: WhaleTrackerProps) {
         <div>
           <h2 className="text-lg font-semibold text-white">🐋 Whale Tracker</h2>
           <p className="text-sm text-pulse-muted">
-            Trades ≥ $500 · updates every 15s
+            Trades ≥ $500 ·{" "}
+            {connected ? (
+              <span className="text-green-400">live WebSocket</span>
+            ) : (
+              <span>connecting…</span>
+            )}
           </p>
         </div>
-        <span className="rounded-full bg-pulse-accent/20 px-3 py-1 text-sm font-medium text-pulse-accent">
-          {whales.length} whales detected
-        </span>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onToggleSound}
+            className="rounded-lg border border-pulse-border bg-slate-800 px-3 py-1 text-xs text-slate-300 transition-colors hover:bg-slate-700"
+            title="Toggle whale sound alerts (≥$5k)"
+          >
+            {soundEnabled ? "🔔 Sound on" : "🔕 Sound off"}
+          </button>
+          <span className="rounded-full bg-pulse-accent/20 px-3 py-1 text-sm font-medium text-pulse-accent">
+            {whales.length} whales detected
+          </span>
+        </div>
       </div>
 
       <div className="rounded-xl border border-pulse-border bg-pulse-card/40 p-4">
         {topWhales.length === 0 ? (
           <p className="py-4 text-sm text-pulse-muted">
-            No whale trades detected (≥ $500)
+            {connected
+              ? "Watching for whale trades (≥ $500)…"
+              : "Connecting to live feed…"}
           </p>
         ) : (
           <ul className="space-y-2">
-            {topWhales.map((trade, index) => (
-              <li key={trade.transactionHash || index}>
-                <Link
-                  href={`/whales/${encodeURIComponent(trade.transactionHash)}`}
-                  className="block cursor-pointer rounded-lg border border-pulse-border bg-pulse-card/60 px-3 py-2 transition-colors hover:bg-slate-700"
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <p className="min-w-0 flex-1 text-sm font-medium text-white">
-                      {truncateTitle(trade.title, 50)}
-                    </p>
-                    <span
-                      className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${
-                        trade.side === "BUY"
-                          ? "bg-pulse-yes/20 text-pulse-yes"
-                          : "bg-red-500/20 text-red-400"
-                      }`}
-                    >
-                      {trade.side}
-                    </span>
-                  </div>
-                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-pulse-muted">
-                    <span className="text-white">{trade.outcome}</span>
-                    <span className="font-semibold text-white">
-                      {formatWhaleSize(trade.size)}
-                    </span>
-                    <span>{(trade.price * 100).toFixed(1)}¢</span>
-                    <span>{formatTradeTimeLocal(trade.timestamp)}</span>
-                    <span>{getTimeAgo(trade.timestamp)}</span>
-                    <span
-                      role="link"
-                      tabIndex={0}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        window.open(
-                          `https://polygonscan.com/tx/${trade.transactionHash}`,
-                          "_blank",
-                          "noopener,noreferrer"
-                        );
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          window.open(
-                            `https://polygonscan.com/tx/${trade.transactionHash}`,
-                            "_blank",
-                            "noopener,noreferrer"
-                          );
-                        }
-                      }}
-                      className="font-mono text-pulse-accent hover:underline"
-                    >
-                      {truncateTxHash(trade.transactionHash)}
-                    </span>
-                  </div>
-                </Link>
-              </li>
+            {topWhales.map((trade) => (
+              <WhaleRow
+                key={trade.transactionHash || trade.id}
+                trade={trade}
+                now={now}
+              />
             ))}
           </ul>
         )}

@@ -5,18 +5,34 @@ import { useCallback, useEffect, useState } from "react";
 import BeginnerGuide from "@/components/BeginnerGuide";
 import MarketFeed from "@/components/MarketFeed";
 import MarketMovers from "@/components/MarketMovers";
+import NewWhaleToast from "@/components/NewWhaleToast";
 import TradesFeed from "@/components/TradesFeed";
 import WelcomeBanner from "@/components/WelcomeBanner";
 import WhaleTracker from "@/components/WhaleTracker";
 import { getExplorerMode, setExplorerMode } from "@/lib/explorer";
 import { fetchMarketProbabilities } from "@/lib/marketPrices";
 import { getPortfolio, getPortfolioStats } from "@/lib/portfolio";
-import type { MarketSummary, TradeSummary } from "@/lib/polymarket";
+import type { MarketSummary } from "@/lib/polymarket";
+import {
+  getWhaleSoundEnabled,
+  setWhaleSoundEnabled,
+  useWhaleAlerts,
+} from "@/lib/useWhaleAlerts";
+import { useWhaleFeed } from "@/lib/useWhaleFeed";
+import { PolymarketSocketProvider } from "@/lib/PolymarketSocketProvider";
 
 const POLYMARKET_REFRESH_MS = 10_000;
 const KALSHI_REFRESH_MS = 120_000;
 
 export default function Home() {
+  return (
+    <PolymarketSocketProvider>
+      <HomeDashboard />
+    </PolymarketSocketProvider>
+  );
+}
+
+function HomeDashboard() {
   const [pmMarkets, setPmMarkets] = useState<MarketSummary[]>([]);
   const [kalshiMarkets, setKalshiMarkets] = useState<MarketSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -29,10 +45,20 @@ export default function Home() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [portfolioTotal, setPortfolioTotal] = useState(1000);
   const [explorerMode, setExplorerModeState] = useState(false);
-  const [sharedTrades, setSharedTrades] = useState<TradeSummary[]>([]);
+  const [soundEnabled, setSoundEnabled] = useState(false);
+  const { whales, connected, newWhale, dismissNewWhale } = useWhaleFeed();
 
   useEffect(() => {
     setExplorerModeState(getExplorerMode());
+    setSoundEnabled(getWhaleSoundEnabled());
+  }, []);
+
+  useWhaleAlerts(newWhale, dismissNewWhale);
+
+  const toggleSound = useCallback(() => {
+    const next = !getWhaleSoundEnabled();
+    setWhaleSoundEnabled(next);
+    setSoundEnabled(next);
   }, []);
 
   function toggleExplorerMode() {
@@ -108,21 +134,6 @@ export default function Home() {
     refreshPortfolioTotal();
   }, [refreshPortfolioTotal]);
 
-  useEffect(() => {
-    const fetchTrades = async () => {
-      try {
-        const res = await fetch("/api/trades");
-        const data: { trades?: TradeSummary[] } = await res.json();
-        setSharedTrades(data.trades ?? []);
-      } catch {
-        // Keep existing trades on failure
-      }
-    };
-    fetchTrades();
-    const interval = setInterval(fetchTrades, 15000);
-    return () => clearInterval(interval);
-  }, []);
-
   return (
     <main className="mx-auto min-h-screen max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-10 border-b border-pulse-border pb-8">
@@ -178,7 +189,18 @@ export default function Home() {
             </div>
           )}
 
-          {!explorerMode && <WhaleTracker trades={sharedTrades} />}
+          {!explorerMode && (
+            <WhaleTracker
+              whales={whales}
+              connected={connected}
+              soundEnabled={soundEnabled}
+              onToggleSound={toggleSound}
+            />
+          )}
+
+          {!explorerMode && (
+            <NewWhaleToast whale={newWhale} onDismiss={dismissNewWhale} />
+          )}
 
           <section id="market-feed" className="mb-8">
             <h2 className="mb-4 text-lg font-semibold text-white">

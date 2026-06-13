@@ -111,6 +111,20 @@ export function hasDirectPolymarketLink(
   return !!(trade.eventSlug ?? trade.slug);
 }
 
+export interface TokenMarketMeta {
+  title: string;
+  outcome: string;
+  eventSlug?: string;
+  slug?: string;
+  conditionId: string;
+  marketId: string;
+}
+
+export interface TokenRegistry {
+  tokenIds: string[];
+  tokens: Record<string, TokenMarketMeta>;
+}
+
 function parseJsonArray<T>(value: string): T[] {
   try {
     const parsed: unknown = JSON.parse(value);
@@ -238,4 +252,64 @@ export async function fetchTrades(): Promise<TradeSummary[]> {
   }
 
   return (data as DataTrade[]).map((trade, i) => normalizeTrade(trade, i));
+}
+
+export async function fetchWhaleBackfill(): Promise<TradeSummary[]> {
+  const url = `${DATA_API_BASE}/trades?limit=100&filterType=CASH&filterAmount=500`;
+  const res = await fetch(url, {
+    headers: { Accept: "application/json" },
+    next: { revalidate: 0 },
+  });
+
+  if (!res.ok) {
+    throw new Error(`Data API error: ${res.status} ${res.statusText}`);
+  }
+
+  const data: unknown = await res.json();
+  if (!Array.isArray(data)) {
+    throw new Error("Data API returned invalid trades payload");
+  }
+
+  return (data as DataTrade[]).map((trade, i) => normalizeTrade(trade, i));
+}
+
+export async function fetchTokenRegistry(): Promise<TokenRegistry> {
+  const url = `${GAMMA_API_BASE}/markets?limit=100&active=true&closed=false&order=volume24hr&ascending=false`;
+  const res = await fetch(url, {
+    headers: { Accept: "application/json" },
+    next: { revalidate: 60 },
+  });
+
+  if (!res.ok) {
+    throw new Error(`Gamma API error: ${res.status} ${res.statusText}`);
+  }
+
+  const data: unknown = await res.json();
+  if (!Array.isArray(data)) {
+    throw new Error("Gamma API returned invalid markets payload");
+  }
+
+  const tokenIds: string[] = [];
+  const tokens: Record<string, TokenMarketMeta> = {};
+
+  for (const raw of data as GammaMarket[]) {
+    const market = normalizeMarket(raw);
+    const outcomes = parseJsonArray<string>(raw.outcomes);
+    const ids = market.clobTokenIds;
+
+    ids.forEach((tokenId, index) => {
+      if (!tokenId || tokens[tokenId]) return;
+      tokenIds.push(tokenId);
+      tokens[tokenId] = {
+        title: market.question,
+        outcome: outcomes[index] ?? `Outcome ${index + 1}`,
+        eventSlug: market.eventSlug,
+        slug: market.slug,
+        conditionId: market.conditionId,
+        marketId: market.id,
+      };
+    });
+  }
+
+  return { tokenIds, tokens };
 }
