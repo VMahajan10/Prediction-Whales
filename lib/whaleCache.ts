@@ -16,6 +16,7 @@ const STORAGE_KEY = "marketpulse:whaleCache:v1";
 const MAX_ENTRIES = 300;
 const TTL_MS = 1000 * 60 * 60 * 6; // 6 hours
 
+/** Cached trade includes optional proxyWallet for track-record lookup in later phases. */
 interface CacheEntry {
   trade: TradeSummary;
   cachedAt: number;
@@ -62,6 +63,59 @@ export function cacheWhaleTrade(trade: TradeSummary): void {
 
   map[hash] = { trade, cachedAt: Date.now() };
   writeMap(prune(map));
+}
+
+/** Patch proxyWallet onto an existing cache entry (live WS enrichment). */
+export function updateCachedWhaleWallet(
+  hash: string,
+  proxyWallet: string
+): boolean {
+  if (!hash || !proxyWallet) return false;
+
+  const map = readMap();
+  const entry = map[hash];
+  if (!entry || entry.trade.proxyWallet) return false;
+
+  entry.trade = { ...entry.trade, proxyWallet };
+  map[hash] = entry;
+  writeMap(map);
+  return true;
+}
+
+export function listCachedHashesMissingWallet(): string[] {
+  return listCachedTradesMissingWallet().map((e) => e.hash);
+}
+
+export function listCachedTradesMissingWallet(): Array<{
+  hash: string;
+  assetId?: string;
+}> {
+  const map = readMap();
+  return Object.entries(map)
+    .filter(([, e]) => Date.now() - e.cachedAt < TTL_MS)
+    .filter(([, e]) => !e.trade.proxyWallet)
+    .map(([hash, e]) => ({ hash, assetId: e.trade.assetId }));
+}
+
+/** Resolve wallet via API and patch whaleCache (client-side pre-warm). */
+export async function resolveAndCacheWallet(
+  hash: string,
+  assetId?: string
+): Promise<string | null> {
+  const params = new URLSearchParams({ hash });
+  if (assetId) params.set("asset", assetId);
+  try {
+    const res = await fetch(`/api/wallet/resolve?${params}`);
+    if (!res.ok) return null;
+    const data: { wallet?: string | null } = await res.json();
+    if (data.wallet) {
+      updateCachedWhaleWallet(hash, data.wallet);
+      return data.wallet;
+    }
+  } catch {
+    // Best-effort pre-warm
+  }
+  return null;
 }
 
 export function getCachedWhaleTrade(hash: string): TradeSummary | null {

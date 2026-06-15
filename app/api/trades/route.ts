@@ -5,7 +5,12 @@ export async function GET() {
   try {
     const trades = await fetchTrades();
     return NextResponse.json(
-      { trades },
+      {
+        trades: trades.map((t) => ({
+          ...t,
+          proxyWallet: t.proxyWallet ?? undefined,
+        })),
+      },
       {
         headers: {
           "Cache-Control": "no-store, no-cache, must-revalidate",

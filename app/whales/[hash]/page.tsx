@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { trackCopyTap } from "@/lib/copyTracking";
-import { getCachedWhaleTrade } from "@/lib/whaleCache";
+import { getCachedWhaleTrade, resolveAndCacheWallet } from "@/lib/whaleCache";
 import {
   findMarketForTrade,
   findRelatedTrades,
@@ -27,6 +27,7 @@ import {
   type TradeSummary,
 } from "@/lib/polymarket";
 import { getFullDate, getTimeAgo, getUtcString } from "@/lib/time";
+import WhaleTrackRecord from "@/components/WhaleTrackRecord";
 
 interface WhaleProfileResponse {
   trade: TradeSummary | null;
@@ -245,6 +246,43 @@ function StatBox({
   );
 }
 
+function SkeletonBlock({ className = "" }: { className?: string }) {
+  return <div className={`animate-pulse rounded-lg bg-slate-700/60 ${className}`} />;
+}
+
+function WhaleProfileSkeleton() {
+  return (
+    <main className="mx-auto min-h-screen max-w-4xl px-4 py-8 sm:px-6">
+      <SkeletonBlock className="mb-6 h-4 w-36" />
+      <div className="mb-8 rounded-xl border border-pulse-border bg-slate-800 p-6">
+        <SkeletonBlock className="mb-4 h-10 w-full" />
+        <SkeletonBlock className="mb-3 h-4 w-48" />
+        <div className="space-y-3">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <SkeletonBlock key={i} className="h-20 w-full" />
+          ))}
+        </div>
+        <SkeletonBlock className="mt-6 h-14 w-full" />
+      </div>
+      <div className="mb-8 rounded-xl border border-pulse-border bg-slate-800 p-6">
+        <SkeletonBlock className="mb-4 h-6 w-40" />
+        <div className="grid gap-6 sm:grid-cols-2">
+          <SkeletonBlock className="h-36" />
+          <SkeletonBlock className="h-36" />
+        </div>
+      </div>
+      <div className="mb-8 rounded-xl border border-pulse-border bg-slate-800 p-6">
+        <SkeletonBlock className="mb-4 h-6 w-48" />
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <SkeletonBlock key={i} className="h-28" />
+          ))}
+        </div>
+      </div>
+    </main>
+  );
+}
+
 export default function WhaleProfilePage() {
   const params = useParams();
   const hash = typeof params.hash === "string" ? params.hash : "";
@@ -271,6 +309,10 @@ export default function WhaleProfilePage() {
   const [currentProbability, setCurrentProbability] = useState<number | null>(
     null
   );
+  const [resolvedWallet, setResolvedWallet] = useState<string | undefined>(
+    undefined
+  );
+  const [walletResolutionFailed, setWalletResolutionFailed] = useState(false);
   const retryCount = useRef(0);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -370,11 +412,64 @@ export default function WhaleProfilePage() {
     setRetrying(false);
     setNotFound(false);
     setLoading(true);
+    setResolvedWallet(undefined);
+    setWalletResolutionFailed(false);
     loadProfile();
     return () => {
       if (retryTimer.current) clearTimeout(retryTimer.current);
     };
   }, [loadProfile]);
+
+  useEffect(() => {
+    if (!trade) return;
+
+    if (trade.proxyWallet) {
+      setResolvedWallet(trade.proxyWallet);
+      setWalletResolutionFailed(false);
+      return;
+    }
+
+    let cancelled = false;
+    let attempts = 0;
+    const maxAttempts = 10;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const resolve = async () => {
+      if (cancelled) return;
+      if (attempts >= maxAttempts) {
+        setWalletResolutionFailed(true);
+        return;
+      }
+      attempts++;
+      try {
+        const wallet = await resolveAndCacheWallet(
+          trade.transactionHash,
+          trade.assetId
+        );
+        if (wallet && !cancelled) {
+          setResolvedWallet(wallet);
+          setWalletResolutionFailed(false);
+          return;
+        }
+      } catch {
+        // Retry below
+      }
+      if (!cancelled && attempts < maxAttempts) {
+        retryTimer = setTimeout(() => {
+          void resolve();
+        }, 3000);
+      } else if (!cancelled) {
+        setWalletResolutionFailed(true);
+      }
+    };
+
+    void resolve();
+
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+    };
+  }, [trade]);
 
   useEffect(() => {
     if (!matchedMarket) return;
@@ -410,11 +505,7 @@ export default function WhaleProfilePage() {
     : filteredNearby.slice(0, 5);
 
   if (loading) {
-    return (
-      <main className="mx-auto max-w-4xl px-4 py-8">
-        <p className="text-pulse-muted animate-pulse">Loading whale profile…</p>
-      </main>
-    );
+    return <WhaleProfileSkeleton />;
   }
 
   if (retrying && !trade) {
@@ -626,6 +717,14 @@ export default function WhaleProfilePage() {
           </div>
         </div>
       </section>
+
+      <WhaleTrackRecord
+        proxyWallet={trade.proxyWallet ?? resolvedWallet}
+        walletUnavailable={walletResolutionFailed}
+        entryPrice={trade.price}
+        currentPrice={currentProbability}
+        betSize={size}
+      />
 
       {/* SECTION 2: WHAT HAPPENED */}
       <section className="mb-8 rounded-xl border border-pulse-border bg-pulse-card/40 p-6">
@@ -933,7 +1032,10 @@ export default function WhaleProfilePage() {
           <li>
             ❓ Whether they have inside information — we can&apos;t verify this
           </li>
-          <li>❓ Their track record — we only see this trade</li>
+          <li>
+            ❓ Their full history — stats are based on the last 50 closed
+            positions only
+          </li>
           <li>
             ❓ Whether this is their only position — they may be hedging a larger
             bet elsewhere

@@ -14,6 +14,7 @@ export interface SocketTrade {
   usdNotional: number;
   timestamp: number;
   transactionHash: string;
+  assetId?: string;
   eventSlug?: string;
   slug?: string;
   conditionId?: string;
@@ -90,6 +91,7 @@ export function usePolymarketSocket(maxTrades = 50) {
           ? Math.floor(Number(raw.timestamp) / 1000)
           : Math.floor(Date.now() / 1000),
         transactionHash: hash,
+        assetId: raw.asset_id,
         eventSlug: meta?.eventSlug,
         slug: meta?.slug,
         conditionId: meta?.conditionId ?? raw.market,

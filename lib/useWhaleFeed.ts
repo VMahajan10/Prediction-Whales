@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TradeSummary } from "@/lib/polymarket";
 import { usePolymarketSocketContext } from "@/lib/PolymarketSocketProvider";
-import { cacheWhaleTrade } from "@/lib/whaleCache";
+import { cacheWhaleTrade, resolveAndCacheWallet } from "@/lib/whaleCache";
+import { useWalletEnrichment } from "@/lib/useWalletEnrichment";
 import {
   isWhaleNotional,
   mergeWhaleTrades,
@@ -12,6 +13,7 @@ import {
 export function useWhaleFeed() {
   const { whaleTrades: liveSocketTrades, connected } =
     usePolymarketSocketContext();
+  useWalletEnrichment();
   const [backfill, setBackfill] = useState<WhaleTrade[]>([]);
   const [backfillLoaded, setBackfillLoaded] = useState(false);
   const seenHashes = useRef<Set<string>>(new Set());
@@ -35,6 +37,22 @@ export function useWhaleFeed() {
         setBackfill(whales);
         for (const w of whales) {
           if (w.transactionHash) seenHashes.current.add(w.transactionHash);
+          if (w.transactionHash && w.proxyWallet) {
+            cacheWhaleTrade({
+              id: w.id,
+              title: w.title,
+              side: w.side,
+              outcome: w.outcome,
+              price: w.price,
+              size: w.size,
+              timestamp: w.timestamp,
+              transactionHash: w.transactionHash,
+              proxyWallet: w.proxyWallet,
+              eventSlug: w.eventSlug,
+              slug: w.slug,
+              conditionId: w.conditionId,
+            });
+          }
         }
       } catch {
         // Backfill is optional
@@ -67,10 +85,13 @@ export function useWhaleFeed() {
         size: t.usdNotional,
         timestamp: t.timestamp,
         transactionHash: t.transactionHash,
+        assetId: t.assetId,
         eventSlug: t.eventSlug,
         slug: t.slug,
         conditionId: t.conditionId,
       });
+
+      void resolveAndCacheWallet(t.transactionHash, t.assetId);
 
       setNewWhale(
         tradeToWhale(t, {

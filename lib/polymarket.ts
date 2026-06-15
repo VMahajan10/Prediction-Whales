@@ -90,9 +90,28 @@ export interface TradeSummary {
   size: number;
   timestamp: number;
   transactionHash: string;
+  proxyWallet?: string;
+  assetId?: string;
   eventSlug?: string;
   slug?: string;
   conditionId?: string;
+}
+
+export interface TrackRecord {
+  winRate: number | null;
+  avgReturnPerBet: number | null;
+  totalBets: number;
+  closedCount: number;
+  totalRealizedPnl: number;
+  hasEnoughHistory: boolean;
+  excludedEphemeralCount: number;
+}
+
+export interface WhaleTrackRecordResult {
+  wallet: string | null;
+  trackRecord: TrackRecord | null;
+  openPositionCount: number;
+  resolved: boolean;
 }
 
 export function getPolymarketTradeUrl(
@@ -190,9 +209,179 @@ export function normalizeTrade(raw: DataTrade, index: number): TradeSummary {
     size: raw.size,
     timestamp: raw.timestamp,
     transactionHash: raw.transactionHash,
+    proxyWallet: raw.proxyWallet ?? undefined,
     eventSlug: raw.eventSlug || undefined,
     slug: raw.slug || undefined,
     conditionId: raw.conditionId || undefined,
+  };
+}
+
+export async function fetchClosedPositions(
+  wallet: string
+): Promise<any[]> {
+  try {
+    const res = await fetch(
+      `https://data-api.polymarket.com/closed-positions?user=${wallet}&limit=500`,
+      { next: { revalidate: 300 } }
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchWalletPositions(
+  wallet: string
+): Promise<any[]> {
+  try {
+    const res = await fetch(
+      `https://data-api.polymarket.com/positions?user=${wallet}`,
+      { next: { revalidate: 5 } }
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+
+export function computeTrackRecord(
+  closedPositions: any[]
+): TrackRecord {
+  const eligible = closedPositions.filter(
+    (p) => !isEphemeralClosedPosition(p)
+  );
+  const excludedEphemeralCount = closedPositions.length - eligible.length;
+
+  const closed = eligible.filter(
+    (p) => p.realizedPnl !== undefined && p.realizedPnl !== 0
+  );
+
+  const wins = closed.filter((p) => p.realizedPnl > 0);
+  const totalPnl = closed.reduce(
+    (sum, p) => sum + (p.realizedPnl ?? 0),
+    0
+  );
+
+  return {
+    winRate:
+      closed.length > 0 ? (wins.length / closed.length) * 100 : null,
+    avgReturnPerBet:
+      closed.length > 0 ? totalPnl / closed.length : null,
+    totalBets: eligible.length,
+    closedCount: closed.length,
+    totalRealizedPnl: totalPnl,
+    hasEnoughHistory: closed.length >= 5,
+    excludedEphemeralCount,
+  };
+}
+
+/** Short-term crypto up/down bots skew win-rate stats — exclude from track record. */
+export function isEphemeralClosedPosition(position: {
+  slug?: string;
+  eventSlug?: string;
+  title?: string;
+}): boolean {
+  const text = [position.slug, position.eventSlug, position.title]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  if (!text) return false;
+
+  if (
+    /btc[- ]?up[- ]?down|bitcoin up or down|eth[- ]?up[- ]?down|ethereum up or down|sol[- ]?up[- ]?down/.test(
+      text
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    /up[- ]?or[- ]?down/.test(text) &&
+    /\d{1,2}:\d{2}\s*(am|pm)?\s*[-–]\s*\d{1,2}:\d{2}/.test(text)
+  ) {
+    return true;
+  }
+
+  if (/updown[-_]?\d+m|\d+m[-_]updown|updown[-_]?\d+min/.test(text)) {
+    return true;
+  }
+
+  return false;
+}
+
+/** Resolve proxyWallet for a trade hash via the Data API (CDN-cached). */
+export async function resolveWalletByTradeHash(
+  hash: string,
+  assetId?: string
+): Promise<string | null> {
+  const normalized = hash.toLowerCase();
+
+  if (assetId) {
+    try {
+      const res = await fetch(
+        `${DATA_API_BASE}/trades?asset=${encodeURIComponent(assetId)}&limit=100&sortBy=timestamp`,
+        { headers: { Accept: "application/json" }, next: { revalidate: 0 } }
+      );
+      if (res.ok) {
+        const data: unknown = await res.json();
+        if (Array.isArray(data)) {
+          const match = (data as DataTrade[]).find(
+            (t) => t.transactionHash?.toLowerCase() === normalized
+          );
+          if (match?.proxyWallet) return match.proxyWallet.toLowerCase();
+        }
+      }
+    } catch {
+      // Fall through to global scan
+    }
+  }
+
+  const urls = [
+    `${DATA_API_BASE}/trades?limit=500&sortBy=timestamp`,
+    `${DATA_API_BASE}/trades?limit=200`,
+  ];
+
+  for (const url of urls) {
+    try {
+      const res = await fetch(url, {
+        headers: { Accept: "application/json" },
+        next: { revalidate: 0 },
+      });
+      if (!res.ok) continue;
+
+      const data: unknown = await res.json();
+      if (!Array.isArray(data)) continue;
+
+      const match = (data as DataTrade[]).find(
+        (t) => t.transactionHash?.toLowerCase() === normalized
+      );
+      if (match?.proxyWallet) return match.proxyWallet.toLowerCase();
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+export async function buildWhaleTrackRecord(
+  wallet: string
+): Promise<WhaleTrackRecordResult> {
+  const [closedPositions, openPositions] = await Promise.all([
+    fetchClosedPositions(wallet),
+    fetchWalletPositions(wallet),
+  ]);
+
+  return {
+    wallet,
+    trackRecord: computeTrackRecord(closedPositions),
+    openPositionCount: openPositions.length,
+    resolved: true,
   };
 }
 
