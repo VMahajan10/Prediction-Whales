@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { TrackRecord } from "@/lib/polymarket";
+import type { CategoryStats, ClvStats, TrackRecord } from "@/lib/polymarket";
+import CategoryRoiBreakdown from "@/components/CategoryRoiBreakdown";
+import ClvCard from "@/components/ClvCard";
 
 interface WhaleTrackRecordProps {
   proxyWallet?: string;
@@ -15,6 +17,8 @@ interface TrackRecordResponse {
   wallet: string | null;
   trackRecord: TrackRecord | null;
   openPositionCount: number;
+  categoryStats?: CategoryStats[];
+  clvStats?: ClvStats | null;
   resolved: boolean;
   cached?: boolean;
   error?: string;
@@ -45,6 +49,12 @@ function formatAvgReturn(avg: number | null): string {
   return `${sign}${formatDollars(avg)}`;
 }
 
+function formatRoiPct(roi: number | null): string {
+  if (roi === null) return "—";
+  const sign = roi >= 0 ? "+" : "";
+  return `${sign}${roi.toFixed(1)}%`;
+}
+
 function winRateColor(rate: number | null): string {
   if (rate === null) return "text-white";
   if (rate >= 60) return "text-pulse-yes";
@@ -57,20 +67,44 @@ function avgReturnColor(avg: number | null): string {
   return avg >= 0 ? "text-pulse-yes" : "text-red-400";
 }
 
+function roiColor(roi: number | null): string {
+  if (roi === null) return "text-white";
+  if (roi >= 5) return "text-pulse-yes";
+  if (roi >= 0) return "text-amber-400";
+  return "text-red-400";
+}
+
 function MetricBox({
   value,
   label,
   explain,
   valueClassName = "text-white",
+  badge,
+  emptyValue = false,
 }: {
   value: string;
   label: string;
   explain: string;
   valueClassName?: string;
+  badge?: string;
+  emptyValue?: boolean;
 }) {
   return (
     <div className="rounded-xl border border-slate-700 bg-slate-900/50 p-4">
-      <p className={`text-xl font-bold ${valueClassName}`}>{value}</p>
+      <div className="mb-1 flex flex-wrap items-center gap-2">
+        <p
+          className={`font-bold ${
+            emptyValue ? "text-lg text-slate-500" : "text-xl"
+          } ${emptyValue ? "" : valueClassName}`}
+        >
+          {value}
+        </p>
+        {badge && (
+          <span className="rounded-full bg-slate-700/60 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-400">
+            {badge}
+          </span>
+        )}
+      </div>
       <p className="mb-2 text-xs font-medium text-slate-300">{label}</p>
       <p className="text-xs leading-relaxed text-slate-400">{explain}</p>
     </div>
@@ -153,6 +187,13 @@ export default function WhaleTrackRecord({
   const loadingRecord = !!proxyWallet && loading && !trackRecord;
   const hasEnoughHistory = trackRecord?.hasEnoughHistory ?? false;
   const closedCount = trackRecord?.closedCount ?? 0;
+  const openPositionCount = data?.openPositionCount ?? 0;
+  const noClosedHistory = closedCount === 0;
+  const emptyMetricBadge =
+    openPositionCount > 0 ? "Open bets only" : "New wallet";
+  const roi: number | null = noClosedHistory
+    ? null
+    : (trackRecord as TrackRecord & { roi?: number | null })?.roi ?? null;
 
   const entryCents = formatCents(entryPrice);
   const currentCents =
@@ -249,6 +290,14 @@ export default function WhaleTrackRecord({
             : "No closed bet history found for this wallet"}
       </p>
 
+      {noClosedHistory && (
+        <p className="mb-4 text-sm leading-relaxed text-slate-400">
+          {openPositionCount > 0
+            ? `This wallet has ${openPositionCount} open position${openPositionCount === 1 ? "" : "s"} but none have resolved yet, so there's no win/loss record to show. This could be a newer trader or someone holding long-term positions.`
+            : "This wallet has no resolved bets yet, so there's no win/loss record to show. This could be a newer trader."}
+        </p>
+      )}
+
       {!hasEnoughHistory && closedCount > 0 && (
         <div className="mb-4 rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-300">
           Not enough history for a reliable track record yet. Treat signals with
@@ -261,6 +310,8 @@ export default function WhaleTrackRecord({
           value={formatWinRate(trackRecord?.winRate ?? null)}
           label="Win Rate"
           valueClassName={winRateColor(trackRecord?.winRate ?? null)}
+          emptyValue={noClosedHistory}
+          badge={noClosedHistory ? emptyMetricBadge : undefined}
           explain={
             closedCount > 0
               ? `This whale wins ${formatWinRate(trackRecord?.winRate ?? null)} of their closed bets. Higher = more trustworthy pattern.`
@@ -271,10 +322,24 @@ export default function WhaleTrackRecord({
           value={formatAvgReturn(trackRecord?.avgReturnPerBet ?? null)}
           label="Avg Return per Bet"
           valueClassName={avgReturnColor(trackRecord?.avgReturnPerBet ?? null)}
+          emptyValue={noClosedHistory}
+          badge={noClosedHistory ? emptyMetricBadge : undefined}
           explain={
             closedCount > 0
               ? `Average profit/loss per closed bet. Positive means this whale historically finds profitable spots.`
               : "Average return needs closed positions to calculate."
+          }
+        />
+        <MetricBox
+          value={formatRoiPct(roi)}
+          label="ROI"
+          valueClassName={roiColor(roi)}
+          emptyValue={noClosedHistory}
+          badge={noClosedHistory ? emptyMetricBadge : undefined}
+          explain={
+            closedCount > 0
+              ? `Money-weighted return on closed bets. Positive means this whale's dollars historically grew.`
+              : "ROI needs at least one closed position to calculate."
           }
         />
         <MetricBox
@@ -304,6 +369,12 @@ export default function WhaleTrackRecord({
           explain={`${formatDollars(betSize)} on this trade — ${convictionTier} of all platform activity. Bigger bets signal stronger conviction.`}
         />
       </div>
+
+      {data?.clvStats && <ClvCard stats={data.clvStats} />}
+
+      {data?.categoryStats && data.categoryStats.length > 0 && (
+        <CategoryRoiBreakdown categories={data.categoryStats} />
+      )}
 
       <p className="mt-4 text-xs text-slate-500">
         Based on the last 50 closed positions from Polymarket

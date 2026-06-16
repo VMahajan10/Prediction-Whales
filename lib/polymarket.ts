@@ -1,5 +1,14 @@
+import {
+  CLV_CONSTANTS,
+  mapWithConcurrency,
+  resolveClosingLine,
+  type ClosingLineResult,
+} from "./clvPriceHistory";
+
 const GAMMA_API_BASE = "https://gamma-api.polymarket.com";
 const DATA_API_BASE = "https://data-api.polymarket.com";
+
+export type { ClosingLineResult } from "./clvPriceHistory";
 
 /** Raw market object from Gamma API */
 export interface GammaMarket {
@@ -107,11 +116,193 @@ export interface TrackRecord {
   excludedEphemeralCount: number;
 }
 
+export interface CategoryStats {
+  category: string;
+  bets: number;
+  winRate: number;
+  staked: number;
+  pnl: number;
+  roi: number;
+  lowSample: boolean;
+}
+
+export interface ClvStats {
+  avgClv: number | null;
+  weightedClv: number | null;
+  showWeighted: boolean;
+  coverage: number;
+  totalClosed: number;
+  hasEnoughCoverage: boolean;
+  coverageFloor: number;
+  totalEvDollars: number;
+  avgEvPerBet: number;
+  positions?: ClosingLineResult[];
+}
+
 export interface WhaleTrackRecordResult {
   wallet: string | null;
   trackRecord: TrackRecord | null;
   openPositionCount: number;
   resolved: boolean;
+  categoryStats: CategoryStats[];
+  clvStats: ClvStats;
+}
+
+const CATEGORY_PRIORITY = [
+  "Politics",
+  "Crypto",
+  "Sports",
+  "Esports",
+  "Economy",
+  "Entertainment",
+];
+
+function toBucket(tags: string[]): string {
+  if (!tags?.length) return "Other";
+  for (const cat of CATEGORY_PRIORITY) {
+    if (tags.some((t) => t.toLowerCase() === cat.toLowerCase())) return cat;
+  }
+  return "Other";
+}
+
+function tagLabels(tags: unknown): string[] {
+  if (!Array.isArray(tags)) return [];
+  return tags
+    .map((t) => {
+      if (typeof t === "string") return t;
+      if (t && typeof t === "object" && "label" in t) {
+        return String((t as { label?: string }).label ?? "");
+      }
+      return "";
+    })
+    .filter(Boolean);
+}
+
+export async function fetchEventCategories(
+  slugs: string[]
+): Promise<Record<string, string>> {
+  if (!slugs.length) return {};
+  const unique = Array.from(new Set(slugs));
+  const map: Record<string, string> = {};
+
+  try {
+    const params = unique.map((s) => `slug=${encodeURIComponent(s)}`).join("&");
+    const res = await fetch(
+      `https://gamma-api.polymarket.com/events?${params}`,
+      { next: { revalidate: 3600 } }
+    );
+    if (res.ok) {
+      const events = await res.json();
+      for (const ev of Array.isArray(events) ? events : []) {
+        if (ev.slug) {
+          map[ev.slug] = toBucket(tagLabels(ev.tags));
+        }
+      }
+    }
+
+    const missing = unique.filter((s) => !map[s]);
+    if (missing.length > 0) {
+      const retryParams = missing
+        .map((s) => `slug=${encodeURIComponent(s)}`)
+        .join("&");
+      const retry = await fetch(
+        `https://gamma-api.polymarket.com/events?${retryParams}&closed=false`,
+        { next: { revalidate: 3600 } }
+      );
+      if (retry.ok) {
+        const events = await retry.json();
+        for (const ev of Array.isArray(events) ? events : []) {
+          if (ev.slug) map[ev.slug] = toBucket(tagLabels(ev.tags));
+        }
+      }
+    }
+  } catch {
+    // Fall through — unmapped slugs become Other
+  }
+
+  for (const s of unique) {
+    if (!map[s]) map[s] = "Other";
+  }
+  return map;
+}
+
+export function computeCategoryStats(
+  closedPositions: any[],
+  slugToCategory: Record<string, string>
+): CategoryStats[] {
+  const buckets: Record<string, any[]> = {};
+
+  for (const p of closedPositions) {
+    if (p.realizedPnl === undefined || p.realizedPnl === 0) continue;
+    const cat = slugToCategory[p.eventSlug] ?? "Other";
+    if (!buckets[cat]) buckets[cat] = [];
+    buckets[cat].push(p);
+  }
+
+  const stats: CategoryStats[] = [];
+  for (const [category, positions] of Object.entries(buckets)) {
+    const staked = positions.reduce((s, p) => s + (p.totalBought ?? 0), 0);
+    const pnl = positions.reduce((s, p) => s + (p.realizedPnl ?? 0), 0);
+    const wins = positions.filter((p) => p.realizedPnl > 0).length;
+    stats.push({
+      category,
+      bets: positions.length,
+      winRate: positions.length > 0 ? (wins / positions.length) * 100 : 0,
+      staked,
+      pnl,
+      roi: staked > 0 ? (pnl / staked) * 100 : 0,
+      lowSample: positions.length < 5,
+    });
+  }
+
+  const shown = stats.filter((s) => s.bets >= 3);
+  const small = stats.filter((s) => s.bets < 3);
+  if (small.length > 0) {
+    const otherStaked = small.reduce((s, c) => s + c.staked, 0);
+    const otherPnl = small.reduce((s, c) => s + c.pnl, 0);
+    const otherBets = small.reduce((s, c) => s + c.bets, 0);
+    const otherWins = small.reduce(
+      (s, c) => s + Math.round((c.winRate / 100) * c.bets),
+      0
+    );
+    if (otherBets > 0) {
+      shown.push({
+        category: "Other",
+        bets: otherBets,
+        winRate: otherBets > 0 ? (otherWins / otherBets) * 100 : 0,
+        staked: otherStaked,
+        pnl: otherPnl,
+        roi: otherStaked > 0 ? (otherPnl / otherStaked) * 100 : 0,
+        lowSample: true,
+      });
+    }
+  }
+
+  const merged = new Map<string, CategoryStats>();
+  for (const stat of shown) {
+    const existing = merged.get(stat.category);
+    if (existing) {
+      const totalStaked = existing.staked + stat.staked;
+      const totalPnl = existing.pnl + stat.pnl;
+      const totalBets = existing.bets + stat.bets;
+      const totalWins =
+        (existing.winRate / 100) * existing.bets +
+        (stat.winRate / 100) * stat.bets;
+      merged.set(stat.category, {
+        category: stat.category,
+        bets: totalBets,
+        winRate: totalBets > 0 ? (totalWins / totalBets) * 100 : 0,
+        staked: totalStaked,
+        pnl: totalPnl,
+        roi: totalStaked > 0 ? (totalPnl / totalStaked) * 100 : 0,
+        lowSample: totalBets < 5,
+      });
+    } else {
+      merged.set(stat.category, { ...stat });
+    }
+  }
+
+  return Array.from(merged.values()).sort((a, b) => b.roi - a.roi);
 }
 
 export function getPolymarketTradeUrl(
@@ -369,6 +560,121 @@ export async function resolveWalletByTradeHash(
   return null;
 }
 
+export async function computeClvStats(
+  closedPositions: any[]
+): Promise<ClvStats> {
+  const resolved = closedPositions.filter(
+    (p) => p.curPrice === 0 || p.curPrice === 1
+  );
+  const totalClosed = resolved.length;
+  const coverageFloor = CLV_CONSTANTS.COVERAGE_FLOOR;
+
+  if (totalClosed === 0) {
+    return {
+      avgClv: null,
+      weightedClv: null,
+      showWeighted: false,
+      coverage: 0,
+      totalClosed: 0,
+      hasEnoughCoverage: false,
+      coverageFloor,
+      totalEvDollars: 0,
+      avgEvPerBet: 0,
+      positions: [],
+    };
+  }
+
+  const positions = await mapWithConcurrency(
+    resolved,
+    CLV_CONSTANTS.FETCH_CONCURRENCY,
+    async (p): Promise<ClosingLineResult> => {
+      const settled = p.curPrice as 0 | 1;
+      const avgPrice = p.avgPrice ?? 0;
+      const asset = String(p.asset ?? "");
+      const title = p.title ?? "Unknown market";
+      const totalBought = p.totalBought ?? 0;
+
+      if (!asset) {
+        return {
+          asset,
+          title,
+          totalBought,
+          avgPrice,
+          settlement: settled,
+          closingLine: null,
+          clv: null,
+          freshnessHours: null,
+          valid: false,
+          reason: "bad_entry",
+        };
+      }
+
+      const detected = await resolveClosingLine(asset, settled, avgPrice);
+      return {
+        asset,
+        title,
+        totalBought,
+        ...detected,
+      };
+    }
+  );
+
+  const valid = positions.filter((p) => p.valid && p.clv != null);
+  for (const p of valid) {
+    if (p.closingLine == null || p.avgPrice <= 0) continue;
+    const shares = p.totalBought / p.avgPrice;
+    p.evDollars = (p.closingLine - p.avgPrice) * shares;
+  }
+  const coverage = valid.length;
+
+  if (coverage === 0) {
+    return {
+      avgClv: null,
+      weightedClv: null,
+      showWeighted: false,
+      coverage: 0,
+      totalClosed,
+      hasEnoughCoverage: false,
+      coverageFloor,
+      totalEvDollars: 0,
+      avgEvPerBet: 0,
+      positions,
+    };
+  }
+
+  const avgClv =
+    valid.reduce((sum, p) => sum + (p.clv ?? 0), 0) / valid.length;
+
+  const totalStaked = valid.reduce((sum, p) => sum + p.totalBought, 0);
+  const weightedClv =
+    totalStaked > 0
+      ? valid.reduce(
+          (sum, p) => sum + (p.clv ?? 0) * p.totalBought,
+          0
+        ) / totalStaked
+      : null;
+
+  const totalEvDollars = valid.reduce((sum, p) => sum + (p.evDollars ?? 0), 0);
+  const avgEvPerBet = totalEvDollars / coverage;
+
+  const showWeighted =
+    weightedClv != null &&
+    Math.abs(avgClv - weightedClv) >= CLV_CONSTANTS.WEIGHTED_DIFF_THRESHOLD;
+
+  return {
+    avgClv,
+    weightedClv,
+    showWeighted,
+    coverage,
+    totalClosed,
+    hasEnoughCoverage: coverage >= coverageFloor,
+    coverageFloor,
+    totalEvDollars,
+    avgEvPerBet,
+    positions,
+  };
+}
+
 export async function buildWhaleTrackRecord(
   wallet: string
 ): Promise<WhaleTrackRecordResult> {
@@ -377,11 +683,23 @@ export async function buildWhaleTrackRecord(
     fetchWalletPositions(wallet),
   ]);
 
+  const eligible = closedPositions.filter(
+    (p) => !isEphemeralClosedPosition(p)
+  );
+  const slugs = eligible
+    .map((p) => p.eventSlug as string | undefined)
+    .filter((s): s is string => !!s);
+  const slugToCategory = await fetchEventCategories(slugs);
+  const categoryStats = computeCategoryStats(eligible, slugToCategory);
+  const clvStats = await computeClvStats(eligible);
+
   return {
     wallet,
     trackRecord: computeTrackRecord(closedPositions),
     openPositionCount: openPositions.length,
     resolved: true,
+    categoryStats,
+    clvStats,
   };
 }
 

@@ -1,12 +1,15 @@
 import { Redis } from "@upstash/redis";
-import type { TrackRecord } from "@/lib/polymarket";
+import type { CategoryStats, ClvStats, TrackRecord } from "@/lib/polymarket";
 
-const KEY_PREFIX = "whale:stats:";
+const CACHE_VERSION = "v3";
+const KEY_PREFIX = `whale:stats:${CACHE_VERSION}:`;
 const TTL_SEC = 600; // 10 minutes
 
 export interface CachedWhaleStats {
   trackRecord: TrackRecord;
   openPositionCount: number;
+  categoryStats: CategoryStats[];
+  clvStats: ClvStats;
   cachedAt: number;
 }
 
@@ -54,7 +57,9 @@ export async function getCachedTrackRecord(
 export async function setCachedTrackRecord(
   wallet: string,
   trackRecord: TrackRecord,
-  openPositionCount: number
+  openPositionCount: number,
+  categoryStats: CategoryStats[] = [],
+  clvStats?: ClvStats
 ): Promise<boolean> {
   const client = getRedis();
   if (!client) return false;
@@ -64,6 +69,19 @@ export async function setCachedTrackRecord(
     const payload: CachedWhaleStats = {
       trackRecord,
       openPositionCount,
+      categoryStats,
+      clvStats: clvStats ?? {
+        avgClv: null,
+        weightedClv: null,
+        showWeighted: false,
+        coverage: 0,
+        totalClosed: 0,
+        hasEnoughCoverage: false,
+        coverageFloor: 5,
+        totalEvDollars: 0,
+        avgEvPerBet: 0,
+        positions: [],
+      },
       cachedAt: Date.now(),
     };
     await client.set(key, payload, { ex: TTL_SEC });

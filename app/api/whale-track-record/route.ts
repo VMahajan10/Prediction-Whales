@@ -33,6 +33,8 @@ export async function GET(request: Request) {
         wallet: null,
         trackRecord: null,
         openPositionCount: 0,
+        categoryStats: [],
+        clvStats: null,
         resolved: false,
       });
     }
@@ -43,6 +45,8 @@ export async function GET(request: Request) {
         wallet,
         trackRecord: cached.trackRecord,
         openPositionCount: cached.openPositionCount,
+        categoryStats: cached.categoryStats ?? [],
+        clvStats: cached.clvStats ?? null,
         resolved: true,
         cached: true,
         cacheEnabled: isTrackRecordCacheEnabled(),
@@ -55,7 +59,9 @@ export async function GET(request: Request) {
       await setCachedTrackRecord(
         wallet,
         result.trackRecord,
-        result.openPositionCount
+        result.openPositionCount,
+        result.categoryStats,
+        result.clvStats
       );
     }
 
@@ -73,6 +79,8 @@ export async function GET(request: Request) {
         wallet: null,
         trackRecord: null,
         openPositionCount: 0,
+        categoryStats: [],
+        clvStats: null,
         resolved: false,
         error: message,
       },
