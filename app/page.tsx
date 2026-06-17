@@ -19,17 +19,12 @@ import {
   useWhaleAlerts,
 } from "@/lib/useWhaleAlerts";
 import { useWhaleFeed } from "@/lib/useWhaleFeed";
-import { PolymarketSocketProvider } from "@/lib/PolymarketSocketProvider";
 
 const POLYMARKET_REFRESH_MS = 10_000;
 const KALSHI_REFRESH_MS = 120_000;
 
 export default function Home() {
-  return (
-    <PolymarketSocketProvider>
-      <HomeDashboard />
-    </PolymarketSocketProvider>
-  );
+  return <HomeDashboard />;
 }
 
 function HomeDashboard() {

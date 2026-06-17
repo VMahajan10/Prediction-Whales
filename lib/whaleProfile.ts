@@ -1,4 +1,5 @@
 import type { MarketSummary, TradeSummary } from "@/lib/polymarket";
+import type { SocketTrade } from "@/lib/usePolymarketSocket";
 
 export type SignalImpact = "high" | "medium" | "low";
 
@@ -222,6 +223,34 @@ export function findTradeByHash(
   return (
     trades.find((t) => t.transactionHash.toLowerCase() === decoded) ?? null
   );
+}
+
+export function findSocketTradeByHash(
+  trades: SocketTrade[],
+  hash: string
+): SocketTrade | null {
+  const decoded = decodeURIComponent(hash).toLowerCase();
+  return (
+    trades.find((t) => t.transactionHash.toLowerCase() === decoded) ?? null
+  );
+}
+
+/** Adapt a live WS trade to TradeSummary (size = USD notional). */
+export function socketTradeToTradeSummary(t: SocketTrade): TradeSummary {
+  return {
+    id: t.transactionHash || t.id,
+    title: t.title,
+    side: t.side,
+    outcome: t.outcome,
+    price: t.price,
+    size: t.usdNotional,
+    timestamp: t.timestamp,
+    transactionHash: t.transactionHash,
+    assetId: t.assetId,
+    eventSlug: t.eventSlug,
+    slug: t.slug,
+    conditionId: t.conditionId,
+  };
 }
 
 export function findRelatedTrades(

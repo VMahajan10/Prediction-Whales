@@ -1,4 +1,5 @@
 import { KalshiClient } from "@kalshi/sdk";
+import { cacheKalshiTitlesFromMarkets } from "@/lib/kalshiTitleResolver";
 import { recordPrices } from "@/lib/kalshiPriceStore";
 import { NextResponse } from "next/server";
 
@@ -106,6 +107,7 @@ export async function GET() {
       }));
 
     await recordPrices(simple);
+    await cacheKalshiTitlesFromMarkets(simple);
 
     const response = { markets: simple };
     cache = { data: response, timestamp: now };

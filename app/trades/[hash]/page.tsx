@@ -2,16 +2,19 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import MarketPriceChart from "@/components/MarketPriceChart";
 import type { MarketSummary, TradeSummary } from "@/lib/polymarket";
 import { formatVolumeUsd } from "@/lib/polymarket";
 import {
   findMarketForTrade,
   findRelatedTrades,
+  findSocketTradeByHash,
   findTradeByHash,
+  socketTradeToTradeSummary,
   truncateTxHash,
 } from "@/lib/whaleProfile";
+import { usePolymarketSocketContext } from "@/lib/PolymarketSocketProvider";
 import { getFullDate, getTimeAgo, getUtcString } from "@/lib/time";
 import {
   getPlainEnglishOutcome,
@@ -78,6 +81,9 @@ function SizeBar({ filled }: { filled: number }) {
 export default function TradeDetailPage() {
   const params = useParams();
   const hash = typeof params.hash === "string" ? params.hash : "";
+  const { trades: socketTrades } = usePolymarketSocketContext();
+  const socketTradesRef = useRef(socketTrades);
+  socketTradesRef.current = socketTrades;
 
   const [trade, setTrade] = useState<TradeSummary | null>(null);
   const [relatedTrades, setRelatedTrades] = useState<TradeSummary[]>([]);
@@ -89,51 +95,122 @@ export default function TradeDetailPage() {
   const [showAllNearby, setShowAllNearby] = useState(false);
   const [currentProbability, setCurrentProbability] = useState(0);
 
-  const loadTrade = useCallback(async () => {
+  useEffect(() => {
     if (!hash) return;
 
-    try {
-      const [tradesRes, pmRes, piRes] = await Promise.all([
-        fetch("/api/trades"),
-        fetch("/api/markets"),
-        fetch("/api/kalshi"),
-      ]);
+    const wsTrade = findSocketTradeByHash(socketTrades, hash);
+    if (!wsTrade) return;
 
-      const tradesData: { trades?: TradeSummary[] } = await tradesRes.json();
-      const pmData: { markets?: MarketSummary[] } = await pmRes.json();
-      const piData: { markets?: MarketSummary[] } = await piRes.json();
+    const found = socketTradeToTradeSummary(wsTrade);
+    setTrade(found);
+    setRelatedTrades([]);
+    setNotFound(false);
+    setLoading(false);
+    setCurrentProbability(found.price);
 
-      const trades = tradesData.trades ?? [];
-      const found = findTradeByHash(trades, hash);
+    let cancelled = false;
 
-      if (!found) {
-        setNotFound(true);
-        setTrade(null);
-        return;
+    void (async () => {
+      try {
+        const [pmRes, piRes] = await Promise.all([
+          fetch("/api/markets"),
+          fetch("/api/kalshi"),
+        ]);
+        if (cancelled) return;
+
+        const pmData: { markets?: MarketSummary[] } = await pmRes.json();
+        const piData: { markets?: MarketSummary[] } = await piRes.json();
+        const allMarkets = [
+          ...(pmData.markets ?? []),
+          ...(piData.markets ?? []),
+        ];
+        const market = findMarketForTrade(found, allMarkets);
+
+        if (cancelled) return;
+        setMatchedMarket(market);
+        setCurrentProbability(market?.probability ?? found.price);
+      } catch {
+        // Market enrichment is optional for WS trades
       }
+    })();
 
-      const allMarkets = [
-        ...(pmData.markets ?? []),
-        ...(piData.markets ?? []),
-      ];
-
-      const market = findMarketForTrade(found, allMarkets);
-      setTrade(found);
-      setRelatedTrades(findRelatedTrades(trades, found));
-      setMatchedMarket(market);
-      setCurrentProbability(market?.probability ?? found.price);
-      setNotFound(false);
-    } catch {
-      setNotFound(true);
-    } finally {
-      setLoading(false);
-    }
-  }, [hash]);
+    return () => {
+      cancelled = true;
+    };
+  }, [hash, socketTrades]);
 
   useEffect(() => {
-    setLoading(true);
-    loadTrade();
-  }, [loadTrade]);
+    if (!hash) return;
+
+    let cancelled = false;
+    const inSocket = !!findSocketTradeByHash(socketTradesRef.current, hash);
+    if (!inSocket) {
+      setLoading(true);
+    }
+    setNotFound(false);
+
+    void (async () => {
+      if (findSocketTradeByHash(socketTradesRef.current, hash)) return;
+
+      try {
+        const [tradesRes, pmRes, piRes] = await Promise.all([
+          fetch("/api/trades"),
+          fetch("/api/markets"),
+          fetch("/api/kalshi"),
+        ]);
+        if (cancelled) return;
+
+        const tradesData: { trades?: TradeSummary[] } = await tradesRes.json();
+        const pmData: { markets?: MarketSummary[] } = await pmRes.json();
+        const piData: { markets?: MarketSummary[] } = await piRes.json();
+
+        if (findSocketTradeByHash(socketTradesRef.current, hash)) return;
+
+        const trades = tradesData.trades ?? [];
+        const found = findTradeByHash(trades, hash);
+
+        if (!found) {
+          if (!findSocketTradeByHash(socketTradesRef.current, hash)) {
+            setNotFound(true);
+            setTrade(null);
+          }
+          return;
+        }
+
+        if (findSocketTradeByHash(socketTradesRef.current, hash)) return;
+
+        const allMarkets = [
+          ...(pmData.markets ?? []),
+          ...(piData.markets ?? []),
+        ];
+        const market = findMarketForTrade(found, allMarkets);
+
+        setTrade(found);
+        setRelatedTrades(findRelatedTrades(trades, found));
+        setMatchedMarket(market);
+        setCurrentProbability(market?.probability ?? found.price);
+        setNotFound(false);
+      } catch {
+        if (
+          !cancelled &&
+          !findSocketTradeByHash(socketTradesRef.current, hash)
+        ) {
+          setNotFound(true);
+        }
+      } finally {
+        if (
+          !cancelled &&
+          !findSocketTradeByHash(socketTradesRef.current, hash)
+        ) {
+          setLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hash]);
 
   useEffect(() => {
     if (!trade?.title) return;
