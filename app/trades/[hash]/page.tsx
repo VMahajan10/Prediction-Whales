@@ -2,8 +2,21 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import CopyBetSignal from "@/components/CopyBetSignal";
+import CrossMarketEvBadge from "@/components/CrossMarketEvBadge";
+import LoadErrorCard from "@/components/LoadErrorCard";
 import MarketPriceChart from "@/components/MarketPriceChart";
+import TradeDetailSkeleton, {
+  EnrichmentSkeleton,
+} from "@/components/TradeDetailSkeleton";
+import WhaleTrackRecord from "@/components/WhaleTrackRecord";
+import {
+  fetchWithTimeout,
+  isFetchTimeoutError,
+} from "@/lib/fetchWithTimeout";
+import { getCachedWhaleTrade } from "@/lib/whaleCache";
+import { consumeStashedTrade } from "@/lib/tradeNavigationStore";
 import type { MarketSummary, TradeSummary } from "@/lib/polymarket";
 import { formatVolumeUsd } from "@/lib/polymarket";
 import {
@@ -15,6 +28,9 @@ import {
   truncateTxHash,
 } from "@/lib/whaleProfile";
 import { usePolymarketSocketContext } from "@/lib/PolymarketSocketProvider";
+import { isPolymarketTrade } from "@/lib/tradeSource";
+import { useResolvedWallet } from "@/lib/useResolvedWallet";
+import { useCrossMarketEvIndex } from "@/lib/useCrossMarketEvIndex";
 import { getFullDate, getTimeAgo, getUtcString } from "@/lib/time";
 import {
   getPlainEnglishOutcome,
@@ -82,8 +98,6 @@ export default function TradeDetailPage() {
   const params = useParams();
   const hash = typeof params.hash === "string" ? params.hash : "";
   const { trades: socketTrades } = usePolymarketSocketContext();
-  const socketTradesRef = useRef(socketTrades);
-  socketTradesRef.current = socketTrades;
 
   const [trade, setTrade] = useState<TradeSummary | null>(null);
   const [relatedTrades, setRelatedTrades] = useState<TradeSummary[]>([]);
@@ -92,125 +106,162 @@ export default function TradeDetailPage() {
   );
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [marketsLoading, setMarketsLoading] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const [showAllNearby, setShowAllNearby] = useState(false);
   const [currentProbability, setCurrentProbability] = useState(0);
+  const abortRef = useRef<AbortController | null>(null);
 
-  useEffect(() => {
-    if (!hash) return;
-
-    const wsTrade = findSocketTradeByHash(socketTrades, hash);
-    if (!wsTrade) return;
-
-    const found = socketTradeToTradeSummary(wsTrade);
-    setTrade(found);
-    setRelatedTrades([]);
+  const retryLoad = useCallback(() => {
+    setLoadError(null);
     setNotFound(false);
-    setLoading(false);
-    setCurrentProbability(found.price);
+    setReloadKey((k) => k + 1);
+  }, []);
 
-    let cancelled = false;
+  const polymarketTrade = useMemo(
+    () => (trade && isPolymarketTrade(trade) ? trade : null),
+    [trade]
+  );
+  const { resolvedWallet, walletResolutionFailed } =
+    useResolvedWallet(polymarketTrade);
+  const { index: evIndex } = useCrossMarketEvIndex();
 
-    void (async () => {
+  const displayWallet = useMemo(
+    () => polymarketTrade?.proxyWallet ?? resolvedWallet,
+    [polymarketTrade?.proxyWallet, resolvedWallet]
+  );
+
+  const tradeEvInput = useMemo(() => {
+    if (!trade || !isPolymarketTrade(trade)) return null;
+    return {
+      source: "polymarket" as const,
+      price: trade.price,
+      slug: trade.slug,
+    };
+  }, [trade]);
+
+  const filteredNearby = useMemo(() => {
+    return relatedTrades
+      .filter((t) => t.size >= NEARBY_MIN_SIZE)
+      .sort((a, b) => b.size - a.size);
+  }, [relatedTrades]);
+
+  const enrichMarkets = useCallback(
+    async (found: TradeSummary, signal: AbortSignal) => {
+      setMarketsLoading(true);
       try {
-        const [pmRes, piRes] = await Promise.all([
-          fetch("/api/markets"),
-          fetch("/api/kalshi"),
+        const [pmResult, piResult] = await Promise.allSettled([
+          fetchWithTimeout("/api/markets", { signal }),
+          fetchWithTimeout("/api/kalshi", { signal }),
         ]);
-        if (cancelled) return;
+        if (signal.aborted) return;
 
-        const pmData: { markets?: MarketSummary[] } = await pmRes.json();
-        const piData: { markets?: MarketSummary[] } = await piRes.json();
-        const allMarkets = [
-          ...(pmData.markets ?? []),
-          ...(piData.markets ?? []),
-        ];
+        const allMarkets: MarketSummary[] = [];
+        if (pmResult.status === "fulfilled" && pmResult.value.ok) {
+          const pmData: { markets?: MarketSummary[] } =
+            await pmResult.value.json();
+          allMarkets.push(...(pmData.markets ?? []));
+        }
+        if (piResult.status === "fulfilled" && piResult.value.ok) {
+          const piData: { markets?: MarketSummary[] } =
+            await piResult.value.json();
+          allMarkets.push(...(piData.markets ?? []));
+        }
+
         const market = findMarketForTrade(found, allMarkets);
-
-        if (cancelled) return;
+        if (signal.aborted) return;
         setMatchedMarket(market);
         setCurrentProbability(market?.probability ?? found.price);
       } catch {
-        // Market enrichment is optional for WS trades
+        // Market enrichment is optional
+      } finally {
+        if (!signal.aborted) setMarketsLoading(false);
       }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [hash, socketTrades]);
+    },
+    []
+  );
 
   useEffect(() => {
-    if (!hash) return;
-
-    let cancelled = false;
-    const inSocket = !!findSocketTradeByHash(socketTradesRef.current, hash);
-    if (!inSocket) {
-      setLoading(true);
+    if (!hash) {
+      setLoading(false);
+      return;
     }
+
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const signal = controller.signal;
+
+    setLoadError(null);
     setNotFound(false);
+    setMatchedMarket(null);
+
+    const finishLoading = () => setLoading(false);
+
+    const instantFromSocket = () => {
+      const wsTrade = findSocketTradeByHash(socketTrades, hash);
+      return wsTrade ? socketTradeToTradeSummary(wsTrade) : null;
+    };
+
+    const instant =
+      consumeStashedTrade(hash) ??
+      instantFromSocket() ??
+      getCachedWhaleTrade(hash);
+
+    if (instant) {
+      setTrade(instant);
+      setCurrentProbability(instant.price);
+      setNotFound(false);
+      finishLoading();
+      void enrichMarkets(instant, signal);
+      return () => {
+        controller.abort();
+      };
+    }
+
+    setLoading(true);
 
     void (async () => {
-      if (findSocketTradeByHash(socketTradesRef.current, hash)) return;
-
       try {
-        const [tradesRes, pmRes, piRes] = await Promise.all([
-          fetch("/api/trades"),
-          fetch("/api/markets"),
-          fetch("/api/kalshi"),
-        ]);
-        if (cancelled) return;
+        const res = await fetchWithTimeout("/api/trades", { signal });
+        if (signal.aborted) return;
 
-        const tradesData: { trades?: TradeSummary[] } = await tradesRes.json();
-        const pmData: { markets?: MarketSummary[] } = await pmRes.json();
-        const piData: { markets?: MarketSummary[] } = await piRes.json();
-
-        if (findSocketTradeByHash(socketTradesRef.current, hash)) return;
+        const tradesData: { trades?: TradeSummary[] } = await res.json();
+        if (signal.aborted) return;
 
         const trades = tradesData.trades ?? [];
         const found = findTradeByHash(trades, hash);
 
-        if (!found) {
-          if (!findSocketTradeByHash(socketTradesRef.current, hash)) {
-            setNotFound(true);
-            setTrade(null);
-          }
-          return;
-        }
-
-        if (findSocketTradeByHash(socketTradesRef.current, hash)) return;
-
-        const allMarkets = [
-          ...(pmData.markets ?? []),
-          ...(piData.markets ?? []),
-        ];
-        const market = findMarketForTrade(found, allMarkets);
-
-        setTrade(found);
-        setRelatedTrades(findRelatedTrades(trades, found));
-        setMatchedMarket(market);
-        setCurrentProbability(market?.probability ?? found.price);
-        setNotFound(false);
-      } catch {
-        if (
-          !cancelled &&
-          !findSocketTradeByHash(socketTradesRef.current, hash)
-        ) {
+        if (found) {
+          setTrade(found);
+          setRelatedTrades(findRelatedTrades(trades, found));
+          setCurrentProbability(found.price);
+          setNotFound(false);
+          finishLoading();
+          void enrichMarkets(found, signal);
+        } else {
           setNotFound(true);
+          setTrade(null);
+          finishLoading();
         }
-      } finally {
-        if (
-          !cancelled &&
-          !findSocketTradeByHash(socketTradesRef.current, hash)
-        ) {
-          setLoading(false);
-        }
+      } catch (err) {
+        if (signal.aborted) return;
+
+        setLoadError(
+          isFetchTimeoutError(err)
+            ? "Trade data timed out after 8 seconds."
+            : "Could not load trade data."
+        );
+        setTrade(null);
+        finishLoading();
       }
     })();
 
     return () => {
-      cancelled = true;
+      controller.abort();
     };
-  }, [hash]);
+  }, [hash, reloadKey, socketTrades, enrichMarkets]);
 
   useEffect(() => {
     if (!trade?.title) return;
@@ -236,20 +287,21 @@ export default function TradeDetailPage() {
     return () => clearInterval(interval);
   }, [trade?.title]);
 
-  const filteredNearby = useMemo(() => {
-    return relatedTrades
-      .filter((t) => t.size >= NEARBY_MIN_SIZE)
-      .sort((a, b) => b.size - a.size);
-  }, [relatedTrades]);
-
   const visibleNearby = showAllNearby
     ? filteredNearby
     : filteredNearby.slice(0, 5);
 
   if (loading) {
+    return <TradeDetailSkeleton />;
+  }
+
+  if (loadError) {
     return (
       <main className="mx-auto max-w-4xl px-4 py-8">
-        <p className="text-pulse-muted animate-pulse">Loading trade details…</p>
+        <Link href="/" className="text-sm text-pulse-accent hover:underline">
+          ← Back to Dashboard
+        </Link>
+        <LoadErrorCard message={loadError} onRetry={retryLoad} />
       </main>
     );
   }
@@ -302,6 +354,8 @@ export default function TradeDetailPage() {
       : size;
   const livePnl =
     trade.side === "BUY" ? liveValue - size : size - liveShares * currentProbability;
+
+  const showPolymarketWalletSections = isPolymarketTrade(trade);
 
   return (
     <main className="mx-auto min-h-screen max-w-4xl px-4 py-8 sm:px-6">
@@ -444,12 +498,18 @@ export default function TradeDetailPage() {
 
         <p className="mb-4 text-sm text-slate-300">
           Current market probability:{" "}
-          <strong className="text-white">{currentProbPct.toFixed(1)}%</strong>
+          {marketsLoading && !matchedMarket ? (
+            <span className="inline-block h-4 w-12 animate-pulse rounded bg-slate-700 align-middle" />
+          ) : (
+            <strong className="text-white">{currentProbPct.toFixed(1)}%</strong>
+          )}
           {" "}(was <strong className="text-white">{tradePricePct.toFixed(1)}%</strong>{" "}
           when this trade was placed)
         </p>
 
-        {tokenId ? (
+        {marketsLoading && !tokenId ? (
+          <EnrichmentSkeleton rows={4} />
+        ) : tokenId ? (
           <MarketPriceChart
             tokenId={tokenId}
             currentPrice={currentProbability}
@@ -570,6 +630,13 @@ export default function TradeDetailPage() {
         <p className="mb-4 text-sm text-slate-300">
           Price paid: <strong className="text-white">{priceCents}¢</strong>
         </p>
+        {tradeEvInput && (
+          <CrossMarketEvBadge
+            trade={tradeEvInput}
+            index={evIndex}
+            className="mb-4"
+          />
+        )}
         <p className="mb-4 text-sm leading-relaxed text-slate-300">
           Each share costs {priceCents}¢ and pays $1.00 if correct. That&apos;s
           a <strong className="text-white">{multiplier}x</strong> return on each
@@ -663,7 +730,9 @@ export default function TradeDetailPage() {
         <h2 className="mb-4 text-lg font-semibold text-white">
           🌍 The Market Being Traded
         </h2>
-        {matchedMarket ? (
+        {marketsLoading && !matchedMarket ? (
+          <EnrichmentSkeleton rows={4} />
+        ) : matchedMarket ? (
           <>
             <div className="rounded-xl border border-pulse-border bg-pulse-card p-4">
               <h3 className="mb-3 text-sm font-medium text-white">
@@ -827,6 +896,24 @@ export default function TradeDetailPage() {
           </>
         )}
       </section>
+
+      {showPolymarketWalletSections && (
+        <>
+          <CopyBetSignal
+            trade={trade}
+            currentProbability={currentProbability}
+            matchedMarket={matchedMarket}
+          />
+
+          <WhaleTrackRecord
+            proxyWallet={displayWallet}
+            walletUnavailable={walletResolutionFailed}
+            entryPrice={trade.price}
+            currentPrice={currentProbability}
+            betSize={size}
+          />
+        </>
+      )}
 
       {/* SECTION 10: DISCLAIMER */}
       <p className="text-xs leading-relaxed text-slate-500">

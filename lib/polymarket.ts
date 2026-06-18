@@ -112,6 +112,8 @@ export interface TrackRecord {
   totalBets: number;
   closedCount: number;
   totalRealizedPnl: number;
+  totalInvested: number;
+  roi: number | null;
   hasEnoughHistory: boolean;
   excludedEphemeralCount: number;
 }
@@ -134,8 +136,6 @@ export interface ClvStats {
   totalClosed: number;
   hasEnoughCoverage: boolean;
   coverageFloor: number;
-  totalEvDollars: number;
-  avgEvPerBet: number;
   positions?: ClosingLineResult[];
 }
 
@@ -456,6 +456,12 @@ export function computeTrackRecord(
     (sum, p) => sum + (p.realizedPnl ?? 0),
     0
   );
+  const totalInvested = closed.reduce(
+    (sum, p) => sum + (p.totalBought ?? 0),
+    0
+  );
+  const roi =
+    totalInvested > 0 ? (totalPnl / totalInvested) * 100 : null;
 
   return {
     winRate:
@@ -465,6 +471,8 @@ export function computeTrackRecord(
     totalBets: eligible.length,
     closedCount: closed.length,
     totalRealizedPnl: totalPnl,
+    totalInvested,
+    roi,
     hasEnoughHistory: closed.length >= 5,
     excludedEphemeralCount,
   };
@@ -578,8 +586,6 @@ export async function computeClvStats(
       totalClosed: 0,
       hasEnoughCoverage: false,
       coverageFloor,
-      totalEvDollars: 0,
-      avgEvPerBet: 0,
       positions: [],
     };
   }
@@ -620,11 +626,6 @@ export async function computeClvStats(
   );
 
   const valid = positions.filter((p) => p.valid && p.clv != null);
-  for (const p of valid) {
-    if (p.closingLine == null || p.avgPrice <= 0) continue;
-    const shares = p.totalBought / p.avgPrice;
-    p.evDollars = (p.closingLine - p.avgPrice) * shares;
-  }
   const coverage = valid.length;
 
   if (coverage === 0) {
@@ -636,8 +637,6 @@ export async function computeClvStats(
       totalClosed,
       hasEnoughCoverage: false,
       coverageFloor,
-      totalEvDollars: 0,
-      avgEvPerBet: 0,
       positions,
     };
   }
@@ -654,9 +653,6 @@ export async function computeClvStats(
         ) / totalStaked
       : null;
 
-  const totalEvDollars = valid.reduce((sum, p) => sum + (p.evDollars ?? 0), 0);
-  const avgEvPerBet = totalEvDollars / coverage;
-
   const showWeighted =
     weightedClv != null &&
     Math.abs(avgClv - weightedClv) >= CLV_CONSTANTS.WEIGHTED_DIFF_THRESHOLD;
@@ -669,8 +665,6 @@ export async function computeClvStats(
     totalClosed,
     hasEnoughCoverage: coverage >= coverageFloor,
     coverageFloor,
-    totalEvDollars,
-    avgEvPerBet,
     positions,
   };
 }

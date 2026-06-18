@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import type { WhaleTrade } from "@/lib/whaleTrades";
+import { stashTradeForNavigation } from "@/lib/tradeNavigationStore";
 
 interface NewWhaleToastProps {
   whale: WhaleTrade | null;
@@ -38,7 +39,10 @@ export default function NewWhaleToast({ whale, onDismiss }: NewWhaleToastProps) 
         </p>
         <Link
           href={`/whales/${encodeURIComponent(whale.transactionHash)}`}
-          onClick={onDismiss}
+          onClick={() => {
+            stashTradeForNavigation(whale);
+            onDismiss();
+          }}
           className="block w-full rounded-lg bg-green-600 py-2 text-center text-sm font-semibold text-white transition-colors hover:bg-green-500"
         >
           View Whale Trade →

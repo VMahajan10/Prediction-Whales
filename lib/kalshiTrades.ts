@@ -16,6 +16,7 @@ export interface FeedTrade {
   traceable: boolean;
   transactionHash?: string;
   ticker?: string;
+  slug?: string;
   isBlockTrade?: boolean;
 }
 

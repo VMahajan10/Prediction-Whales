@@ -6,10 +6,15 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "db:migrate": "drizzle-kit migrate",
+    "db:generate": "drizzle-kit generate",
+    "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.0.0",
     "@upstash/redis": "^1.38.0",
+    "drizzle-orm": "^0.44.0",
     "kalshi-typescript": "^3.20.0",
     "next": "14.2.35",
     "react": "^18.3.1",
@@ -20,6 +25,7 @@
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "autoprefixer": "^10.4.20",
+    "drizzle-kit": "^0.31.0",
     "eslint": "^8",
     "eslint-config-next": "14.2.35",
     "postcss": "^8.4.49",

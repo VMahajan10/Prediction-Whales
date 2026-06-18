@@ -1,7 +1,7 @@
 import { Redis } from "@upstash/redis";
 import type { CategoryStats, ClvStats, TrackRecord } from "@/lib/polymarket";
 
-const CACHE_VERSION = "v3";
+const CACHE_VERSION = "v4";
 const KEY_PREFIX = `whale:stats:${CACHE_VERSION}:`;
 const TTL_SEC = 600; // 10 minutes
 
@@ -78,8 +78,6 @@ export async function setCachedTrackRecord(
         totalClosed: 0,
         hasEnoughCoverage: false,
         coverageFloor: 5,
-        totalEvDollars: 0,
-        avgEvPerBet: 0,
         positions: [],
       },
       cachedAt: Date.now(),

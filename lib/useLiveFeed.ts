@@ -70,6 +70,7 @@ function adaptPolymarketTrade(t: SocketTrade): FeedTrade {
     timestamp: t.timestamp,
     traceable: true,
     transactionHash: t.transactionHash,
+    slug: t.slug,
   };
 }
 

@@ -3,48 +3,41 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { trackCopyTap } from "@/lib/copyTracking";
-import { getCachedWhaleTrade, resolveAndCacheWallet } from "@/lib/whaleCache";
+import CopyBetSignal from "@/components/CopyBetSignal";
+import CrossMarketEvBadge from "@/components/CrossMarketEvBadge";
+import LoadErrorCard from "@/components/LoadErrorCard";
+import TradeDetailSkeleton, {
+  EnrichmentSkeleton,
+} from "@/components/TradeDetailSkeleton";
+import { getCachedWhaleTrade } from "@/lib/whaleCache";
+import { consumeStashedTrade } from "@/lib/tradeNavigationStore";
+import {
+  fetchWithTimeout,
+  isFetchTimeoutError,
+} from "@/lib/fetchWithTimeout";
 import {
   findMarketForTrade,
   findRelatedTrades,
+  findSocketTradeByHash,
   findTradeByHash,
+  socketTradeToTradeSummary,
   truncateTxHash,
 } from "@/lib/whaleProfile";
+import { usePolymarketSocketContext } from "@/lib/PolymarketSocketProvider";
 import {
-  calculateCopyVerdict,
-  getDirectionSignal,
-  getLiquiditySignal,
-  getPriceSignal,
-  getSizeSignal,
-  getTimingSignal,
-  VERDICT_BADGE_CLASSES,
-  type WhaleSignal,
-} from "@/lib/whaleSignals";
-import {
-  getPolymarketTradeUrl,
   type MarketSummary,
   type TradeSummary,
 } from "@/lib/polymarket";
+import { useResolvedWallet } from "@/lib/useResolvedWallet";
+import { useCrossMarketEvIndex } from "@/lib/useCrossMarketEvIndex";
+import { isPolymarketTrade } from "@/lib/tradeSource";
 import { getFullDate, getTimeAgo, getUtcString } from "@/lib/time";
 import WhaleTrackRecord from "@/components/WhaleTrackRecord";
 
-interface WhaleProfileResponse {
-  trade: TradeSummary | null;
-  relatedTrades: TradeSummary[];
-  marketContext: {
-    currentProbability: number | null;
-    priceAtTrade: number;
-    delta: number;
-  };
-  matchedMarket: MarketSummary | null;
-  error?: string;
-}
-
 const MIN_WHALE_THRESHOLD = 500;
 const NEARBY_MIN_SIZE = 100;
-const MAX_RETRIES = 6;
-const RETRY_INTERVAL_MS = 5000;
+const MAX_SYNC_RETRIES = 3;
+const SYNC_RETRY_DELAYS_MS = [2000, 4000, 8000];
 const US_WEEKLY_WAGE = 1154;
 const BAR_UNIT = 125;
 
@@ -123,41 +116,6 @@ function findMatchingMarket(
   }
 
   return null;
-}
-
-function getButtonConfig(verdict: string, side: string) {
-  if (side === "SELL") {
-    return {
-      text: "View This Market on Polymarket →",
-      className: "bg-slate-700 hover:bg-slate-600 text-white",
-    };
-  }
-
-  if (verdict === "Strong Copy Signal") {
-    return {
-      text: "Copy This Bet on Polymarket →",
-      className: "bg-green-600 hover:bg-green-500 text-white",
-    };
-  }
-
-  if (verdict === "Worth Considering") {
-    return {
-      text: "Consider This Bet on Polymarket →",
-      className: "bg-blue-600 hover:bg-blue-500 text-white",
-    };
-  }
-
-  if (verdict === "Proceed With Caution") {
-    return {
-      text: "View This Market on Polymarket →",
-      className: "bg-yellow-600 hover:bg-yellow-500 text-white",
-    };
-  }
-
-  return {
-    text: "View This Market on Polymarket →",
-    className: "bg-slate-700 hover:bg-slate-600 text-white",
-  };
 }
 
 function getTopPercentTier(size: number): string {
@@ -246,46 +204,16 @@ function StatBox({
   );
 }
 
-function SkeletonBlock({ className = "" }: { className?: string }) {
-  return <div className={`animate-pulse rounded-lg bg-slate-700/60 ${className}`} />;
-}
-
 function WhaleProfileSkeleton() {
-  return (
-    <main className="mx-auto min-h-screen max-w-4xl px-4 py-8 sm:px-6">
-      <SkeletonBlock className="mb-6 h-4 w-36" />
-      <div className="mb-8 rounded-xl border border-pulse-border bg-slate-800 p-6">
-        <SkeletonBlock className="mb-4 h-10 w-full" />
-        <SkeletonBlock className="mb-3 h-4 w-48" />
-        <div className="space-y-3">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <SkeletonBlock key={i} className="h-20 w-full" />
-          ))}
-        </div>
-        <SkeletonBlock className="mt-6 h-14 w-full" />
-      </div>
-      <div className="mb-8 rounded-xl border border-pulse-border bg-slate-800 p-6">
-        <SkeletonBlock className="mb-4 h-6 w-40" />
-        <div className="grid gap-6 sm:grid-cols-2">
-          <SkeletonBlock className="h-36" />
-          <SkeletonBlock className="h-36" />
-        </div>
-      </div>
-      <div className="mb-8 rounded-xl border border-pulse-border bg-slate-800 p-6">
-        <SkeletonBlock className="mb-4 h-6 w-48" />
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <SkeletonBlock key={i} className="h-28" />
-          ))}
-        </div>
-      </div>
-    </main>
-  );
+  return <TradeDetailSkeleton />;
 }
 
 export default function WhaleProfilePage() {
   const params = useParams();
   const hash = typeof params.hash === "string" ? params.hash : "";
+  const { trades: socketTrades } = usePolymarketSocketContext();
+  const socketTradesRef = useRef(socketTrades);
+  socketTradesRef.current = socketTrades;
 
   const [trade, setTrade] = useState<TradeSummary | null>(null);
   const [relatedTrades, setRelatedTrades] = useState<TradeSummary[]>([]);
@@ -295,179 +223,226 @@ export default function WhaleProfilePage() {
   const [matchConfidence, setMatchConfidence] = useState<MatchConfidence | null>(
     null
   );
-  const [marketContext, setMarketContext] = useState<
-    WhaleProfileResponse["marketContext"]
-  >({
-    currentProbability: null,
-    priceAtTrade: 0,
-    delta: 0,
-  });
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [marketsLoading, setMarketsLoading] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const [retrying, setRetrying] = useState(false);
   const [showAllNearby, setShowAllNearby] = useState(false);
   const [currentProbability, setCurrentProbability] = useState<number | null>(
     null
   );
-  const [resolvedWallet, setResolvedWallet] = useState<string | undefined>(
-    undefined
-  );
-  const [walletResolutionFailed, setWalletResolutionFailed] = useState(false);
   const retryCount = useRef(0);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadAbortRef = useRef<AbortController | null>(null);
+  const enrichAbortRef = useRef<AbortController | null>(null);
 
-  const loadProfile = useCallback(async () => {
-    if (!hash) return;
-
-    try {
-      const [tradesRes, profileRes, pmRes, piRes] = await Promise.all([
-        fetch("/api/trades"),
-        fetch(`/api/whale-profile?hash=${encodeURIComponent(hash)}`),
-        fetch("/api/markets"),
-        fetch("/api/kalshi"),
-      ]);
-
-      const tradesData: { trades?: TradeSummary[] } = await tradesRes.json();
-      const profileData: WhaleProfileResponse = await profileRes.json();
-      const pmData: { markets?: MarketSummary[] } = await pmRes.json();
-      const piData: { markets?: MarketSummary[] } = await piRes.json();
-
-      const trades = tradesData.trades ?? [];
-      const allMarkets = [
-        ...(pmData.markets ?? []),
-        ...(piData.markets ?? []),
-      ];
-
-      // REST first (backward compatible for older trades), then the
-      // client-side live cache (instant for just-detected WebSocket whales).
-      const foundTrade =
-        findTradeByHash(trades, hash) ??
-        profileData.trade ??
-        getCachedWhaleTrade(hash) ??
-        null;
-
-      if (!foundTrade) {
-        // Live trade not yet in the ~300s-cached REST API and no local cache
-        // (e.g. a shared link on another device). Retry a few times before
-        // giving up, since it will land in REST shortly.
-        if (retryCount.current < MAX_RETRIES) {
-          retryCount.current += 1;
-          setRetrying(true);
-          setLoading(false);
-          retryTimer.current = setTimeout(() => {
-            void loadProfile();
-          }, RETRY_INTERVAL_MS);
-          return;
-        }
-        setRetrying(false);
-        setNotFound(true);
-        setTrade(null);
-        return;
-      }
-
-      retryCount.current = 0;
-      setRetrying(false);
-
-      setTrade(foundTrade);
-      const nearby = findRelatedTrades(trades, foundTrade);
-      setRelatedTrades(
-        nearby.length > 0 ? nearby : profileData.relatedTrades
-      );
-
-      const pmMarkets = pmData.markets ?? [];
-      const matchResult = findMatchingMarket(foundTrade.title, pmMarkets);
-      let market = matchResult?.market ?? null;
-      let confidence = matchResult?.confidence ?? null;
-
-      if (!market) {
-        market =
-          profileData.matchedMarket ??
-          findMarketForTrade(foundTrade, allMarkets);
-        if (market) confidence = "low";
-      }
-
-      setMatchedMarket(market);
-      setMatchConfidence(confidence);
-      const ctx =
-        profileData.marketContext ?? {
-          currentProbability: market?.probability ?? null,
-          priceAtTrade: foundTrade.price,
-          delta:
-            market != null
-              ? (market.probability - foundTrade.price) * 100
-              : 0,
-        };
-      setMarketContext(ctx);
-      setCurrentProbability(ctx.currentProbability);
-      setNotFound(false);
-    } catch {
-      setNotFound(true);
-    } finally {
-      setLoading(false);
-    }
-  }, [hash]);
+  const retryLoad = useCallback(() => {
+    retryCount.current = 0;
+    setLoadError(null);
+    setNotFound(false);
+    setRetrying(false);
+    setReloadKey((k) => k + 1);
+  }, []);
 
   useEffect(() => {
     retryCount.current = 0;
-    setRetrying(false);
-    setNotFound(false);
-    setLoading(true);
-    setResolvedWallet(undefined);
-    setWalletResolutionFailed(false);
-    loadProfile();
+    setMatchedMarket(null);
+    setMatchConfidence(null);
+  }, [hash]);
+
+  const enrichMarkets = useCallback(
+    async (found: TradeSummary, signal: AbortSignal) => {
+      setMarketsLoading(true);
+      try {
+        const [pmResult, piResult] = await Promise.allSettled([
+          fetchWithTimeout("/api/markets", { signal }),
+          fetchWithTimeout("/api/kalshi", { signal }),
+        ]);
+        if (signal.aborted) return;
+
+        const allMarkets: MarketSummary[] = [];
+        let pmMarkets: MarketSummary[] = [];
+
+        if (pmResult.status === "fulfilled" && pmResult.value.ok) {
+          const pmData: { markets?: MarketSummary[] } =
+            await pmResult.value.json();
+          pmMarkets = pmData.markets ?? [];
+          allMarkets.push(...pmMarkets);
+        }
+        if (piResult.status === "fulfilled" && piResult.value.ok) {
+          const piData: { markets?: MarketSummary[] } =
+            await piResult.value.json();
+          allMarkets.push(...(piData.markets ?? []));
+        }
+
+        const matchResult = findMatchingMarket(found.title, pmMarkets);
+        let market = matchResult?.market ?? null;
+        let confidence = matchResult?.confidence ?? null;
+
+        if (!market) {
+          market = findMarketForTrade(found, allMarkets);
+          if (market) confidence = "low";
+        }
+
+        if (signal.aborted) return;
+
+        setMatchedMarket(market);
+        setMatchConfidence(confidence);
+        setCurrentProbability(market?.probability ?? found.price);
+      } catch {
+        // Market enrichment is optional
+      } finally {
+        if (!signal.aborted) setMarketsLoading(false);
+      }
+    },
+    []
+  );
+
+  // Market enrichment — once per trade, never tied to socket ticks or load retries.
+  useEffect(() => {
+    if (!trade?.transactionHash) return;
+
+    enrichAbortRef.current?.abort();
+    const controller = new AbortController();
+    enrichAbortRef.current = controller;
+
+    void enrichMarkets(trade, controller.signal);
+
     return () => {
-      if (retryTimer.current) clearTimeout(retryTimer.current);
+      controller.abort();
     };
-  }, [loadProfile]);
+  }, [trade?.transactionHash, enrichMarkets]);
 
   useEffect(() => {
-    if (!trade) return;
-
-    if (trade.proxyWallet) {
-      setResolvedWallet(trade.proxyWallet);
-      setWalletResolutionFailed(false);
+    if (!hash) {
+      setLoading(false);
       return;
     }
 
-    let cancelled = false;
-    let attempts = 0;
-    const maxAttempts = 10;
-    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    loadAbortRef.current?.abort();
+    if (retryTimer.current) clearTimeout(retryTimer.current);
 
-    const resolve = async () => {
-      if (cancelled) return;
-      if (attempts >= maxAttempts) {
-        setWalletResolutionFailed(true);
-        return;
-      }
-      attempts++;
-      try {
-        const wallet = await resolveAndCacheWallet(
-          trade.transactionHash,
-          trade.assetId
-        );
-        if (wallet && !cancelled) {
-          setResolvedWallet(wallet);
-          setWalletResolutionFailed(false);
-          return;
-        }
-      } catch {
-        // Retry below
-      }
-      if (!cancelled && attempts < maxAttempts) {
-        retryTimer = setTimeout(() => {
-          void resolve();
-        }, 3000);
-      } else if (!cancelled) {
-        setWalletResolutionFailed(true);
-      }
+    const controller = new AbortController();
+    loadAbortRef.current = controller;
+    const signal = controller.signal;
+
+    setLoadError(null);
+    setNotFound(false);
+
+    const finishLoading = () => setLoading(false);
+
+    const instantFromSocket = () => {
+      const wsTrade = findSocketTradeByHash(socketTradesRef.current, hash);
+      return wsTrade ? socketTradeToTradeSummary(wsTrade) : null;
     };
 
-    void resolve();
+    const instant =
+      consumeStashedTrade(hash) ??
+      instantFromSocket() ??
+      getCachedWhaleTrade(hash);
+
+    if (instant) {
+      setTrade(instant);
+      setCurrentProbability(instant.price);
+      setNotFound(false);
+      setRetrying(false);
+      finishLoading();
+      return () => {
+        controller.abort();
+        if (retryTimer.current) clearTimeout(retryTimer.current);
+      };
+    }
+
+    setLoading(true);
+
+    void (async () => {
+      try {
+        const res = await fetchWithTimeout("/api/trades", { signal });
+        if (signal.aborted) return;
+
+        const tradesData: { trades?: TradeSummary[] } = await res.json();
+        if (signal.aborted) return;
+
+        const trades = tradesData.trades ?? [];
+        const foundTrade = findTradeByHash(trades, hash);
+
+        if (!foundTrade) {
+          if (retryCount.current < MAX_SYNC_RETRIES) {
+            retryCount.current += 1;
+            setRetrying(true);
+            finishLoading();
+            const delay =
+              SYNC_RETRY_DELAYS_MS[retryCount.current - 1] ?? 8000;
+            retryTimer.current = setTimeout(() => {
+              setReloadKey((k) => k + 1);
+            }, delay);
+            return;
+          }
+          setRetrying(false);
+          setNotFound(true);
+          setTrade(null);
+          finishLoading();
+          return;
+        }
+
+        retryCount.current = 0;
+        setRetrying(false);
+        setTrade(foundTrade);
+        setRelatedTrades(findRelatedTrades(trades, foundTrade));
+        setCurrentProbability(foundTrade.price);
+        setNotFound(false);
+        finishLoading();
+      } catch (err) {
+        if (signal.aborted) return;
+
+        setLoadError(
+          isFetchTimeoutError(err)
+            ? "Whale trade data timed out after 8 seconds."
+            : "Could not load whale trade data."
+        );
+        setTrade(null);
+        setRetrying(false);
+        finishLoading();
+      }
+    })();
 
     return () => {
-      cancelled = true;
-      if (retryTimer) clearTimeout(retryTimer);
+      controller.abort();
+      if (retryTimer.current) clearTimeout(retryTimer.current);
+    };
+  }, [hash, reloadKey]);
+
+  // Fill in from live socket when trade wasn't in stash/cache on first paint.
+  useEffect(() => {
+    if (!hash || trade) return;
+    const wsTrade = findSocketTradeByHash(socketTrades, hash);
+    if (!wsTrade) return;
+
+    const found = socketTradeToTradeSummary(wsTrade);
+    setTrade(found);
+    setCurrentProbability(found.price);
+    setNotFound(false);
+    setRetrying(false);
+    setLoading(false);
+  }, [hash, socketTrades, trade]);
+
+  const { resolvedWallet, walletResolutionFailed } = useResolvedWallet(trade);
+
+  const displayWallet = useMemo(
+    () => trade?.proxyWallet ?? resolvedWallet,
+    [trade?.proxyWallet, resolvedWallet]
+  );
+
+  const { index: evIndex } = useCrossMarketEvIndex();
+
+  const tradeEvInput = useMemo(() => {
+    if (!trade || !isPolymarketTrade(trade)) return null;
+    return {
+      source: "polymarket" as const,
+      price: trade.price,
+      slug: trade.slug,
     };
   }, [trade]);
 
@@ -508,6 +483,17 @@ export default function WhaleProfilePage() {
     return <WhaleProfileSkeleton />;
   }
 
+  if (loadError) {
+    return (
+      <main className="mx-auto max-w-4xl px-4 py-8">
+        <Link href="/" className="text-sm text-pulse-accent hover:underline">
+          ← Back to Dashboard
+        </Link>
+        <LoadErrorCard message={loadError} onRetry={retryLoad} />
+      </main>
+    );
+  }
+
   if (retrying && !trade) {
     return (
       <main className="mx-auto max-w-4xl px-4 py-8">
@@ -540,7 +526,6 @@ export default function WhaleProfilePage() {
 
   const price = trade.price;
   const priceCents = (price * 100).toFixed(1);
-  const isSell = trade.side === "SELL";
   const isNoBet =
     trade.outcome?.toLowerCase() === "no" ||
     trade.outcome?.toLowerCase() === "no ";
@@ -574,21 +559,6 @@ export default function WhaleProfilePage() {
   const oddsComparison = getOddsComparison(displayProbability);
   const timingAnalysis = getTimingAnalysis(trade.timestamp);
 
-  const copySignals: WhaleSignal[] = [
-    getSizeSignal(size),
-    getPriceSignal(price, currentProbability, trade.side),
-    getTimingSignal(trade.timestamp),
-    getLiquiditySignal(
-      matchedMarket?.spread ?? null,
-      matchedMarket?.volume ?? 0
-    ),
-    getDirectionSignal(price, trade.side),
-  ];
-  const copyVerdict = calculateCopyVerdict(copySignals);
-  const verdict = copyVerdict.verdict;
-  const polymarketUrl = getPolymarketTradeUrl(trade);
-  const buttonConfig = getButtonConfig(verdict, trade.side);
-
   const outcomeSubject =
     trade.outcome.toLowerCase() === "yes" || trade.outcome.toLowerCase() === "no"
       ? trade.title
@@ -604,68 +574,19 @@ export default function WhaleProfilePage() {
       </Link>
 
       {/* SHOULD I COPY THIS BET */}
-      <section className="mb-8 rounded-xl border border-pulse-border bg-slate-800 p-6">
-        {isSell && (
-          <div className="mb-6 rounded-xl border border-yellow-500/40 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-300">
-            ⚠️ This whale is SELLING — they&apos;re exiting a position, not
-            opening one. Exit signals are harder to copy directly.
-          </div>
-        )}
-        <div
-          className={`mb-6 rounded-xl border px-4 py-3 text-center ${VERDICT_BADGE_CLASSES[copyVerdict.verdictColor]}`}
-        >
-          <p className="text-2xl font-bold">
-            {copyVerdict.verdictEmoji} {copyVerdict.verdict}
-          </p>
-        </div>
+      <CopyBetSignal
+        trade={trade}
+        currentProbability={currentProbability}
+        matchedMarket={matchedMarket}
+      />
 
-        <div className="mb-6">
-          <h2 className="text-lg font-semibold text-white">
-            {isSell
-              ? "🎯 Should You Follow This Exit?"
-              : "🎯 Should You Copy This Bet?"}
-          </h2>
-          <p className="text-sm text-slate-400">
-            {isSell
-              ? "5 signals analyzed · This is an EXIT trade"
-              : "5 signals analyzed · Updated live"}
-          </p>
-        </div>
-
-        <div className="space-y-4">
-          {copySignals.map((signal) => (
-            <div
-              key={signal.label}
-              className="rounded-lg border border-slate-700 bg-slate-900/50 p-4"
-            >
-              <p className="text-sm font-bold text-white">
-                {signal.emoji} {signal.label}
-              </p>
-              <p className="mt-1 text-sm text-slate-400">{signal.plain}</p>
-            </div>
-          ))}
-        </div>
-
-        <div className="mt-6">
-          <a
-            href={polymarketUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={() =>
-              trackCopyTap(trade?.title ?? "", trade?.size ?? 0, verdict)
-            }
-            className={`block w-full rounded-xl px-6 py-4 text-center text-lg font-semibold transition-colors ${buttonConfig.className}`}
-          >
-            {buttonConfig.text}
-          </a>
-          <p className="mt-2 text-center text-xs text-slate-500">
-            {verdict === "Strong Copy Signal" ||
-            verdict === "Worth Considering"
-              ? "You'll be taken to Polymarket to place this bet with real money. Only invest what you can afford to lose."
-              : "View the market on Polymarket to research before deciding."}
-          </p>
-        </div>
-      </section>
+      {tradeEvInput && (
+        <CrossMarketEvBadge
+          trade={tradeEvInput}
+          index={evIndex}
+          className="mb-8"
+        />
+      )}
 
       {/* SECTION 1: WHALE IDENTITY */}
       <section className="mb-8 rounded-xl border border-pulse-border bg-slate-800 p-6">
@@ -675,26 +596,37 @@ export default function WhaleProfilePage() {
         <div className="grid gap-6 sm:grid-cols-2">
           <div className="rounded-xl border border-slate-700 bg-slate-900/50 p-4">
             <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">
-              Wallet Fingerprint
+              Proxy Wallet
             </p>
-            <p className="font-mono text-lg font-semibold text-white">
-              {truncateTxHash(trade.transactionHash)}
-            </p>
-            <p className="mt-1 break-all font-mono text-xs text-slate-500">
-              {trade.transactionHash}
-            </p>
+            {displayWallet ? (
+              <>
+                <p className="font-mono text-lg font-semibold text-white">
+                  {displayWallet.slice(0, 6)}…{displayWallet.slice(-4)}
+                </p>
+                <p className="mt-1 break-all font-mono text-xs text-slate-500">
+                  {displayWallet}
+                </p>
+              </>
+            ) : walletResolutionFailed ? (
+              <p className="text-sm text-slate-400">
+                Wallet could not be resolved for this trade yet.
+              </p>
+            ) : (
+              <p className="text-sm text-slate-400 animate-pulse">
+                Resolving wallet…
+              </p>
+            )}
             <a
               href={`https://polygonscan.com/tx/${trade.transactionHash}`}
               target="_blank"
               rel="noopener noreferrer"
               className="mt-3 inline-block text-sm text-pulse-accent hover:underline"
             >
-              View on blockchain →
+              View trade on blockchain →
             </a>
             <p className="mt-3 text-xs leading-relaxed text-slate-400">
-              Think of this like a license plate — every trade on Polymarket is
-              tied to a wallet address. We use the transaction hash as a unique
-              fingerprint for this trade.
+              Every Polymarket trade is tied to a proxy wallet. This is the
+              address we use for track record and copy-signal analysis.
             </p>
           </div>
           <div className="rounded-xl border border-slate-700 bg-slate-900/50 p-4">
@@ -719,7 +651,7 @@ export default function WhaleProfilePage() {
       </section>
 
       <WhaleTrackRecord
-        proxyWallet={trade.proxyWallet ?? resolvedWallet}
+        proxyWallet={displayWallet}
         walletUnavailable={walletResolutionFailed}
         entryPrice={trade.price}
         currentPrice={currentProbability}
@@ -944,7 +876,7 @@ export default function WhaleProfilePage() {
             </p>
           </div>
 
-          {volumeContext && matchedMarket && (
+          {volumeContext && matchedMarket ? (
             <div className="rounded-xl border border-slate-700 bg-slate-900/50 p-4">
               <p className="mb-2 text-sm font-medium text-white">
                 Signal 4 — Market Significance
@@ -956,7 +888,14 @@ export default function WhaleProfilePage() {
                 this market. {volumeContext.message}
               </p>
             </div>
-          )}
+          ) : marketsLoading ? (
+            <div className="rounded-xl border border-slate-700 bg-slate-900/50 p-4">
+              <p className="mb-2 text-sm font-medium text-white">
+                Signal 4 — Market Significance
+              </p>
+              <EnrichmentSkeleton rows={2} />
+            </div>
+          ) : null}
 
           <div className="rounded-xl border border-slate-700 bg-slate-900/50 p-4">
             <p className="mb-2 text-sm font-medium text-white">

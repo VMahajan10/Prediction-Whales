@@ -32,8 +32,6 @@ async function main() {
   if (stats.showWeighted && stats.weightedClv != null) {
     console.log(`Stake-weighted CLV: ${stats.weightedClv >= 0 ? "+" : ""}${(stats.weightedClv * 100).toFixed(1)}¢`);
   }
-  console.log(`Total EV captured: ${stats.totalEvDollars >= 0 ? "+" : ""}$${stats.totalEvDollars.toFixed(2)}`);
-  console.log(`Avg EV per bet: ${stats.avgEvPerBet >= 0 ? "+" : ""}$${stats.avgEvPerBet.toFixed(2)}`);
   console.log(`Elapsed: ${((Date.now() - t0) / 1000).toFixed(1)}s\n`);
 
   console.log("=== PER-POSITION ===");

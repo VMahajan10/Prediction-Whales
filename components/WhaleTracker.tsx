@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { formatTradeTimeLocal, getTimeAgo } from "@/lib/time";
+import { stashTradeForNavigation } from "@/lib/tradeNavigationStore";
 import {
   windowProgress,
   windowRemainingSec,
@@ -47,6 +48,7 @@ function WhaleRow({ trade, now }: { trade: WhaleTrade; now: number }) {
     <li>
       <Link
         href={`/whales/${encodeURIComponent(trade.transactionHash)}`}
+        onClick={() => stashTradeForNavigation(trade)}
         className={`block cursor-pointer rounded-lg border px-3 py-2 transition-colors hover:bg-slate-700 ${
           trade.isLive
             ? "border-green-500/30 bg-green-500/5"

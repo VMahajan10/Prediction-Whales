@@ -193,7 +193,7 @@ export default function WhaleTrackRecord({
     openPositionCount > 0 ? "Open bets only" : "New wallet";
   const roi: number | null = noClosedHistory
     ? null
-    : (trackRecord as TrackRecord & { roi?: number | null })?.roi ?? null;
+    : (trackRecord?.roi ?? null);
 
   const entryCents = formatCents(entryPrice);
   const currentCents =
@@ -382,12 +382,12 @@ export default function WhaleTrackRecord({
           ? ` (${trackRecord.excludedEphemeralCount} short-term bot market${trackRecord.excludedEphemeralCount === 1 ? "" : "s"} excluded)`
           : ""}
         .
-        {data?.wallet && (
+        {proxyWallet && (
           <>
             {" "}
             Wallet:{" "}
             <span className="font-mono text-slate-400">
-              {data.wallet.slice(0, 6)}…{data.wallet.slice(-4)}
+              {proxyWallet.slice(0, 6)}…{proxyWallet.slice(-4)}
             </span>
           </>
         )}

@@ -10,22 +10,10 @@ function formatClvCents(clv: number): string {
   return `${sign}${cents.toFixed(1)}¢`;
 }
 
-function formatEvDollars(n: number): string {
-  const sign = n >= 0 ? "+" : "";
-  return `${sign}$${Math.abs(n).toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-}
-
 function clvColor(clv: number): string {
   if (clv >= 0.02) return "text-pulse-yes";
   if (clv >= 0) return "text-amber-400";
   return "text-red-400";
-}
-
-function evColor(n: number): string {
-  return n >= 0 ? "text-pulse-yes" : "text-red-400";
 }
 
 function clvSummary(clv: number): string {
@@ -46,8 +34,6 @@ export default function ClvCard({ stats }: ClvCardProps) {
     avgClv,
     weightedClv,
     showWeighted,
-    totalEvDollars,
-    avgEvPerBet,
   } = stats;
 
   if (totalClosed === 0) return null;
@@ -89,29 +75,6 @@ export default function ClvCard({ stats }: ClvCardProps) {
               </span>
             </p>
           )}
-
-          <div className="mb-4 rounded-lg border border-slate-600/40 bg-slate-800/30 px-4 py-3">
-            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">
-              Expected Value
-            </p>
-            <p className="mb-1 text-sm text-slate-300">
-              Avg EV per bet:{" "}
-              <span className={`font-semibold tabular-nums ${evColor(avgEvPerBet)}`}>
-                {formatEvDollars(avgEvPerBet)}
-              </span>
-            </p>
-            <p className="mb-2 text-sm text-slate-300">
-              Total EV captured:{" "}
-              <span className={`font-semibold tabular-nums ${evColor(totalEvDollars)}`}>
-                {formatEvDollars(totalEvDollars)}
-              </span>
-            </p>
-            <p className="text-xs leading-relaxed text-slate-500">
-              Expected value of this whale&apos;s entries versus the
-              market&apos;s closing price, across {coverage} bet
-              {coverage === 1 ? "" : "s"} with a clean closing line.
-            </p>
-          </div>
 
           <p className="text-sm leading-relaxed text-slate-400">
             {clvSummary(avgClv)}

@@ -2,9 +2,16 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import CrossMarketEvBadge from "@/components/CrossMarketEvBadge";
 import { getTimeAgo } from "@/lib/time";
 import type { FeedTrade } from "@/lib/kalshiTrades";
+import type { OutcomeBooks } from "@/lib/crossMarketEv";
 import { useLiveFeed } from "@/lib/useLiveFeed";
+import {
+  feedTradeToSummary,
+  stashTradeForNavigation,
+} from "@/lib/tradeNavigationStore";
+import { useCrossMarketEvIndex } from "@/lib/useCrossMarketEvIndex";
 import { isWhaleNotional } from "@/lib/whaleTrades";
 
 function tradeKey(trade: FeedTrade): string {
@@ -30,9 +37,11 @@ function SourceBadge({ source }: { source: FeedTrade["source"] }) {
 function TradeRowContent({
   trade,
   isNew,
+  evIndex,
 }: {
   trade: FeedTrade;
   isNew: boolean;
+  evIndex: Map<string, OutcomeBooks>;
 }) {
   const whale = isWhaleNotional(trade.usdNotional);
   const rowClass = `rounded-lg border border-transparent p-2 transition-colors ${
@@ -47,11 +56,22 @@ function TradeRowContent({
             <p className="truncate text-sm text-slate-200">{trade.title}</p>
           </div>
           <p className="text-xs text-slate-400">
-            {trade.outcome} @ {(trade.price * 100).toFixed(1)}¢ · $
+            {trade.outcome} @ {(Math.round(trade.price * 1000) / 10).toFixed(1)}¢ · $
             {trade.usdNotional.toLocaleString(undefined, {
               maximumFractionDigits: 0,
             })}
           </p>
+          <CrossMarketEvBadge
+            trade={{
+              source: trade.source,
+              price: trade.price,
+              slug: trade.slug,
+              ticker: trade.ticker,
+            }}
+            index={evIndex}
+            compact
+            className="mt-0.5 block"
+          />
         </div>
         <div className="flex flex-col items-end gap-1">
           {trade.source === "polymarket" ? (
@@ -84,9 +104,13 @@ function TradeRowContent({
   );
 
   if (trade.traceable && trade.transactionHash) {
+    const summary = feedTradeToSummary(trade);
     return (
       <Link
         href={`/trades/${encodeURIComponent(trade.transactionHash)}`}
+        onClick={() => {
+          if (summary) stashTradeForNavigation(summary);
+        }}
         className={`block cursor-pointer hover:border-slate-600 hover:bg-slate-700 ${rowClass}`}
       >
         {inner}
@@ -99,6 +123,7 @@ function TradeRowContent({
 
 export default function TradesFeed() {
   const { trades, polymarketConnected, kalshiOk } = useLiveFeed();
+  const { index: evIndex } = useCrossMarketEvIndex();
   const [newTradeKeys, setNewTradeKeys] = useState<Set<string>>(new Set());
   const prevLatestKey = useRef<string | null>(null);
 
@@ -168,6 +193,7 @@ export default function TradesFeed() {
               key={tradeKey(trade)}
               trade={trade}
               isNew={newTradeKeys.has(tradeKey(trade))}
+              evIndex={evIndex}
             />
           ))
         )}
