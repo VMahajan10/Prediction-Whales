@@ -75,7 +75,7 @@ function normalizeKalshiTrade(
     size,
     usdNotional,
     timestamp: parseTimestamp(raw.created_time, nowEpochSeconds),
-    traceable: false,
+    traceable: true,
     ticker: raw.ticker,
     isBlockTrade: raw.is_block_trade === true,
   };

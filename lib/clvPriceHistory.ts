@@ -1,4 +1,9 @@
 import { Redis } from "@upstash/redis";
+import {
+  fetchWithTimeout,
+  isFetchTimeoutError,
+  PAGE_FETCH_TIMEOUT_MS,
+} from "./fetchWithTimeout";
 
 const CLOB_PRICES_URL = "https://clob.polymarket.com/prices-history";
 const CLV_LINE_KEY_PREFIX = "clv:line:v1:";
@@ -20,6 +25,16 @@ export interface PricePoint {
   t: number;
   p: number;
 }
+
+export type PriceHistoryFetchError =
+  | "http"
+  | "network"
+  | "timeout"
+  | "invalid_response";
+
+export type PriceHistoryFetchResult =
+  | { ok: true; points: PricePoint[] }
+  | { ok: false; error: PriceHistoryFetchError; httpStatus?: number };
 
 export type ClosingLineExclusionReason =
   | "ephemeral"
@@ -215,11 +230,16 @@ export async function setCachedClosingLine(
 
 export async function fetchPriceHistory(
   asset: string
-): Promise<PricePoint[] | null> {
+): Promise<PriceHistoryFetchResult> {
+  const url = `${CLOB_PRICES_URL}?market=${encodeURIComponent(asset)}&interval=max&fidelity=60`;
   try {
-    const url = `${CLOB_PRICES_URL}?market=${encodeURIComponent(asset)}&interval=max&fidelity=60`;
-    const res = await fetch(url, { next: { revalidate: 86400 } });
-    if (!res.ok) return null;
+    const res = await fetchWithTimeout(url, {
+      timeoutMs: PAGE_FETCH_TIMEOUT_MS,
+      next: { revalidate: 86400 },
+    });
+    if (!res.ok) {
+      return { ok: false, error: "http", httpStatus: res.status };
+    }
 
     const data: unknown = await res.json();
     if (
@@ -227,7 +247,7 @@ export async function fetchPriceHistory(
       typeof data !== "object" ||
       !Array.isArray((data as { history?: unknown }).history)
     ) {
-      return null;
+      return { ok: false, error: "invalid_response" };
     }
 
     const history = (data as { history: Array<{ t?: number; p?: number }> })
@@ -239,9 +259,12 @@ export async function fetchPriceHistory(
       }
     }
 
-    return points.length > 0 ? points : null;
-  } catch {
-    return null;
+    return { ok: true, points };
+  } catch (err) {
+    if (isFetchTimeoutError(err)) {
+      return { ok: false, error: "timeout" };
+    }
+    return { ok: false, error: "network" };
   }
 }
 
@@ -268,8 +291,18 @@ export async function resolveClosingLine(
     };
   }
 
-  const series = await fetchPriceHistory(asset);
-  if (!series) {
+  const fetched = await fetchPriceHistory(asset);
+  if (!fetched.ok) {
+    console.warn(
+      `[clvPriceHistory] price history fetch failed for ${asset}: ${fetched.error}${
+        fetched.httpStatus != null ? ` (${fetched.httpStatus})` : ""
+      }`
+    );
+    // Do not cache — transient failures must retry on the next request.
+    return invalidDetection(settled, avgPrice, "no_history");
+  }
+
+  if (fetched.points.length === 0) {
     const result = invalidDetection(settled, avgPrice, "no_history");
     await setCachedClosingLine(asset, {
       closingLine: null,
@@ -281,7 +314,7 @@ export async function resolveClosingLine(
     return result;
   }
 
-  const detected = detectClosingLine(series, settled, avgPrice);
+  const detected = detectClosingLine(fetched.points, settled, avgPrice);
   await setCachedClosingLine(asset, {
     closingLine: detected.closingLine,
     settlement: detected.settlement,

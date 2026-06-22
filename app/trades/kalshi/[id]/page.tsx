@@ -1,42 +1,42 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import CopyBetSignal from "@/components/CopyBetSignal";
-import CrossMarketEvBadge from "@/components/CrossMarketEvBadge";
+import KalshiCandlestickChart from "@/components/KalshiCandlestickChart";
+import KalshiAnonymousTradePanel from "@/components/KalshiMarketFlowPanel";
+import KalshiMarketMetrics from "@/components/KalshiMarketMetrics";
+import KalshiOrderBookDepth from "@/components/KalshiOrderBookDepth";
 import LoadErrorCard from "@/components/LoadErrorCard";
-import MarketPriceChart from "@/components/MarketPriceChart";
 import TradeDetailSkeleton, {
   EnrichmentSkeleton,
 } from "@/components/TradeDetailSkeleton";
-import WhaleTrackRecord from "@/components/WhaleTrackRecord";
 import {
   fetchWithTimeout,
   isFetchTimeoutError,
 } from "@/lib/fetchWithTimeout";
-import { getCachedWhaleTrade } from "@/lib/whaleCache";
-import { consumeStashedTrade } from "@/lib/tradeNavigationStore";
-import type { MarketSummary, TradeSummary } from "@/lib/polymarket";
-import { formatVolumeUsd } from "@/lib/polymarket";
+import type {
+  KalshiCandlestick,
+  KalshiMarketDetail,
+  KalshiMarketFlow,
+  KalshiOrderBook,
+  KalshiTradeDetail,
+} from "@/lib/kalshiDetail";
 import {
-  findMarketForTrade,
-  findRelatedTrades,
-  findSocketTradeByHash,
-  findTradeByHash,
-  socketTradeToTradeSummary,
-  truncateTxHash,
-} from "@/lib/whaleProfile";
-import { usePolymarketSocketContext } from "@/lib/PolymarketSocketProvider";
-import { isPolymarketTrade } from "@/lib/tradeSource";
-import { useResolvedWallet } from "@/lib/useResolvedWallet";
+  formatKalshiContractCount,
+  kalshiYesMidFromMarket,
+} from "@/lib/kalshiDetail";
+import {
+  initialKalshiTradeFromStash,
+  peekStashedKalshiTrade,
+} from "@/lib/tradeNavigationStore";
 import { useCrossMarketEvIndex } from "@/lib/useCrossMarketEvIndex";
 import { getFullDate, getTimeAgo, getUtcString } from "@/lib/time";
 import {
-  getPlainEnglishOutcome,
+  getPlainEnglishOutcomeLabel,
   getPriceAnalysis,
   getPriceMovementMessage,
-  getQuickTake,
+  getQuickTakeForTrade,
   getTradeClass,
   getTradeDirectionInsight,
   getTradeTierIndex,
@@ -45,7 +45,22 @@ import {
   TRADE_TIERS,
 } from "@/lib/tradeDetail";
 
-const NEARBY_MIN_SIZE = 50;
+interface TradeDetailPayload {
+  trade: KalshiTradeDetail;
+  market: KalshiMarketDetail | null;
+  orderbook: KalshiOrderBook | null;
+  candlesticks: KalshiCandlestick[];
+  marketFlow: KalshiMarketFlow | null;
+  relatedTrades: KalshiTradeDetail[];
+}
+
+interface MarketEnrichment {
+  market: KalshiMarketDetail | null;
+  orderbook: KalshiOrderBook | null;
+  candlesticks: KalshiCandlestick[];
+  marketFlow: KalshiMarketFlow | null;
+  relatedTrades: KalshiTradeDetail[];
+}
 
 function SizeBar({ filled }: { filled: number }) {
   return (
@@ -62,24 +77,46 @@ function SizeBar({ filled }: { filled: number }) {
   );
 }
 
-export default function TradeDetailPage() {
-  const params = useParams();
-  const hash = typeof params.hash === "string" ? params.hash : "";
-  const { trades: socketTrades } = usePolymarketSocketContext();
+function formatKalshiDate(iso: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return Number.isFinite(d.getTime())
+    ? d.toLocaleString(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      })
+    : "—";
+}
 
-  const [trade, setTrade] = useState<TradeSummary | null>(null);
-  const [relatedTrades, setRelatedTrades] = useState<TradeSummary[]>([]);
-  const [matchedMarket, setMatchedMarket] = useState<MarketSummary | null>(
-    null
-  );
-  const [loading, setLoading] = useState(true);
+function emptyEnrichment(trade: KalshiTradeDetail): TradeDetailPayload {
+  return {
+    trade,
+    market: null,
+    orderbook: null,
+    candlesticks: [],
+    marketFlow: null,
+    relatedTrades: [],
+  };
+}
+
+export default function KalshiTradeDetailPage() {
+  const params = useParams();
+  const searchParams = useSearchParams();
+  const tradeId =
+    typeof params.id === "string" ? decodeURIComponent(params.id) : "";
+  const tickerHint = searchParams.get("ticker") ?? undefined;
+
+  const [payload, setPayload] = useState<TradeDetailPayload | null>(() => {
+    const stashed = initialKalshiTradeFromStash(tradeId);
+    return stashed ? emptyEnrichment(stashed) : null;
+  });
+  const [loading, setLoading] = useState(() => !initialKalshiTradeFromStash(tradeId));
   const [notFound, setNotFound] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [marketsLoading, setMarketsLoading] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
-  const [showAllNearby, setShowAllNearby] = useState(false);
-  const [currentProbability, setCurrentProbability] = useState(0);
+  const [enriching, setEnriching] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const { index: evIndex } = useCrossMarketEvIndex();
 
   const retryLoad = useCallback(() => {
     setLoadError(null);
@@ -87,71 +124,8 @@ export default function TradeDetailPage() {
     setReloadKey((k) => k + 1);
   }, []);
 
-  const polymarketTrade = useMemo(
-    () => (trade && isPolymarketTrade(trade) ? trade : null),
-    [trade]
-  );
-  const { resolvedWallet, walletResolutionFailed } =
-    useResolvedWallet(polymarketTrade);
-  const { index: evIndex } = useCrossMarketEvIndex();
-
-  const displayWallet = useMemo(
-    () => polymarketTrade?.proxyWallet ?? resolvedWallet,
-    [polymarketTrade?.proxyWallet, resolvedWallet]
-  );
-
-  const tradeEvInput = useMemo(() => {
-    if (!trade || !isPolymarketTrade(trade)) return null;
-    return {
-      source: "polymarket" as const,
-      price: trade.price,
-      slug: trade.slug,
-    };
-  }, [trade]);
-
-  const filteredNearby = useMemo(() => {
-    return relatedTrades
-      .filter((t) => t.size >= NEARBY_MIN_SIZE)
-      .sort((a, b) => b.size - a.size);
-  }, [relatedTrades]);
-
-  const enrichMarkets = useCallback(
-    async (found: TradeSummary, signal: AbortSignal) => {
-      setMarketsLoading(true);
-      try {
-        const [pmResult, piResult] = await Promise.allSettled([
-          fetchWithTimeout("/api/markets", { signal }),
-          fetchWithTimeout("/api/kalshi", { signal }),
-        ]);
-        if (signal.aborted) return;
-
-        const allMarkets: MarketSummary[] = [];
-        if (pmResult.status === "fulfilled" && pmResult.value.ok) {
-          const pmData: { markets?: MarketSummary[] } =
-            await pmResult.value.json();
-          allMarkets.push(...(pmData.markets ?? []));
-        }
-        if (piResult.status === "fulfilled" && piResult.value.ok) {
-          const piData: { markets?: MarketSummary[] } =
-            await piResult.value.json();
-          allMarkets.push(...(piData.markets ?? []));
-        }
-
-        const market = findMarketForTrade(found, allMarkets);
-        if (signal.aborted) return;
-        setMatchedMarket(market);
-        setCurrentProbability(market?.probability ?? found.price);
-      } catch {
-        // Market enrichment is optional
-      } finally {
-        if (!signal.aborted) setMarketsLoading(false);
-      }
-    },
-    []
-  );
-
   useEffect(() => {
-    if (!hash) {
+    if (!tradeId) {
       setLoading(false);
       return;
     }
@@ -163,107 +137,122 @@ export default function TradeDetailPage() {
 
     setLoadError(null);
     setNotFound(false);
-    setMatchedMarket(null);
 
-    const finishLoading = () => setLoading(false);
+    const stashed = peekStashedKalshiTrade(tradeId);
 
-    const instantFromSocket = () => {
-      const wsTrade = findSocketTradeByHash(socketTrades, hash);
-      return wsTrade ? socketTradeToTradeSummary(wsTrade) : null;
+    const enrichFromTicker = async (
+      trade: KalshiTradeDetail,
+      ticker: string
+    ) => {
+      setEnriching(true);
+      try {
+        const qs = new URLSearchParams({
+          ticker,
+          exclude_trade_id: trade.tradeId,
+        });
+        const res = await fetchWithTimeout(
+          `/api/kalshi/market-enrich?${qs.toString()}`,
+          { signal }
+        );
+        if (signal.aborted || !res.ok) return;
+
+        const data = (await res.json()) as MarketEnrichment;
+        if (signal.aborted) return;
+
+        setPayload({
+          trade,
+          market: data.market,
+          orderbook: data.orderbook,
+          candlesticks: data.candlesticks,
+          marketFlow: data.marketFlow,
+          relatedTrades: data.relatedTrades,
+        });
+      } catch {
+        // Enrichment is optional — stashed trade stays visible
+      } finally {
+        if (!signal.aborted) setEnriching(false);
+      }
     };
 
-    const instant =
-      consumeStashedTrade(hash) ??
-      instantFromSocket() ??
-      getCachedWhaleTrade(hash);
-
-    if (instant) {
-      setTrade(instant);
-      setCurrentProbability(instant.price);
-      setNotFound(false);
-      finishLoading();
-      void enrichMarkets(instant, signal);
-      return () => {
-        controller.abort();
-      };
+    if (stashed) {
+      setPayload(emptyEnrichment(stashed.trade));
+      setLoading(false);
+      void enrichFromTicker(stashed.trade, stashed.ticker);
+      return () => controller.abort();
     }
 
     setLoading(true);
 
     void (async () => {
       try {
-        const res = await fetchWithTimeout("/api/trades", { signal });
+        const qs = new URLSearchParams({ trade_id: tradeId });
+        if (tickerHint) qs.set("ticker", tickerHint);
+
+        const res = await fetchWithTimeout(
+          `/api/kalshi/trade-detail?${qs.toString()}`,
+          { signal }
+        );
         if (signal.aborted) return;
 
-        const tradesData: { trades?: TradeSummary[] } = await res.json();
-        if (signal.aborted) return;
-
-        const trades = tradesData.trades ?? [];
-        const found = findTradeByHash(trades, hash);
-
-        if (found) {
-          setTrade(found);
-          setRelatedTrades(findRelatedTrades(trades, found));
-          setCurrentProbability(found.price);
-          setNotFound(false);
-          finishLoading();
-          void enrichMarkets(found, signal);
-        } else {
+        if (res.status === 404) {
+          const stillStashed = peekStashedKalshiTrade(tradeId);
+          if (stillStashed) {
+            setPayload(emptyEnrichment(stillStashed.trade));
+            setNotFound(false);
+            setLoading(false);
+            void enrichFromTicker(stillStashed.trade, stillStashed.ticker);
+            return;
+          }
           setNotFound(true);
-          setTrade(null);
-          finishLoading();
+          setPayload(null);
+          setLoading(false);
+          return;
         }
+
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+
+        const data = (await res.json()) as TradeDetailPayload;
+        if (signal.aborted) return;
+        setPayload(data);
+        setNotFound(false);
+        setLoading(false);
       } catch (err) {
         if (signal.aborted) return;
-
         setLoadError(
           isFetchTimeoutError(err)
-            ? "Trade data timed out after 8 seconds."
-            : "Could not load trade data."
+            ? "Kalshi trade data timed out after 8 seconds."
+            : "Could not load Kalshi trade data."
         );
-        setTrade(null);
-        finishLoading();
+        setPayload(null);
+        setLoading(false);
       }
     })();
 
-    return () => {
-      controller.abort();
-    };
-  }, [hash, reloadKey, socketTrades, enrichMarkets]);
+    return () => controller.abort();
+  }, [tradeId, tickerHint, reloadKey]);
 
-  useEffect(() => {
-    if (!trade?.title) return;
+  const trade = payload?.trade ?? null;
+  const market = payload?.market;
+  const orderbook = payload?.orderbook;
+  const candlesticks = payload?.candlesticks ?? [];
+  const marketFlow = payload?.marketFlow;
+  const relatedTrades = payload?.relatedTrades ?? [];
 
-    const fetchCurrentPrice = async () => {
-      try {
-        const res = await fetch("/api/markets");
-        const data: { markets?: MarketSummary[] } = await res.json();
-        const needle = trade.title.toLowerCase().slice(0, 20);
-        const matched = data.markets?.find((m) =>
-          m.question?.toLowerCase().includes(needle)
-        );
-        if (matched) {
-          setCurrentProbability(matched.probability);
-        }
-      } catch {
-        // Keep last known probability on failure
-      }
-    };
+  const currentPrice = useMemo(() => {
+    if (market) {
+      const mid = kalshiYesMidFromMarket(market);
+      if (mid != null) return mid;
+    }
+    return trade?.price ?? 0;
+  }, [market, trade?.price]);
 
-    fetchCurrentPrice();
-    const interval = setInterval(fetchCurrentPrice, 10000);
-    return () => clearInterval(interval);
-  }, [trade?.title]);
-
-  const visibleNearby = showAllNearby
-    ? filteredNearby
-    : filteredNearby.slice(0, 5);
-
-  if (loading) {
+  if (loading && !trade) {
     return <TradeDetailSkeleton />;
   }
 
-  if (loadError) {
+  if (loadError && !trade) {
     return (
       <main className="mx-auto max-w-4xl px-4 py-8">
         <Link href="/" className="text-sm text-pulse-accent hover:underline">
@@ -280,7 +269,7 @@ export default function TradeDetailPage() {
         <Link href="/" className="text-sm text-pulse-accent hover:underline">
           ← Back to Dashboard
         </Link>
-        <p className="mt-8 text-red-400">Trade not found.</p>
+        <p className="mt-8 text-red-400">Kalshi trade not found.</p>
       </main>
     );
   }
@@ -288,42 +277,44 @@ export default function TradeDetailPage() {
   const price = trade.price;
   const priceCents = (price * 100).toFixed(1);
   const probPct = (price * 100).toFixed(1);
-  const size = trade.size;
-  const shares =
-    price > 0 ? Number((size / price).toFixed(0)) : 0;
-  const payout = price > 0 ? Number((size / price).toFixed(2)) : 0;
-  const profit = price > 0 ? Number((size / price - size).toFixed(2)) : 0;
+  const size = trade.usdNotional;
+  const contracts = trade.count;
+  const payout = contracts;
   const profitPct =
     price > 0 ? ((1 / price - 1) * 100).toFixed(1) : "0";
   const multiplier = price > 0 ? (1 / price).toFixed(1) : "—";
   const filledCircles = Math.round(price * 10);
   const tradeClass = getTradeClass(size);
   const activeTier = getTradeTierIndex(size);
-  const plainOutcome = getPlainEnglishOutcome(trade);
+  const plainOutcome = getPlainEnglishOutcomeLabel(trade.outcome);
   const priceAnalysis = getPriceAnalysis(price);
-  const quickTake = getQuickTake(trade);
+  const quickTake = getQuickTakeForTrade(size, trade.side, price);
 
   const tradePricePct = price * 100;
-  const currentProbPct = currentProbability * 100;
+  const currentProbPct = currentPrice * 100;
   const delta = currentProbPct - tradePricePct;
   const priceMovedInFavor =
     trade.side === "BUY" ? delta > 0 : delta < 0;
   const directionInsight = getTradeDirectionInsight(delta, trade.side);
-  const tokenId =
-    matchedMarket?.source === "polymarket" &&
-    matchedMarket.clobTokenIds[0]
-      ? matchedMarket.clobTokenIds[0]
-      : null;
 
-  const liveShares = price > 0 ? size / price : 0;
+  const liveContracts = price > 0 ? size / price : 0;
   const liveValue =
     trade.side === "BUY"
-      ? liveShares * currentProbability
+      ? liveContracts * currentPrice
       : size;
   const livePnl =
-    trade.side === "BUY" ? liveValue - size : size - liveShares * currentProbability;
+    trade.side === "BUY"
+      ? liveValue - size
+      : size - liveContracts * currentPrice;
 
-  const showPolymarketWalletSections = isPolymarketTrade(trade);
+  const marketLoading = (loading || enriching) && !market;
+  const kalshiSpread =
+    market?.yesBid != null && market?.yesAsk != null
+      ? (market.yesAsk - market.yesBid) * 100
+      : null;
+  const kalshiHref =
+    market?.webUrl ??
+    `https://kalshi.com/markets/${trade.ticker.split("-")[0].toLowerCase()}`;
 
   return (
     <main className="mx-auto min-h-screen max-w-4xl px-4 py-8 sm:px-6">
@@ -334,6 +325,17 @@ export default function TradeDetailPage() {
         ← Back to Dashboard
       </Link>
 
+      <div className="mb-4 flex items-center gap-2">
+        <span className="rounded bg-teal-900/40 px-2 py-0.5 text-xs font-medium uppercase tracking-wide text-teal-300">
+          Kalshi
+        </span>
+        {trade.isBlockTrade && (
+          <span className="rounded bg-purple-900/40 px-2 py-0.5 text-xs text-purple-300">
+            Block trade
+          </span>
+        )}
+      </div>
+
       {/* SECTION 1: TRADE IDENTITY */}
       <section className="mb-8 rounded-xl border border-pulse-border bg-slate-800 p-6">
         <h2 className="mb-4 text-lg font-semibold text-white">
@@ -342,26 +344,26 @@ export default function TradeDetailPage() {
         <div className="grid gap-6 sm:grid-cols-2">
           <div className="rounded-xl border border-slate-700 bg-slate-900/50 p-4">
             <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">
-              Transaction Hash
+              Trade ID
             </p>
-            <p className="font-mono text-lg font-semibold text-white">
-              {truncateTxHash(trade.transactionHash)}
+            <p className="font-mono text-sm font-semibold text-white">
+              {trade.tradeId}
             </p>
-            <p className="mt-1 break-all font-mono text-xs text-slate-500">
-              {trade.transactionHash}
+            <p className="mt-3 text-xs font-medium uppercase tracking-wide text-slate-400">
+              Market ticker
             </p>
+            <p className="font-mono text-sm text-teal-300">{trade.ticker}</p>
             <a
-              href={`https://polygonscan.com/tx/${trade.transactionHash}`}
+              href={kalshiHref}
               target="_blank"
               rel="noopener noreferrer"
               className="mt-3 inline-block text-sm text-pulse-accent hover:underline"
             >
-              Verify on blockchain →
+              View on Kalshi →
             </a>
             <p className="mt-3 text-xs leading-relaxed text-slate-400">
-              Every trade on Polymarket is recorded permanently on the Polygon
-              blockchain. This means it can never be altered or deleted — full
-              transparency.
+              Kalshi is a CFTC-regulated exchange. Public trade data includes
+              price and size but never trader identity.
             </p>
           </div>
           <div className="rounded-xl border border-slate-700 bg-slate-900/50 p-4">
@@ -378,8 +380,9 @@ export default function TradeDetailPage() {
               {getTimeAgo(trade.timestamp)}
             </p>
             <p className="mt-3 text-xs leading-relaxed text-slate-400">
-              The exact moment this trade executed. On-chain trades are final the
-              moment they&apos;re confirmed — usually within 2 seconds.
+              The exact moment this trade executed. Kalshi matches orders
+              instantly on their regulated exchange — trades are final the moment
+              they fill.
             </p>
           </div>
         </div>
@@ -403,18 +406,18 @@ export default function TradeDetailPage() {
               </p>
               <p>
                 They paid <strong className="text-white">{priceCents}¢</strong>{" "}
-                per share, getting{" "}
+                per contract, getting{" "}
                 <strong className="text-white">
-                  {shares.toLocaleString()}
+                  {contracts.toLocaleString()}
                 </strong>{" "}
-                shares in return.
+                contracts in return.
               </p>
               <p>
                 <strong className="text-white">Translation:</strong> They believe{" "}
                 {plainOutcome}. If correct, their $
                 {size.toLocaleString()} becomes{" "}
                 <strong className="text-pulse-yes">
-                  ${payout.toLocaleString()}
+                  ${payout.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </strong>{" "}
                 — a {profitPct}% profit. If wrong, they lose their $
                 {size.toLocaleString()} entirely.
@@ -425,9 +428,9 @@ export default function TradeDetailPage() {
               <p>
                 At {getTimeAgo(trade.timestamp)}, someone sold{" "}
                 <strong className="text-white">
-                  {shares.toLocaleString()}
+                  {contracts.toLocaleString()}
                 </strong>{" "}
-                shares on &ldquo;{trade.title}&rdquo; for{" "}
+                contracts on &ldquo;{trade.title}&rdquo; for{" "}
                 <strong className="text-white">
                   ${size.toLocaleString()}
                 </strong>{" "}
@@ -435,7 +438,7 @@ export default function TradeDetailPage() {
               </p>
               <p>
                 They received <strong className="text-white">{priceCents}¢</strong>{" "}
-                per share.
+                per contract.
               </p>
               <p>
                 <strong className="text-white">Translation:</strong> They are
@@ -453,7 +456,16 @@ export default function TradeDetailPage() {
         </div>
       </section>
 
-      {/* LIVE PRICE CHART */}
+      <KalshiMarketMetrics
+        trade={trade}
+        market={market ?? null}
+        orderbook={orderbook ?? null}
+        marketFlow={marketFlow ?? null}
+        evIndex={evIndex}
+        enriching={enriching}
+      />
+
+      {/* SECTION 3: LIVE PRICE CHART */}
       <section className="mb-6 rounded-xl bg-slate-800 p-6">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-white">
@@ -466,7 +478,7 @@ export default function TradeDetailPage() {
 
         <p className="mb-4 text-sm text-slate-300">
           Current market probability:{" "}
-          {marketsLoading && !matchedMarket ? (
+          {marketLoading ? (
             <span className="inline-block h-4 w-12 animate-pulse rounded bg-slate-700 align-middle" />
           ) : (
             <strong className="text-white">{currentProbPct.toFixed(1)}%</strong>
@@ -475,18 +487,15 @@ export default function TradeDetailPage() {
           when this trade was placed)
         </p>
 
-        {marketsLoading && !tokenId ? (
+        {candlesticks.length === 0 && marketLoading ? (
           <EnrichmentSkeleton rows={4} />
-        ) : tokenId ? (
-          <MarketPriceChart
-            tokenId={tokenId}
-            currentPrice={currentProbability}
-            marketQuestion={trade.title}
-          />
         ) : (
-          <div className="py-8 text-center text-sm text-slate-500">
-            Chart unavailable — market data not found
-          </div>
+          <KalshiCandlestickChart
+            candlesticks={candlesticks}
+            tradePrice={trade.price}
+            tradeTimestamp={trade.timestamp}
+            currentPrice={currentPrice}
+          />
         )}
 
         <div className="mt-6 space-y-3">
@@ -542,7 +551,7 @@ export default function TradeDetailPage() {
         </div>
       </section>
 
-      {/* SECTION 3: TRADE SIZE CONTEXT */}
+      {/* SECTION 4: TRADE SIZE */}
       <section className="mb-8 rounded-xl border border-pulse-border bg-slate-800 p-6">
         <h2 className="mb-4 text-lg font-semibold text-white">
           💰 How Big Is This Trade?
@@ -590,7 +599,7 @@ export default function TradeDetailPage() {
         </div>
       </section>
 
-      {/* SECTION 4: PRICE ANALYSIS */}
+      {/* SECTION 5: PRICE ANALYSIS */}
       <section className="mb-8 rounded-xl border border-pulse-border bg-pulse-card/40 p-6">
         <h2 className="mb-4 text-lg font-semibold text-white">
           🎯 What The Price Tells Us
@@ -598,23 +607,16 @@ export default function TradeDetailPage() {
         <p className="mb-4 text-sm text-slate-300">
           Price paid: <strong className="text-white">{priceCents}¢</strong>
         </p>
-        {tradeEvInput && (
-          <CrossMarketEvBadge
-            trade={tradeEvInput}
-            index={evIndex}
-            className="mb-4"
-          />
-        )}
         <p className="mb-4 text-sm leading-relaxed text-slate-300">
-          Each share costs {priceCents}¢ and pays $1.00 if correct. That&apos;s
+          Each contract costs {priceCents}¢ and pays $1.00 if correct. That&apos;s
           a <strong className="text-white">{multiplier}x</strong> return on each
-          share.
+          contract.
         </p>
         <p className="mb-6 rounded-lg bg-slate-900/60 p-4 text-sm text-slate-300">
           {priceAnalysis}
         </p>
         <p className="mb-3 text-sm text-slate-300">
-          {priceCents}¢ per share ={" "}
+          {priceCents}¢ per contract ={" "}
           <strong className="text-white">{probPct}%</strong> implied probability
         </p>
         <div className="mb-2 flex gap-1">
@@ -629,7 +631,7 @@ export default function TradeDetailPage() {
         </p>
       </section>
 
-      {/* SECTION 5: BUY vs SELL */}
+      {/* SECTION 6: BUY vs SELL */}
       <section className="mb-8 rounded-xl border border-pulse-border bg-slate-800 p-6">
         <h2 className="mb-4 text-lg font-semibold text-white">
           📈 Understanding This Order Type
@@ -691,20 +693,48 @@ export default function TradeDetailPage() {
             </>
           )}
         </div>
+        <div className="mt-6 grid gap-4 border-t border-slate-700 pt-6 sm:grid-cols-2 text-sm text-slate-300">
+          <div>
+            <p className="text-xs text-slate-500">Taker side</p>
+            <p className="font-medium text-white capitalize">
+              {trade.takerSide}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-slate-500">Outcome</p>
+            <p className="font-medium text-white">{trade.outcome}</p>
+          </div>
+          <div>
+            <p className="text-xs text-slate-500">Book side</p>
+            <p className="font-medium text-white">
+              {trade.takerBookSide === "bid" ? "Bid (buying)" : "Ask (selling)"}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-slate-500">Action</p>
+            <p
+              className={`font-medium ${
+                trade.side === "BUY" ? "text-green-400" : "text-red-400"
+              }`}
+            >
+              {trade.side}
+            </p>
+          </div>
+        </div>
       </section>
 
-      {/* SECTION 6: MARKET CONTEXT */}
+      {/* SECTION 7: MARKET CONTEXT */}
       <section className="mb-8 rounded-xl border border-pulse-border bg-pulse-card/40 p-6">
         <h2 className="mb-4 text-lg font-semibold text-white">
           🌍 The Market Being Traded
         </h2>
-        {marketsLoading && !matchedMarket ? (
-          <EnrichmentSkeleton rows={4} />
-        ) : matchedMarket ? (
+        {marketLoading ? (
+          <EnrichmentSkeleton rows={5} />
+        ) : market ? (
           <>
             <div className="rounded-xl border border-pulse-border bg-pulse-card p-4">
               <h3 className="mb-3 text-sm font-medium text-white">
-                {matchedMarket.question}
+                {market.title}
               </h3>
               <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
                 <span className="text-slate-400">
@@ -730,22 +760,22 @@ export default function TradeDetailPage() {
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs text-pulse-muted">Volume</p>
+                  <p className="text-xs text-pulse-muted">Volume (24h)</p>
                   <p className="font-semibold text-white">
-                    {formatVolumeUsd(matchedMarket.volume)}
+                    {formatKalshiContractCount(market.volume24h)} contracts
                   </p>
                 </div>
                 <div>
                   <p className="text-xs text-pulse-muted">Spread</p>
                   <p className="font-semibold text-white">
-                    {matchedMarket.spread == null
+                    {kalshiSpread == null
                       ? "—"
-                      : `${matchedMarket.spread.toFixed(1)}¢`}
+                      : `${kalshiSpread.toFixed(1)}¢`}
                   </p>
                 </div>
               </div>
               <Link
-                href={`/markets/${matchedMarket.id}`}
+                href={`/markets/${encodeURIComponent(market.ticker)}`}
                 className="inline-block text-sm text-pulse-accent hover:underline"
               >
                 View full market →
@@ -759,6 +789,41 @@ export default function TradeDetailPage() {
                 {directionInsight.text}
               </p>
             )}
+            {market.rulesPrimary && (
+              <div className="mt-4 rounded-lg border border-slate-700 bg-slate-900/50 p-4">
+                <p className="mb-2 text-xs font-medium uppercase text-slate-500">
+                  Resolution rules
+                </p>
+                <p className="text-sm leading-relaxed text-slate-300">
+                  {market.rulesPrimary}
+                </p>
+                {market.rulesSecondary && (
+                  <p className="mt-3 text-xs leading-relaxed text-slate-500">
+                    {market.rulesSecondary}
+                  </p>
+                )}
+              </div>
+            )}
+            <div className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+              <div>
+                <p className="text-xs text-pulse-muted">Status</p>
+                <p className="font-semibold capitalize text-white">
+                  {market.status || "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-pulse-muted">Result</p>
+                <p className="font-semibold text-white">
+                  {market.result || "Pending"}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-pulse-muted">Close</p>
+                <p className="text-sm text-white">
+                  {formatKalshiDate(market.closeTime)}
+                </p>
+              </div>
+            </div>
           </>
         ) : (
           <p className="text-sm text-slate-400">
@@ -767,7 +832,73 @@ export default function TradeDetailPage() {
         )}
       </section>
 
-      {/* SECTION 7: BEGINNER LESSONS */}
+      {/* SECTION 8: LIVE MARKET STATE + ORDER BOOK */}
+      <section className="mb-8 rounded-xl border border-pulse-border bg-slate-800 p-6">
+        <h2 className="mb-4 text-lg font-semibold text-white">
+          📊 Live Market State
+        </h2>
+        {marketLoading ? (
+          <EnrichmentSkeleton rows={4} />
+        ) : market ? (
+          <>
+            <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-3">
+                <p className="text-xs text-slate-500">Yes bid / ask</p>
+                <p className="text-sm font-semibold text-green-400">
+                  {market.yesBid != null
+                    ? `${(market.yesBid * 100).toFixed(1)}¢`
+                    : "—"}{" "}
+                  /{" "}
+                  {market.yesAsk != null
+                    ? `${(market.yesAsk * 100).toFixed(1)}¢`
+                    : "—"}
+                </p>
+              </div>
+              <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-3">
+                <p className="text-xs text-slate-500">No bid / ask</p>
+                <p className="text-sm font-semibold text-red-400">
+                  {market.noBid != null
+                    ? `${(market.noBid * 100).toFixed(1)}¢`
+                    : "—"}{" "}
+                  /{" "}
+                  {market.noAsk != null
+                    ? `${(market.noAsk * 100).toFixed(1)}¢`
+                    : "—"}
+                </p>
+              </div>
+              <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-3">
+                <p className="text-xs text-slate-500">Volume (24h)</p>
+                <p className="text-sm font-semibold text-white">
+                  {formatKalshiContractCount(market.volume24h)} contracts
+                </p>
+              </div>
+              <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-3">
+                <p className="text-xs text-slate-500">Open interest</p>
+                <p className="text-sm font-semibold text-white">
+                  {formatKalshiContractCount(market.openInterest)} contracts
+                </p>
+              </div>
+            </div>
+
+            {orderbook ? (
+              <>
+                <h3 className="mb-3 text-sm font-medium text-slate-300">
+                  Order book depth
+                </h3>
+                <KalshiOrderBookDepth orderbook={orderbook} />
+              </>
+            ) : (
+              <p className="text-sm text-slate-500">
+                Order book unavailable for this market.
+              </p>
+            )}
+          </>
+        ) : (
+          <p className="text-sm text-slate-400">Live market data unavailable.</p>
+        )}
+      </section>
+
+      {/* SECTION 9: BEGINNER LESSONS */}
       <section className="mb-8 rounded-xl border border-pulse-border bg-slate-800 p-6">
         <h2 className="mb-4 text-lg font-semibold text-white">
           🎓 Beginner Trading Lessons From This Trade
@@ -802,21 +933,23 @@ export default function TradeDetailPage() {
           </div>
           <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-4">
             <p className="mb-2 text-sm font-medium text-white">
-              Lesson 3 — About the blockchain
+              Lesson 3 — About regulated exchanges
             </p>
             <p className="whitespace-pre-line text-sm leading-relaxed text-slate-400">
-              Every trade you see here is permanently recorded on the Polygon
-              blockchain. This means:{"\n"}✅ No one can fake trades{"\n"}✅ No
-              one can hide trades{"\n"}✅ You can verify everything
-              independently{"\n\n"}
-              This transparency is what makes prediction markets trustworthy —
-              unlike traditional bookmakers, everything is public.
+              Every trade on Kalshi is recorded on a CFTC-regulated exchange.
+              This means:{"\n"}✅ Price and size are fully transparent{"\n"}✅
+              Trades cannot be hidden or altered after execution{"\n"}✅ You can
+              verify market activity independently{"\n\n"}
+              Kalshi deliberately does not reveal trader identity — unlike
+              Polymarket&apos;s on-chain wallets, you see what traded but not
+              who traded. That transparency-with-privacy is a trade-off worth
+              understanding.
             </p>
           </div>
         </div>
       </section>
 
-      {/* SECTION 8: QUICK VERDICT */}
+      {/* SECTION 10: QUICK VERDICT */}
       <section className="mb-8 rounded-xl border border-slate-600 bg-slate-700 p-5">
         <h2 className="mb-3 text-lg font-semibold text-white">⚡ Quick Take</h2>
         <p className="text-sm font-medium leading-relaxed text-white">
@@ -824,66 +957,48 @@ export default function TradeDetailPage() {
         </p>
       </section>
 
-      {/* SECTION 9: NEARBY TRADES */}
-      <section className="mb-8 rounded-xl border border-pulse-border bg-pulse-card/40 p-6">
-        <h2 className="mb-4 text-lg font-semibold text-white">
-          🔗 Other Activity at the Same Time
-        </h2>
-        {filteredNearby.length === 0 ? (
-          <p className="text-sm text-slate-400">
-            All nearby trades were small retail activity under ${NEARBY_MIN_SIZE}.
-          </p>
-        ) : (
-          <>
-            <div className="space-y-3">
-              {visibleNearby.map((t) => (
-                <Link
-                  key={t.id}
-                  href={`/trades/${encodeURIComponent(t.transactionHash)}`}
-                  className="block rounded-xl border border-slate-700 bg-slate-900/50 p-4 transition-colors hover:bg-slate-800"
-                >
-                  <p className="font-medium text-white">{t.title}</p>
-                  <p className="text-sm text-slate-400">
-                    {t.side} · ${Math.round(t.size).toLocaleString()} ·{" "}
-                    {(t.price * 100).toFixed(1)}¢
-                  </p>
-                </Link>
-              ))}
-            </div>
-            {filteredNearby.length > 5 && (
-              <button
-                type="button"
-                onClick={() => setShowAllNearby((v) => !v)}
-                className="mt-4 text-sm text-pulse-accent hover:underline"
+      {/* SECTION 11: ANONYMOUS (replaces whale sections) */}
+      <KalshiAnonymousTradePanel />
+
+      {/* SECTION 12: RELATED TRADES */}
+      {relatedTrades.length > 0 && (
+        <section className="mb-8 rounded-xl border border-pulse-border bg-pulse-card/40 p-6">
+          <h2 className="mb-4 text-lg font-semibold text-white">
+            🔗 Other Activity at the Same Time
+          </h2>
+          <div className="space-y-3">
+            {relatedTrades.slice(0, 8).map((t) => (
+              <Link
+                key={t.tradeId}
+                href={`/trades/kalshi/${encodeURIComponent(t.tradeId)}?ticker=${encodeURIComponent(t.ticker)}`}
+                className="block rounded-xl border border-slate-700 bg-slate-900/50 p-4 transition-colors hover:bg-slate-800"
               >
-                {showAllNearby
-                  ? "Show less"
-                  : `Show ${filteredNearby.length - 5} more`}
-              </button>
-            )}
-          </>
-        )}
-      </section>
-
-      {showPolymarketWalletSections && (
-        <>
-          <CopyBetSignal
-            trade={trade}
-            currentProbability={currentProbability}
-            matchedMarket={matchedMarket}
-          />
-
-          <WhaleTrackRecord
-            proxyWallet={displayWallet}
-            walletUnavailable={walletResolutionFailed}
-            entryPrice={trade.price}
-            currentPrice={currentProbability}
-            betSize={size}
-          />
-        </>
+                <p className="font-medium text-white">{t.title}</p>
+                <p className="text-sm text-slate-400">
+                  {t.side} · ${Math.round(t.usdNotional).toLocaleString()} ·{" "}
+                  {(t.price * 100).toFixed(1)}¢
+                </p>
+              </Link>
+            ))}
+          </div>
+        </section>
       )}
 
-      {/* SECTION 10: DISCLAIMER */}
+      <section className="mb-8 rounded-xl border border-pulse-border bg-slate-800 p-6">
+        <a
+          href={kalshiHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block w-full rounded-xl bg-teal-600 px-6 py-4 text-center text-lg font-semibold text-white transition-colors hover:bg-teal-500"
+        >
+          View this bet on Kalshi
+        </a>
+        <p className="mt-2 text-center text-xs text-slate-500">
+          Opens the same Kalshi market page as the link above — place or
+          research this contract on Kalshi.
+        </p>
+      </section>
+
       <p className="text-xs leading-relaxed text-slate-500">
         Trade data is for educational purposes only. Past trades do not predict
         future market movements. Never copy trades blindly.

@@ -108,6 +108,8 @@ export interface TradeSummary {
 
 export interface TrackRecord {
   winRate: number | null;
+  /** Resolved closed positions with non-zero P&L. */
+  closedWins: number;
   avgReturnPerBet: number | null;
   totalBets: number;
   closedCount: number;
@@ -439,6 +441,8 @@ export async function fetchWalletPositions(
   }
 }
 
+export const TRACK_RECORD_RELIABILITY_FLOOR = 5;
+
 export function computeTrackRecord(
   closedPositions: any[]
 ): TrackRecord {
@@ -466,6 +470,7 @@ export function computeTrackRecord(
   return {
     winRate:
       closed.length > 0 ? (wins.length / closed.length) * 100 : null,
+    closedWins: wins.length,
     avgReturnPerBet:
       closed.length > 0 ? totalPnl / closed.length : null,
     totalBets: eligible.length,
@@ -473,7 +478,7 @@ export function computeTrackRecord(
     totalRealizedPnl: totalPnl,
     totalInvested,
     roi,
-    hasEnoughHistory: closed.length >= 5,
+    hasEnoughHistory: closed.length >= TRACK_RECORD_RELIABILITY_FLOOR,
     excludedEphemeralCount,
   };
 }

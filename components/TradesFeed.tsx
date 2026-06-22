@@ -9,6 +9,7 @@ import type { OutcomeBooks } from "@/lib/crossMarketEv";
 import { useLiveFeed } from "@/lib/useLiveFeed";
 import {
   feedTradeToSummary,
+  stashKalshiTradeForNavigation,
   stashTradeForNavigation,
 } from "@/lib/tradeNavigationStore";
 import { useCrossMarketEvIndex } from "@/lib/useCrossMarketEvIndex";
@@ -102,6 +103,31 @@ function TradeRowContent({
         </div>
       </div>
   );
+
+  if (trade.source === "kalshi" && trade.traceable && trade.ticker) {
+    const href = `/trades/kalshi/${encodeURIComponent(trade.id)}?ticker=${encodeURIComponent(trade.ticker)}`;
+    return (
+      <Link
+        href={href}
+        onClick={() => stashKalshiTradeForNavigation(trade)}
+        className={`block cursor-pointer hover:border-slate-600 hover:bg-slate-700 ${rowClass}`}
+      >
+        {inner}
+      </Link>
+    );
+  }
+
+  if (trade.source === "kalshi" && trade.traceable) {
+    return (
+      <Link
+        href={`/trades/kalshi/${encodeURIComponent(trade.id)}`}
+        onClick={() => stashKalshiTradeForNavigation(trade)}
+        className={`block cursor-pointer hover:border-slate-600 hover:bg-slate-700 ${rowClass}`}
+      >
+        {inner}
+      </Link>
+    );
+  }
 
   if (trade.traceable && trade.transactionHash) {
     const summary = feedTradeToSummary(trade);

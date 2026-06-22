@@ -1,13 +1,13 @@
 import type { ClvStats } from "@/lib/polymarket";
+import {
+  formatClvCents,
+  isClvAverageEvComputable,
+  type AverageEvDisplay,
+} from "@/lib/averageEvDisplay";
 
 interface ClvCardProps {
   stats: ClvStats;
-}
-
-function formatClvCents(clv: number): string {
-  const cents = clv * 100;
-  const sign = cents >= 0 ? "+" : "";
-  return `${sign}${cents.toFixed(1)}¢`;
+  averageEv?: AverageEvDisplay;
 }
 
 function clvColor(clv: number): string {
@@ -23,10 +23,14 @@ function clvSummary(clv: number): string {
   if (clv >= 0) {
     return "Roughly in line with the closing price — small pricing edge, if any.";
   }
-  return "Often paid worse than the closing price — wins may reflect luck more than edge.";
+  return "Often paid worse than the closing price — wins may reflect luck more than skill.";
 }
 
-export default function ClvCard({ stats }: ClvCardProps) {
+/**
+ * Supplemental CLV detail below the headline Average EV metric.
+ * Headline value lives in WhaleTrackRecord; this card expands coverage context.
+ */
+export default function ClvCard({ stats, averageEv }: ClvCardProps) {
   const {
     coverage,
     totalClosed,
@@ -34,42 +38,35 @@ export default function ClvCard({ stats }: ClvCardProps) {
     avgClv,
     weightedClv,
     showWeighted,
+    coverageFloor,
   } = stats;
 
   if (totalClosed === 0) return null;
 
   const coverageLabel = `${coverage} of ${totalClosed} closed bet${totalClosed === 1 ? "" : "s"}`;
+  const clvPrimary = isClvAverageEvComputable(stats);
+  const usingFallback = averageEv?.mode === "avg_return_fallback";
 
   return (
     <div className="mt-6 rounded-xl border border-slate-700 bg-slate-900/50 p-5">
       <h3 className="mb-1 text-base font-semibold text-white">
-        Beat the Closing Line
+        {clvPrimary ? "Closing-line detail" : "Why EV fell back to avg return"}
       </h3>
       <p className="mb-4 text-xs text-slate-400">
-        Did they get a better entry price than the market&apos;s last consensus
-        before settlement?
+        {clvPrimary
+          ? "Beat the Closing Line — did they get a better entry than the market's last consensus before settlement?"
+          : "We could not compute a reliable closing-line edge for this wallet."}
       </p>
 
-      {hasEnoughCoverage && avgClv != null ? (
+      {clvPrimary && avgClv != null ? (
         <>
-          <div className="mb-2 flex flex-wrap items-baseline gap-3">
-            <p
-              className={`text-2xl font-bold tabular-nums ${clvColor(avgClv)}`}
-            >
-              {formatClvCents(avgClv)}
-            </p>
-            <p className="text-sm text-slate-400">
-              avg edge vs closing price
-            </p>
-          </div>
-
           <p className="mb-3 text-sm font-medium text-slate-300">
             Measured on {coverageLabel} with a clean closing line.
           </p>
 
           {showWeighted && weightedClv != null && (
             <p className="mb-3 text-sm text-slate-400">
-              Stake-weighted:{" "}
+              Stake-weighted edge:{" "}
               <span className={`font-semibold ${clvColor(weightedClv)}`}>
                 {formatClvCents(weightedClv)}
               </span>
@@ -83,28 +80,38 @@ export default function ClvCard({ stats }: ClvCardProps) {
       ) : (
         <div className="rounded-lg border border-slate-600/50 bg-slate-800/40 px-4 py-3">
           <p className="mb-2 text-sm font-medium text-slate-300">
-            Not enough clean closing lines to measure edge reliably yet
+            {usingFallback
+              ? "Closing-line EV is not computable for this wallet yet"
+              : "Not enough clean closing lines to measure edge reliably yet"}
           </p>
           <p className="mb-2 text-sm leading-relaxed text-slate-400">
-            Only <span className="font-semibold text-slate-300">{coverageLabel}</span>{" "}
+            Only{" "}
+            <span className="font-semibold text-slate-300">{coverageLabel}</span>{" "}
             had a fresh consensus price shortly before settlement. The rest
             resolved too slowly, lacked price history, or never had a liquid
-            pre-settlement line — so they&apos;re excluded on purpose, not
-            because this feature is broken.
+            pre-settlement line — so they&apos;re excluded on purpose.
           </p>
-          <p className="text-xs text-slate-500">
-            We need at least {stats.coverageFloor} bets with valid closing lines
-            before showing a headline number. Political longshots and illiquid
-            markets are the usual reason coverage is low.
-          </p>
+          {usingFallback && (
+            <p className="mb-2 text-sm leading-relaxed text-amber-200/90">
+              The Average EV slot above shows{" "}
+              <span className="font-medium">avg return per bet</span> instead —
+              historical profit/loss per closed position, not closing-line edge.
+            </p>
+          )}
+          {!hasEnoughCoverage && (
+            <p className="text-xs text-slate-500">
+              We need at least {coverageFloor} bets with valid closing lines
+              before showing CLV-based Average EV. Political longshots and
+              illiquid markets are the usual reason coverage is low.
+            </p>
+          )}
         </div>
       )}
 
       <p className="mt-4 text-xs leading-relaxed text-slate-500">
         The closing line is the market&apos;s last consensus price before it
-        settled. We exclude markets that resolved slowly or lacked a clean
-        closing price, so coverage is often a subset of closed bets. This
-        measures pricing edge, not profit.
+        settled. Coverage is often a subset of closed bets. This measures
+        pricing edge in cents, not dollar profit.
       </p>
     </div>
   );

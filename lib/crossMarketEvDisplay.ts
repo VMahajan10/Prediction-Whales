@@ -26,3 +26,35 @@ export function evColorClass(ev: number): string {
   if (Math.abs(rounded) < 0.05) return "text-slate-400";
   return rounded > 0 ? "text-green-400" : "text-red-400";
 }
+
+export type EvPricingSignal = "UNDERPRICED" | "OVERPRICED" | "FAIRLY PRICED";
+
+/** Price-vs-fair signal from EV% (positive = paid below fair reference). */
+export function evPricingSignal(ev: number): EvPricingSignal {
+  const rounded = roundEvPercent(ev)!;
+  if (Math.abs(rounded) < 2) return "FAIRLY PRICED";
+  return rounded > 0 ? "UNDERPRICED" : "OVERPRICED";
+}
+
+export function evPricingSignalClass(signal: EvPricingSignal): string {
+  if (signal === "UNDERPRICED") return "text-green-400";
+  if (signal === "OVERPRICED") return "text-red-400";
+  return "text-slate-400";
+}
+
+export function crossMarketEvUnavailableReason(
+  reason: NonNullable<CrossMarketEv["reason"]>
+): string {
+  switch (reason) {
+    case "no_match":
+      return "No matched Polymarket market for this Kalshi contract.";
+    case "fair_line_stale":
+      return "Matched market quote is stale — comparison suppressed.";
+    case "in_play":
+      return "Game is in play — cross-market comparison paused.";
+    case "missing_price":
+      return "Missing live prices on one or both markets.";
+    default:
+      return "Cross-market comparison unavailable.";
+  }
+}

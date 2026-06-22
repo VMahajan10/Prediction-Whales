@@ -103,11 +103,48 @@ export function getTradeTierIndex(size: number): number {
   return 0;
 }
 
+export function getPlainEnglishOutcomeLabel(outcome: string): string {
+  const normalized = outcome.toLowerCase();
+  if (normalized === "yes") return "this outcome WILL happen";
+  if (normalized === "no") return "this outcome WON'T happen";
+  return `"${outcome}" will happen`;
+}
+
 export function getPlainEnglishOutcome(trade: TradeSummary): string {
-  const outcome = trade.outcome.toLowerCase();
-  if (outcome === "yes") return "this outcome WILL happen";
-  if (outcome === "no") return "this outcome WON'T happen";
-  return `"${trade.outcome}" will happen`;
+  return getPlainEnglishOutcomeLabel(trade.outcome);
+}
+
+export function getTradeDirectionInsight(
+  delta: number,
+  side: "BUY" | "SELL"
+): { text: string; className: string } | null {
+  const direction = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
+  if (direction === "flat") return null;
+  if (direction === "up" && side === "BUY") {
+    return {
+      text: "📈 Price moved in the trader's favor since this trade",
+      className: "text-green-400",
+    };
+  }
+  if (direction === "down" && side === "BUY") {
+    return {
+      text: "📉 Price moved against the trader since this trade",
+      className: "text-red-400",
+    };
+  }
+  if (direction === "up" && side === "SELL") {
+    return {
+      text: "📉 Price rose after they sold — they may have sold too early",
+      className: "text-yellow-400",
+    };
+  }
+  if (direction === "down" && side === "SELL") {
+    return {
+      text: "📈 Price fell after they sold — the sell looks correct",
+      className: "text-green-400",
+    };
+  }
+  return null;
 }
 
 export function getPriceAnalysis(price: number): string {
@@ -156,23 +193,31 @@ export function getPriceMovementMessage(
   return "Price has shifted since this trade.";
 }
 
-export function getQuickTake(trade: TradeSummary): string {
-  const sizeClass = getTradeClass(trade.size).label;
+export function getQuickTakeForTrade(
+  size: number,
+  side: "BUY" | "SELL",
+  price: number
+): string {
+  const sizeClass = getTradeClass(size).label;
   const direction =
-    trade.side === "BUY"
+    side === "BUY"
       ? "believes this WILL happen"
       : "is exiting their position";
   const priceContext =
-    trade.price < 0.3
+    price < 0.3
       ? "longshot territory"
-      : trade.price > 0.7
+      : price > 0.7
         ? "heavy favorite"
         : "contested market";
 
   const conviction =
-    trade.side === "BUY" && trade.size >= 1000
+    side === "BUY" && size >= 1000
       ? "The position size suggests conviction, not casual betting."
       : "Monitor for follow-up activity in this market.";
 
-  return `A ${sizeClass} trader ${direction} at ${(trade.price * 100).toFixed(1)}% — ${priceContext}. ${conviction}`;
+  return `A ${sizeClass} trader ${direction} at ${(price * 100).toFixed(1)}% — ${priceContext}. ${conviction}`;
+}
+
+export function getQuickTake(trade: TradeSummary): string {
+  return getQuickTakeForTrade(trade.size, trade.side, trade.price);
 }

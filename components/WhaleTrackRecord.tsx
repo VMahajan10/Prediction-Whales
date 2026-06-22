@@ -2,8 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { CategoryStats, ClvStats, TrackRecord } from "@/lib/polymarket";
+import { TRACK_RECORD_RELIABILITY_FLOOR } from "@/lib/polymarket";
 import CategoryRoiBreakdown from "@/components/CategoryRoiBreakdown";
 import ClvCard from "@/components/ClvCard";
+import {
+  applyLowSampleAverageEv,
+  resolveAverageEvDisplay,
+} from "@/lib/averageEvDisplay";
 
 interface WhaleTrackRecordProps {
   proxyWallet?: string;
@@ -74,6 +79,39 @@ function roiColor(roi: number | null): string {
   return "text-red-400";
 }
 
+function closedWinsFromTrack(track: TrackRecord): number {
+  if (track.closedWins != null) return track.closedWins;
+  if (track.winRate == null || track.closedCount === 0) return 0;
+  return Math.round((track.winRate / 100) * track.closedCount);
+}
+
+function LowSampleBanner({
+  closedCount,
+  floor,
+}: {
+  closedCount: number;
+  floor: number;
+}) {
+  return (
+    <div
+      className="mb-5 rounded-xl border-2 border-amber-500/55 bg-amber-500/15 px-5 py-4 shadow-sm"
+      role="status"
+    >
+      <p className="text-lg font-semibold text-amber-100">
+        Not enough history to trust these stats
+      </p>
+      <p className="mt-2 text-sm leading-relaxed text-amber-200/95">
+        Only{" "}
+        <span className="font-bold text-amber-50">{closedCount}</span> closed
+        bet{closedCount === 1 ? "" : "s"} on record — we need at least{" "}
+        <span className="font-bold text-amber-50">{floor}</span> before treating
+        this whale as trackable. The figures below are shown for transparency,
+        not as proof of skill.
+      </p>
+    </div>
+  );
+}
+
 function MetricBox({
   value,
   label,
@@ -81,6 +119,8 @@ function MetricBox({
   valueClassName = "text-white",
   badge,
   emptyValue = false,
+  sublabel,
+  muted = false,
 }: {
   value: string;
   label: string;
@@ -88,25 +128,63 @@ function MetricBox({
   valueClassName?: string;
   badge?: string;
   emptyValue?: boolean;
+  sublabel?: string;
+  /** Low sample — grey, smaller headline; no green/red confidence colors. */
+  muted?: boolean;
 }) {
+  const showEmpty = emptyValue && !muted;
   return (
-    <div className="rounded-xl border border-slate-700 bg-slate-900/50 p-4">
+    <div
+      className={`rounded-xl border p-4 ${
+        muted
+          ? "border-slate-700/40 bg-slate-900/25"
+          : "border-slate-700 bg-slate-900/50"
+      }`}
+    >
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <p
           className={`font-bold ${
-            emptyValue ? "text-lg text-slate-500" : "text-xl"
-          } ${emptyValue ? "" : valueClassName}`}
+            showEmpty
+              ? "text-lg text-slate-500"
+              : muted
+                ? "text-base font-medium text-slate-400"
+                : "text-xl"
+          } ${showEmpty || muted ? "" : valueClassName}`}
         >
           {value}
         </p>
         {badge && (
-          <span className="rounded-full bg-slate-700/60 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-400">
+          <span
+            className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${
+              muted
+                ? "bg-slate-700/40 text-slate-500"
+                : "bg-slate-700/60 text-slate-400"
+            }`}
+          >
             {badge}
           </span>
         )}
       </div>
-      <p className="mb-2 text-xs font-medium text-slate-300">{label}</p>
-      <p className="text-xs leading-relaxed text-slate-400">{explain}</p>
+      <p
+        className={`mb-0.5 text-xs font-medium ${
+          muted ? "text-slate-500" : "text-slate-300"
+        }`}
+      >
+        {label}
+      </p>
+      {sublabel && (
+        <p className="mb-2 text-[11px] leading-snug text-slate-500">
+          {sublabel}
+        </p>
+      )}
+      {!sublabel && <div className="mb-2" />}
+      <p
+        className={`text-xs leading-relaxed ${
+          muted ? "text-slate-500" : "text-slate-400"
+        }`}
+      >
+        {explain}
+      </p>
     </div>
   );
 }
@@ -189,11 +267,48 @@ export default function WhaleTrackRecord({
   const closedCount = trackRecord?.closedCount ?? 0;
   const openPositionCount = data?.openPositionCount ?? 0;
   const noClosedHistory = closedCount === 0;
+  const isLowSample = !noClosedHistory && !hasEnoughHistory;
   const emptyMetricBadge =
     openPositionCount > 0 ? "Open bets only" : "New wallet";
   const roi: number | null = noClosedHistory
     ? null
     : (trackRecord?.roi ?? null);
+
+  let averageEv = resolveAverageEvDisplay(data?.clvStats, trackRecord, {
+    emptyMetricBadge,
+  });
+  if (isLowSample && trackRecord) {
+    averageEv = applyLowSampleAverageEv(averageEv, closedCount);
+  }
+  const showStandaloneAvgReturn =
+    averageEv.mode === "clv" && !noClosedHistory && !isLowSample;
+
+  const wins = trackRecord ? closedWinsFromTrack(trackRecord) : 0;
+  const winRateDisplay = isLowSample && trackRecord
+    ? {
+        value: `${wins} of ${closedCount} bet${closedCount === 1 ? "" : "s"} won`,
+        explain: `${formatWinRate(trackRecord.winRate)} win rate on only ${closedCount} closed bet${closedCount === 1 ? "" : "s"} — luck on a tiny sample, not a track record.`,
+      }
+    : {
+        value: formatWinRate(trackRecord?.winRate ?? null),
+        explain:
+          closedCount > 0
+            ? `This whale wins ${formatWinRate(trackRecord?.winRate ?? null)} of their closed bets. Higher = more trustworthy pattern.`
+            : "Win rate needs at least one closed position to calculate.",
+      };
+
+  const roiDisplay = isLowSample && roi != null
+    ? {
+        value: `${formatRoiPct(roi)} ROI on ${closedCount} bet${closedCount === 1 ? "" : "s"}`,
+        explain: `Money-weighted return so far. With only ${closedCount} closed bet${closedCount === 1 ? "" : "s"}, this can swing wildly and is not a reliable signal.`,
+      }
+    : {
+        value: formatRoiPct(roi),
+        explain:
+          closedCount > 0
+            ? `Money-weighted return on closed bets. Positive means this whale's dollars historically grew.`
+            : "ROI needs at least one closed position to calculate.",
+      };
 
   const entryCents = formatCents(entryPrice);
   const currentCents =
@@ -282,11 +397,19 @@ export default function WhaleTrackRecord({
       <h2 className="mb-1 text-lg font-semibold text-white">
         📊 Whale Track Record
       </h2>
+
+      {isLowSample && (
+        <LowSampleBanner
+          closedCount={closedCount}
+          floor={TRACK_RECORD_RELIABILITY_FLOOR}
+        />
+      )}
+
       <p className="mb-4 text-sm text-slate-400">
         {hasEnoughHistory
           ? "Historical performance from this wallet's closed bets"
           : closedCount > 0
-            ? `Limited history — only ${closedCount} closed bet${closedCount === 1 ? "" : "s"} on record`
+            ? `Early snapshot — ${closedCount} closed bet${closedCount === 1 ? "" : "s"} so far`
             : "No closed bet history found for this wallet"}
       </p>
 
@@ -298,49 +421,54 @@ export default function WhaleTrackRecord({
         </p>
       )}
 
-      {!hasEnoughHistory && closedCount > 0 && (
-        <div className="mb-4 rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-300">
-          Not enough history for a reliable track record yet. Treat signals with
-          extra caution.
-        </div>
-      )}
-
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <MetricBox
-          value={formatWinRate(trackRecord?.winRate ?? null)}
+          value={averageEv.value}
+          label={averageEv.label}
+          sublabel={isLowSample ? undefined : averageEv.fallbackSublabel}
+          valueClassName={averageEv.valueClassName}
+          emptyValue={averageEv.mode === "unavailable"}
+          badge={averageEv.badge}
+          explain={averageEv.explain}
+          muted={isLowSample}
+        />
+        <MetricBox
+          value={winRateDisplay.value}
           label="Win Rate"
           valueClassName={winRateColor(trackRecord?.winRate ?? null)}
           emptyValue={noClosedHistory}
-          badge={noClosedHistory ? emptyMetricBadge : undefined}
-          explain={
-            closedCount > 0
-              ? `This whale wins ${formatWinRate(trackRecord?.winRate ?? null)} of their closed bets. Higher = more trustworthy pattern.`
-              : "Win rate needs at least one closed position to calculate."
+          badge={
+            noClosedHistory
+              ? emptyMetricBadge
+              : isLowSample
+                ? "Too few bets"
+                : undefined
           }
+          explain={winRateDisplay.explain}
+          muted={isLowSample}
         />
+        {showStandaloneAvgReturn && (
+          <MetricBox
+            value={formatAvgReturn(trackRecord?.avgReturnPerBet ?? null)}
+            label="Avg Return per Bet"
+            valueClassName={avgReturnColor(trackRecord?.avgReturnPerBet ?? null)}
+            explain="Average profit/loss per closed bet in dollars — complements closing-line EV above."
+          />
+        )}
         <MetricBox
-          value={formatAvgReturn(trackRecord?.avgReturnPerBet ?? null)}
-          label="Avg Return per Bet"
-          valueClassName={avgReturnColor(trackRecord?.avgReturnPerBet ?? null)}
-          emptyValue={noClosedHistory}
-          badge={noClosedHistory ? emptyMetricBadge : undefined}
-          explain={
-            closedCount > 0
-              ? `Average profit/loss per closed bet. Positive means this whale historically finds profitable spots.`
-              : "Average return needs closed positions to calculate."
-          }
-        />
-        <MetricBox
-          value={formatRoiPct(roi)}
+          value={roiDisplay.value}
           label="ROI"
           valueClassName={roiColor(roi)}
           emptyValue={noClosedHistory}
-          badge={noClosedHistory ? emptyMetricBadge : undefined}
-          explain={
-            closedCount > 0
-              ? `Money-weighted return on closed bets. Positive means this whale's dollars historically grew.`
-              : "ROI needs at least one closed position to calculate."
+          badge={
+            noClosedHistory
+              ? emptyMetricBadge
+              : isLowSample
+                ? "Too few bets"
+                : undefined
           }
+          explain={roiDisplay.explain}
+          muted={isLowSample}
         />
         <MetricBox
           value={trackRecord ? `${trackRecord.closedCount} closed` : "—"}
@@ -370,7 +498,9 @@ export default function WhaleTrackRecord({
         />
       </div>
 
-      {data?.clvStats && <ClvCard stats={data.clvStats} />}
+      {data?.clvStats && (
+        <ClvCard stats={data.clvStats} averageEv={averageEv} />
+      )}
 
       {data?.categoryStats && data.categoryStats.length > 0 && (
         <CategoryRoiBreakdown categories={data.categoryStats} />

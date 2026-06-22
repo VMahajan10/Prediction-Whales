@@ -1,11 +1,15 @@
 "use client";
 
 import type { FeedTrade } from "@/lib/kalshiTrades";
+import type { KalshiTradeDetail } from "@/lib/kalshiDetail";
+import { feedTradeToKalshiDetail } from "@/lib/kalshiDetail";
 import type { TradeSummary } from "@/lib/polymarket";
 import type { WhaleTrade } from "@/lib/whaleTrades";
 
 const SESSION_PREFIX = "marketpulse:pendingTrade:v1:";
+const KALSHI_SESSION_PREFIX = "marketpulse:pendingKalshiTrade:v1:";
 const pendingByHash = new Map<string, TradeSummary>();
+const pendingKalshiById = new Map<string, KalshiTradeDetail>();
 
 function hashKey(hash: string): string {
   return decodeURIComponent(hash).toLowerCase();
@@ -64,6 +68,86 @@ export function consumeStashedTrade(hash: string): TradeSummary | null {
     if (!raw) return null;
     window.sessionStorage.removeItem(sessionKey(key));
     return JSON.parse(raw) as TradeSummary;
+  } catch {
+    return null;
+  }
+}
+
+function kalshiSessionKey(tradeId: string): string {
+  return `${KALSHI_SESSION_PREFIX}${tradeId}`;
+}
+
+function normalizeKalshiTradeId(tradeId: string): string {
+  return decodeURIComponent(tradeId);
+}
+
+/** Read stashed Kalshi trade without removing it (safe for Strict Mode remounts). */
+export function peekStashedKalshiTrade(
+  tradeId: string
+): { trade: KalshiTradeDetail; ticker: string } | null {
+  const key = normalizeKalshiTradeId(tradeId);
+  const fromMemory = pendingKalshiById.get(key);
+  if (fromMemory) {
+    return { trade: fromMemory, ticker: fromMemory.ticker };
+  }
+
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(kalshiSessionKey(key));
+    if (!raw) return null;
+    return JSON.parse(raw) as { trade: KalshiTradeDetail; ticker: string };
+  } catch {
+    return null;
+  }
+}
+
+/** Synchronous stash read for first paint (avoids skeleton flash on feed navigation). */
+export function initialKalshiTradeFromStash(
+  tradeId: string
+): KalshiTradeDetail | null {
+  return peekStashedKalshiTrade(tradeId)?.trade ?? null;
+}
+
+export function stashKalshiTradeForNavigation(trade: FeedTrade): void {
+  const detail = feedTradeToKalshiDetail(trade);
+  if (!detail) return;
+  const key = detail.tradeId;
+  pendingKalshiById.set(key, detail);
+  if (typeof window !== "undefined") {
+    try {
+      window.sessionStorage.setItem(
+        kalshiSessionKey(key),
+        JSON.stringify({ trade: detail, ticker: detail.ticker })
+      );
+    } catch {
+      // In-memory map still works
+    }
+  }
+}
+
+export function consumeStashedKalshiTrade(
+  tradeId: string
+): { trade: KalshiTradeDetail; ticker: string } | null {
+  const key = normalizeKalshiTradeId(tradeId);
+  const fromMemory = pendingKalshiById.get(key);
+  if (fromMemory) {
+    pendingKalshiById.delete(key);
+    if (typeof window !== "undefined") {
+      try {
+        window.sessionStorage.removeItem(kalshiSessionKey(key));
+      } catch {
+        // ignore
+      }
+    }
+    return { trade: fromMemory, ticker: fromMemory.ticker };
+  }
+
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(kalshiSessionKey(key));
+    if (!raw) return null;
+    window.sessionStorage.removeItem(kalshiSessionKey(key));
+    return JSON.parse(raw) as { trade: KalshiTradeDetail; ticker: string };
   } catch {
     return null;
   }
