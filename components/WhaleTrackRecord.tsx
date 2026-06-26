@@ -2,7 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { CategoryStats, ClvStats, TrackRecord } from "@/lib/polymarket";
-import { TRACK_RECORD_RELIABILITY_FLOOR } from "@/lib/polymarket";
+import {
+  repairTrackRecord,
+  TRACK_RECORD_RELIABILITY_FLOOR,
+} from "@/lib/polymarket";
 import CategoryRoiBreakdown from "@/components/CategoryRoiBreakdown";
 import ClvCard from "@/components/ClvCard";
 import {
@@ -16,6 +19,9 @@ interface WhaleTrackRecordProps {
   entryPrice: number;
   currentPrice: number | null;
   betSize: number;
+  marketsLoading?: boolean;
+  marketMatched?: boolean;
+  marketClosed?: boolean;
 }
 
 interface TrackRecordResponse {
@@ -87,17 +93,24 @@ function closedWinsFromTrack(track: TrackRecord): number {
 
 function LowSampleBanner({
   closedCount,
+  wins,
   floor,
 }: {
   closedCount: number;
+  wins: number;
   floor: number;
 }) {
+  const losses = closedCount - wins;
   return (
     <div
-      className="mb-5 rounded-xl border-2 border-amber-500/55 bg-amber-500/15 px-5 py-4 shadow-sm"
+      className="mb-5 rounded-xl border-2 border-amber-500/60 bg-amber-500/20 px-5 py-4 shadow-sm"
       role="status"
     >
-      <p className="text-lg font-semibold text-amber-100">
+      <p className="text-xl font-bold text-amber-50">
+        {wins} of {closedCount} closed bet{closedCount === 1 ? "" : "s"} won
+        {losses > 0 ? ` · ${losses} lost` : ""}
+      </p>
+      <p className="mt-2 text-base font-semibold text-amber-100">
         Not enough history to trust these stats
       </p>
       <p className="mt-2 text-sm leading-relaxed text-amber-200/95">
@@ -105,8 +118,8 @@ function LowSampleBanner({
         <span className="font-bold text-amber-50">{closedCount}</span> closed
         bet{closedCount === 1 ? "" : "s"} on record — we need at least{" "}
         <span className="font-bold text-amber-50">{floor}</span> before treating
-        this whale as trackable. The figures below are shown for transparency,
-        not as proof of skill.
+        win rate, ROI, or average EV as meaningful. Percentages on a tiny sample
+        look impressive by luck alone.
       </p>
     </div>
   );
@@ -205,6 +218,9 @@ export default function WhaleTrackRecord({
   entryPrice,
   currentPrice,
   betSize,
+  marketsLoading = false,
+  marketMatched = false,
+  marketClosed = false,
 }: WhaleTrackRecordProps) {
   const [data, setData] = useState<TrackRecordResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -260,7 +276,9 @@ export default function WhaleTrackRecord({
     void load();
   }, [proxyWallet]);
 
-  const trackRecord = data?.trackRecord;
+  const trackRecord = data?.trackRecord
+    ? repairTrackRecord(data.trackRecord)
+    : null;
   const waitingForWallet = !proxyWallet && !walletUnavailable;
   const loadingRecord = !!proxyWallet && loading && !trackRecord;
   const hasEnoughHistory = trackRecord?.hasEnoughHistory ?? false;
@@ -286,50 +304,69 @@ export default function WhaleTrackRecord({
   const wins = trackRecord ? closedWinsFromTrack(trackRecord) : 0;
   const winRateDisplay = isLowSample && trackRecord
     ? {
-        value: `${wins} of ${closedCount} bet${closedCount === 1 ? "" : "s"} won`,
-        explain: `${formatWinRate(trackRecord.winRate)} win rate on only ${closedCount} closed bet${closedCount === 1 ? "" : "s"} — luck on a tiny sample, not a track record.`,
+        value: `${wins} of ${closedCount} won`,
+        label: "Closed record",
+        explain: `${formatWinRate(trackRecord.winRate)} on ${closedCount} bet${closedCount === 1 ? "" : "s"} — too small a sample to infer skill.`,
       }
     : {
         value: formatWinRate(trackRecord?.winRate ?? null),
+        label: "Win Rate",
         explain:
           closedCount > 0
             ? `This whale wins ${formatWinRate(trackRecord?.winRate ?? null)} of their closed bets. Higher = more trustworthy pattern.`
             : "Win rate needs at least one closed position to calculate.",
       };
 
-  const roiDisplay = isLowSample && roi != null
+  const roiDisplay = noClosedHistory
     ? {
-        value: `${formatRoiPct(roi)} ROI on ${closedCount} bet${closedCount === 1 ? "" : "s"}`,
-        explain: `Money-weighted return so far. With only ${closedCount} closed bet${closedCount === 1 ? "" : "s"}, this can swing wildly and is not a reliable signal.`,
+        value: "—",
+        explain:
+          openPositionCount > 0
+            ? `ROI needs at least one closed bet. This wallet has ${openPositionCount} open position${openPositionCount === 1 ? "" : "s"} still unresolved.`
+            : "No closed bets yet — ROI cannot be calculated until at least one position settles.",
       }
-    : {
+    : isLowSample && roi != null
+    ? {
+        value: `${closedCount} bet${closedCount === 1 ? "" : "s"} · ${formatRoiPct(roi)} so far`,
+        explain: `Money-weighted return on only ${closedCount} closed bet${closedCount === 1 ? "" : "s"}. One or two outcomes can swing this wildly — not a reliable signal.`,
+      }
+    : roi != null
+    ? {
         value: formatRoiPct(roi),
         explain:
-          closedCount > 0
-            ? `Money-weighted return on closed bets. Positive means this whale's dollars historically grew.`
-            : "ROI needs at least one closed position to calculate.",
+          "Money-weighted return on closed bets. Positive means this whale's dollars historically grew.",
+      }
+    : {
+        value: "—",
+        explain:
+          "Closed bets are on record but Polymarket did not return cost basis — ROI cannot be computed from this data.",
       };
 
   const entryCents = formatCents(entryPrice);
-  const currentCents =
-    currentPrice !== null ? formatCents(currentPrice) : null;
   const priceDelta =
     currentPrice !== null ? (currentPrice - entryPrice) * 100 : null;
   const deltaSign = priceDelta !== null && priceDelta >= 0 ? "+" : "";
 
-  const entryVsCurrentValue =
-    currentCents !== null
-      ? `${entryCents} → ${currentCents}`
-      : `${entryCents} → —`;
+  const hasLivePrice =
+    currentPrice != null && Number.isFinite(currentPrice);
 
-  const entryVsCurrentExplain =
-    currentPrice === null
-      ? "We don't have a live market price yet. Entry price is what the whale paid per share."
-      : priceDelta !== null && priceDelta > 0
-        ? `Price moved up ${deltaSign}${priceDelta.toFixed(1)}¢ since entry. The market now agrees more with this bet.`
-        : priceDelta !== null && priceDelta < 0
-          ? `Price moved down ${priceDelta.toFixed(1)}¢ since entry. Some edge may have faded — but the whale's thesis could still be right.`
-          : "Price hasn't moved since entry. The same odds are still available.";
+  const entryVsCurrentValue = hasLivePrice
+    ? `${entryCents} → ${formatCents(currentPrice!)}`
+    : `${entryCents} → —`;
+
+  const entryVsCurrentExplain = marketsLoading
+    ? "Fetching a live market quote for this contract…"
+    : !marketMatched
+      ? "Could not match this trade to a Polymarket market listing — no live quote to compare against entry."
+      : marketClosed
+        ? "This market has closed or resolved — there is no live order book, only the final outcome."
+        : !hasLivePrice
+          ? "Market matched but no live price returned yet. The feed may be slow, or this contract is illiquid."
+          : priceDelta !== null && priceDelta > 0
+            ? `Price moved up ${deltaSign}${priceDelta.toFixed(1)}¢ since entry. The market now prices this higher than when the whale entered.`
+            : priceDelta !== null && priceDelta < 0
+              ? `Price moved down ${priceDelta.toFixed(1)}¢ since entry. Some edge may have faded — but the whale's thesis could still be right.`
+              : "Price hasn't moved since entry. The same odds are still available.";
 
   const convictionTier =
     betSize >= 10000
@@ -393,23 +430,30 @@ export default function WhaleTrackRecord({
   }
 
   return (
-    <section className="mb-8 rounded-xl border border-pulse-border bg-slate-800 p-6">
-      <h2 className="mb-1 text-lg font-semibold text-white">
-        📊 Whale Track Record
-      </h2>
-
-      {isLowSample && (
+    <section
+      className={`mb-8 rounded-xl border bg-slate-800 p-6 ${
+        isLowSample ? "border-amber-500/35" : "border-pulse-border"
+      }`}
+    >
+      {isLowSample && trackRecord && (
         <LowSampleBanner
           closedCount={closedCount}
+          wins={wins}
           floor={TRACK_RECORD_RELIABILITY_FLOOR}
         />
       )}
+
+      <h2 className="mb-1 text-lg font-semibold text-white">
+        📊 Whale Track Record
+      </h2>
 
       <p className="mb-4 text-sm text-slate-400">
         {hasEnoughHistory
           ? "Historical performance from this wallet's closed bets"
           : closedCount > 0
-            ? `Early snapshot — ${closedCount} closed bet${closedCount === 1 ? "" : "s"} so far`
+            ? isLowSample
+              ? "Early snapshot — treat headline percentages as noise until more bets close"
+              : `Early snapshot — ${closedCount} closed bet${closedCount === 1 ? "" : "s"} so far`
             : "No closed bet history found for this wallet"}
       </p>
 
@@ -434,7 +478,7 @@ export default function WhaleTrackRecord({
         />
         <MetricBox
           value={winRateDisplay.value}
-          label="Win Rate"
+          label={winRateDisplay.label}
           valueClassName={winRateColor(trackRecord?.winRate ?? null)}
           emptyValue={noClosedHistory}
           badge={
@@ -452,20 +496,24 @@ export default function WhaleTrackRecord({
             value={formatAvgReturn(trackRecord?.avgReturnPerBet ?? null)}
             label="Avg Return per Bet"
             valueClassName={avgReturnColor(trackRecord?.avgReturnPerBet ?? null)}
-            explain="Average profit/loss per closed bet in dollars — complements closing-line EV above."
+            explain={`Average dollar profit per closed bet across this wallet's history — not this trade's ${formatDollars(betSize)} stake. Whales with large positions can show much bigger averages than today's bet size.`}
           />
         )}
         <MetricBox
           value={roiDisplay.value}
           label="ROI"
           valueClassName={roiColor(roi)}
-          emptyValue={noClosedHistory}
+          emptyValue={noClosedHistory || (closedCount > 0 && roi == null)}
           badge={
             noClosedHistory
-              ? emptyMetricBadge
+              ? openPositionCount > 0
+                ? "Open bets only"
+                : "No closed bets yet"
               : isLowSample
                 ? "Too few bets"
-                : undefined
+                : roi == null && closedCount > 0
+                  ? "Cost basis missing"
+                  : undefined
           }
           explain={roiDisplay.explain}
           muted={isLowSample}
@@ -483,11 +531,22 @@ export default function WhaleTrackRecord({
           value={entryVsCurrentValue}
           label="Entry vs Current Price"
           valueClassName={
-            priceDelta !== null && priceDelta > 0
+            hasLivePrice && priceDelta !== null && priceDelta > 0
               ? "text-pulse-yes"
-              : priceDelta !== null && priceDelta < 0
+              : hasLivePrice && priceDelta !== null && priceDelta < 0
                 ? "text-red-400"
                 : "text-white"
+          }
+          badge={
+            !hasLivePrice
+              ? marketsLoading
+                ? "Loading quote"
+                : !marketMatched
+                  ? "Unmatched market"
+                  : marketClosed
+                    ? "Market closed"
+                    : "No live quote"
+              : undefined
           }
           explain={entryVsCurrentExplain}
         />
@@ -499,10 +558,16 @@ export default function WhaleTrackRecord({
       </div>
 
       {data?.clvStats && (
-        <ClvCard stats={data.clvStats} averageEv={averageEv} />
+        <ClvCard
+          stats={data.clvStats}
+          averageEv={averageEv}
+          lowSample={isLowSample}
+        />
       )}
 
-      {data?.categoryStats && data.categoryStats.length > 0 && (
+      {data?.categoryStats &&
+        data.categoryStats.length > 0 &&
+        !isLowSample && (
         <CategoryRoiBreakdown categories={data.categoryStats} />
       )}
 

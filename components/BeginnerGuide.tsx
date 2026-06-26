@@ -1,10 +1,11 @@
+import { formatImpliedProbabilitySummary } from "@/lib/tradeDetail";
+
 const LESSONS = [
   {
     icon: "🌍",
     title: "What is a prediction market?",
-    text: "A prediction market is like a poll where people bet real money on what they think will happen. The price IS the probability — if a market shows 60%, that means the crowd thinks there's a 60% chance of it happening.",
-    example:
-      "France at 16% means out of 100 people, only 16 think France will win.",
+    text: "Traders bet real money on outcomes. The price IS implied probability — if a market shows 60%, money is pricing a ~60% chance. That reflects how much capital is at risk, not a headcount of opinions.",
+    example: `France at 16¢ → ${formatImpliedProbabilitySummary(0.16)}. A $10 bet and a $10,000 bet both trade at that price — size doesn't change the quote, but large orders move it.`,
   },
   {
     icon: "💰",

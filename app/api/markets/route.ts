@@ -1,8 +1,15 @@
 import { NextResponse } from "next/server";
-import { fetchMarkets } from "@/lib/polymarket";
+import { fetchMarketBySlug, fetchMarkets } from "@/lib/polymarket";
 
-export async function GET() {
+export async function GET(request: Request) {
+  const slug = new URL(request.url).searchParams.get("slug");
+
   try {
+    if (slug) {
+      const market = await fetchMarketBySlug(slug);
+      return NextResponse.json({ markets: market ? [market] : [] });
+    }
+
     const markets = await fetchMarkets();
     return NextResponse.json({ markets });
   } catch (error) {

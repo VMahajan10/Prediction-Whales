@@ -1,7 +1,7 @@
 import { Redis } from "@upstash/redis";
 import type { CategoryStats, ClvStats, TrackRecord } from "@/lib/polymarket";
 
-const CACHE_VERSION = "v4";
+const CACHE_VERSION = "v6";
 const KEY_PREFIX = `whale:stats:${CACHE_VERSION}:`;
 const TTL_SEC = 600; // 10 minutes
 

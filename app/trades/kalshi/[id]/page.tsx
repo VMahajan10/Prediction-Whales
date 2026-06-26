@@ -22,10 +22,7 @@ import type {
   KalshiOrderBook,
   KalshiTradeDetail,
 } from "@/lib/kalshiDetail";
-import {
-  formatKalshiContractCount,
-  kalshiYesMidFromMarket,
-} from "@/lib/kalshiDetail";
+import { kalshiYesMidFromMarket } from "@/lib/kalshiDetail";
 import {
   initialKalshiTradeFromStash,
   peekStashedKalshiTrade,
@@ -33,9 +30,9 @@ import {
 import { useCrossMarketEvIndex } from "@/lib/useCrossMarketEvIndex";
 import { getFullDate, getTimeAgo, getUtcString } from "@/lib/time";
 import {
+  formatImpliedProbabilitySummary,
   getPlainEnglishOutcomeLabel,
   getPriceAnalysis,
-  getPriceMovementMessage,
   getQuickTakeForTrade,
   getTradeClass,
   getTradeDirectionInsight,
@@ -283,7 +280,6 @@ export default function KalshiTradeDetailPage() {
   const profitPct =
     price > 0 ? ((1 / price - 1) * 100).toFixed(1) : "0";
   const multiplier = price > 0 ? (1 / price).toFixed(1) : "—";
-  const filledCircles = Math.round(price * 10);
   const tradeClass = getTradeClass(size);
   const activeTier = getTradeTierIndex(size);
   const plainOutcome = getPlainEnglishOutcomeLabel(trade.outcome);
@@ -293,8 +289,6 @@ export default function KalshiTradeDetailPage() {
   const tradePricePct = price * 100;
   const currentProbPct = currentPrice * 100;
   const delta = currentProbPct - tradePricePct;
-  const priceMovedInFavor =
-    trade.side === "BUY" ? delta > 0 : delta < 0;
   const directionInsight = getTradeDirectionInsight(delta, trade.side);
 
   const liveContracts = price > 0 ? size / price : 0;
@@ -308,10 +302,6 @@ export default function KalshiTradeDetailPage() {
       : size - liveContracts * currentPrice;
 
   const marketLoading = (loading || enriching) && !market;
-  const kalshiSpread =
-    market?.yesBid != null && market?.yesAsk != null
-      ? (market.yesAsk - market.yesBid) * 100
-      : null;
   const kalshiHref =
     market?.webUrl ??
     `https://kalshi.com/markets/${trade.ticker.split("-")[0].toLowerCase()}`;
@@ -498,31 +488,7 @@ export default function KalshiTradeDetailPage() {
           />
         )}
 
-        <div className="mt-6 space-y-3">
-          <div>
-            <div className="mb-1 flex justify-between text-xs text-slate-400">
-              <span>When trade was placed</span>
-              <span>{tradePricePct.toFixed(1)}%</span>
-            </div>
-            <div className="h-3 overflow-hidden rounded-full bg-slate-700">
-              <div
-                className="h-full rounded-full bg-slate-500"
-                style={{ width: `${Math.min(100, tradePricePct)}%` }}
-              />
-            </div>
-          </div>
-          <div>
-            <div className="mb-1 flex justify-between text-xs text-slate-400">
-              <span>Current probability</span>
-              <span>{currentProbPct.toFixed(1)}%</span>
-            </div>
-            <div className="h-3 overflow-hidden rounded-full bg-slate-700">
-              <div
-                className="h-full rounded-full bg-pulse-accent"
-                style={{ width: `${Math.min(100, currentProbPct)}%` }}
-              />
-            </div>
-          </div>
+        <div className="mt-4 space-y-2">
           <p
             className={`text-sm font-medium ${
               delta > 0
@@ -615,19 +581,19 @@ export default function KalshiTradeDetailPage() {
         <p className="mb-6 rounded-lg bg-slate-900/60 p-4 text-sm text-slate-300">
           {priceAnalysis}
         </p>
-        <p className="mb-3 text-sm text-slate-300">
+        <p className="mb-4 text-sm text-slate-300">
           {priceCents}¢ per contract ={" "}
           <strong className="text-white">{probPct}%</strong> implied probability
+          — money-weighted, not a poll of opinions.
         </p>
-        <div className="mb-2 flex gap-1">
-          {Array.from({ length: 10 }).map((_, i) => (
-            <span key={i} className="text-lg">
-              {i < filledCircles ? "🟢" : "⬜"}
-            </span>
-          ))}
+        <div className="mb-2 h-3 overflow-hidden rounded-full bg-slate-700">
+          <div
+            className="h-full rounded-full bg-pulse-accent"
+            style={{ width: `${Math.min(100, price * 100)}%` }}
+          />
         </div>
         <p className="text-sm text-slate-400">
-          {filledCircles} out of 10 people think this will happen
+          {formatImpliedProbabilitySummary(price)}
         </p>
       </section>
 
@@ -655,8 +621,9 @@ export default function KalshiTradeDetailPage() {
                 goes higher. If many traders follow, this could become a
                 self-fulfilling signal.{"\n\n"}
                 Real example: If 10 whales all BUY YES on the same market, the
-                price moves from 30% to 45%. That price change is the crowd
-                updating their belief based on the whales&apos; actions.
+                price moves from 30% to 45%. That repricing reflects new money
+                entering at higher prices — not a headcount of who changed their
+                mind.
               </p>
             </>
           ) : (
@@ -723,10 +690,10 @@ export default function KalshiTradeDetailPage() {
         </div>
       </section>
 
-      {/* SECTION 7: MARKET CONTEXT */}
+      {/* SECTION 7: MARKET CONTEXT + ORDER BOOK */}
       <section className="mb-8 rounded-xl border border-pulse-border bg-pulse-card/40 p-6">
         <h2 className="mb-4 text-lg font-semibold text-white">
-          🌍 The Market Being Traded
+          🌍 Market & Order Book
         </h2>
         {marketLoading ? (
           <EnrichmentSkeleton rows={5} />
@@ -736,44 +703,6 @@ export default function KalshiTradeDetailPage() {
               <h3 className="mb-3 text-sm font-medium text-white">
                 {market.title}
               </h3>
-              <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
-                <span className="text-slate-400">
-                  Was {tradePricePct.toFixed(1)}% when traded → Now{" "}
-                  {currentProbPct.toFixed(1)}%
-                </span>
-                {Math.abs(delta) >= 0.5 && (
-                  <span
-                    className={
-                      priceMovedInFavor ? "text-pulse-yes" : "text-red-400"
-                    }
-                  >
-                    {priceMovedInFavor ? "↑" : "↓"}{" "}
-                    {Math.abs(delta).toFixed(1)}%
-                  </span>
-                )}
-              </div>
-              <div className="mb-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
-                <div>
-                  <p className="text-xs text-pulse-muted">Probability</p>
-                  <p className="font-semibold text-pulse-accent">
-                    {currentProbPct.toFixed(1)}%
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs text-pulse-muted">Volume (24h)</p>
-                  <p className="font-semibold text-white">
-                    {formatKalshiContractCount(market.volume24h)} contracts
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs text-pulse-muted">Spread</p>
-                  <p className="font-semibold text-white">
-                    {kalshiSpread == null
-                      ? "—"
-                      : `${kalshiSpread.toFixed(1)}¢`}
-                  </p>
-                </div>
-              </div>
               <Link
                 href={`/markets/${encodeURIComponent(market.ticker)}`}
                 className="inline-block text-sm text-pulse-accent hover:underline"
@@ -781,14 +710,46 @@ export default function KalshiTradeDetailPage() {
                 View full market →
               </Link>
             </div>
-            <p className="mt-4 text-sm text-slate-400">
-              {getPriceMovementMessage(delta, trade.side)}
-            </p>
-            {directionInsight && (
-              <p className={`mt-2 text-sm ${directionInsight.className}`}>
-                {directionInsight.text}
-              </p>
-            )}
+
+            <div className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+              <div>
+                <p className="text-xs text-pulse-muted">Yes bid / ask</p>
+                <p className="font-semibold text-green-400">
+                  {market.yesBid != null
+                    ? `${(market.yesBid * 100).toFixed(1)}¢`
+                    : "—"}{" "}
+                  /{" "}
+                  {market.yesAsk != null
+                    ? `${(market.yesAsk * 100).toFixed(1)}¢`
+                    : "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-pulse-muted">No bid / ask</p>
+                <p className="font-semibold text-red-400">
+                  {market.noBid != null
+                    ? `${(market.noBid * 100).toFixed(1)}¢`
+                    : "—"}{" "}
+                  /{" "}
+                  {market.noAsk != null
+                    ? `${(market.noAsk * 100).toFixed(1)}¢`
+                    : "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-pulse-muted">Status</p>
+                <p className="font-semibold capitalize text-white">
+                  {market.status || "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-pulse-muted">Close</p>
+                <p className="text-sm text-white">
+                  {formatKalshiDate(market.closeTime)}
+                </p>
+              </div>
+            </div>
+
             {market.rulesPrimary && (
               <div className="mt-4 rounded-lg border border-slate-700 bg-slate-900/50 p-4">
                 <p className="mb-2 text-xs font-medium uppercase text-slate-500">
@@ -804,26 +765,19 @@ export default function KalshiTradeDetailPage() {
                 )}
               </div>
             )}
-            <div className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
-              <div>
-                <p className="text-xs text-pulse-muted">Status</p>
-                <p className="font-semibold capitalize text-white">
-                  {market.status || "—"}
-                </p>
+
+            {orderbook ? (
+              <div className="mt-6 border-t border-slate-700 pt-6">
+                <h3 className="mb-3 text-sm font-medium text-slate-300">
+                  Order book depth
+                </h3>
+                <KalshiOrderBookDepth orderbook={orderbook} />
               </div>
-              <div>
-                <p className="text-xs text-pulse-muted">Result</p>
-                <p className="font-semibold text-white">
-                  {market.result || "Pending"}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-pulse-muted">Close</p>
-                <p className="text-sm text-white">
-                  {formatKalshiDate(market.closeTime)}
-                </p>
-              </div>
-            </div>
+            ) : (
+              <p className="mt-4 text-sm text-slate-500">
+                Order book unavailable for this market.
+              </p>
+            )}
           </>
         ) : (
           <p className="text-sm text-slate-400">
@@ -832,73 +786,7 @@ export default function KalshiTradeDetailPage() {
         )}
       </section>
 
-      {/* SECTION 8: LIVE MARKET STATE + ORDER BOOK */}
-      <section className="mb-8 rounded-xl border border-pulse-border bg-slate-800 p-6">
-        <h2 className="mb-4 text-lg font-semibold text-white">
-          📊 Live Market State
-        </h2>
-        {marketLoading ? (
-          <EnrichmentSkeleton rows={4} />
-        ) : market ? (
-          <>
-            <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-3">
-                <p className="text-xs text-slate-500">Yes bid / ask</p>
-                <p className="text-sm font-semibold text-green-400">
-                  {market.yesBid != null
-                    ? `${(market.yesBid * 100).toFixed(1)}¢`
-                    : "—"}{" "}
-                  /{" "}
-                  {market.yesAsk != null
-                    ? `${(market.yesAsk * 100).toFixed(1)}¢`
-                    : "—"}
-                </p>
-              </div>
-              <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-3">
-                <p className="text-xs text-slate-500">No bid / ask</p>
-                <p className="text-sm font-semibold text-red-400">
-                  {market.noBid != null
-                    ? `${(market.noBid * 100).toFixed(1)}¢`
-                    : "—"}{" "}
-                  /{" "}
-                  {market.noAsk != null
-                    ? `${(market.noAsk * 100).toFixed(1)}¢`
-                    : "—"}
-                </p>
-              </div>
-              <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-3">
-                <p className="text-xs text-slate-500">Volume (24h)</p>
-                <p className="text-sm font-semibold text-white">
-                  {formatKalshiContractCount(market.volume24h)} contracts
-                </p>
-              </div>
-              <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-3">
-                <p className="text-xs text-slate-500">Open interest</p>
-                <p className="text-sm font-semibold text-white">
-                  {formatKalshiContractCount(market.openInterest)} contracts
-                </p>
-              </div>
-            </div>
-
-            {orderbook ? (
-              <>
-                <h3 className="mb-3 text-sm font-medium text-slate-300">
-                  Order book depth
-                </h3>
-                <KalshiOrderBookDepth orderbook={orderbook} />
-              </>
-            ) : (
-              <p className="text-sm text-slate-500">
-                Order book unavailable for this market.
-              </p>
-            )}
-          </>
-        ) : (
-          <p className="text-sm text-slate-400">Live market data unavailable.</p>
-        )}
-      </section>
-
-      {/* SECTION 9: BEGINNER LESSONS */}
+      {/* SECTION 8: BEGINNER LESSONS */}
       <section className="mb-8 rounded-xl border border-pulse-border bg-slate-800 p-6">
         <h2 className="mb-4 text-lg font-semibold text-white">
           🎓 Beginner Trading Lessons From This Trade
@@ -920,15 +808,14 @@ export default function KalshiTradeDetailPage() {
             <p className="mb-2 text-sm font-medium text-white">
               Lesson 2 — About probability
             </p>
-            <p className="text-sm leading-relaxed text-slate-400">
-              This market is priced at {priceCents}¢, meaning {probPct}%
-              implied probability. If you traded this market 100 times at these
-              odds:{"\n"}→ You&apos;d win roughly {Math.round(price * 100)} times
-              {"\n"}→ You&apos;d lose roughly {100 - Math.round(price * 100)}{" "}
-              times{"\n"}→ Break even requires winning more than {probPct}% of
-              the time{"\n\n"}
-              The question is: do you think the TRUE probability is higher or
-              lower than {probPct}%?
+            <p className="whitespace-pre-line text-sm leading-relaxed text-slate-400">
+              {formatImpliedProbabilitySummary(price)} — that reflects how much
+              money traders are willing to risk, not how many people voted Yes.
+              {"\n\n"}
+              If the market is fairly priced at {probPct}%, you&apos;d expect to
+              break even by winning about {probPct}% of identical bets over many
+              trials. The edge question: do you think the true chance is higher
+              or lower than {probPct}%?
             </p>
           </div>
           <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-4">

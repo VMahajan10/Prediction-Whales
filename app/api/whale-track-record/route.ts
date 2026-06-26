@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import {
   buildWhaleTrackRecord,
+  needsTrackRecordRecompute,
+  repairTrackRecord,
   resolveWalletByTradeHash,
 } from "@/lib/polymarket";
 import {
@@ -40,10 +42,11 @@ export async function GET(request: Request) {
     }
 
     const cached = await getCachedTrackRecord(wallet);
-    if (cached) {
+    if (cached && !needsTrackRecordRecompute(cached.trackRecord)) {
+      const trackRecord = repairTrackRecord(cached.trackRecord);
       return NextResponse.json({
         wallet,
-        trackRecord: cached.trackRecord,
+        trackRecord,
         openPositionCount: cached.openPositionCount,
         categoryStats: cached.categoryStats ?? [],
         clvStats: cached.clvStats ?? null,
@@ -54,11 +57,14 @@ export async function GET(request: Request) {
     }
 
     const result = await buildWhaleTrackRecord(wallet);
+    const trackRecord = result.trackRecord
+      ? repairTrackRecord(result.trackRecord)
+      : null;
 
-    if (result.trackRecord) {
+    if (trackRecord) {
       await setCachedTrackRecord(
         wallet,
-        result.trackRecord,
+        trackRecord,
         result.openPositionCount,
         result.categoryStats,
         result.clvStats
@@ -67,6 +73,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       ...result,
+      trackRecord,
       cached: false,
       cacheEnabled: isTrackRecordCacheEnabled(),
     });

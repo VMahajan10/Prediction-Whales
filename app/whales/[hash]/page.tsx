@@ -32,6 +32,7 @@ import { useResolvedWallet } from "@/lib/useResolvedWallet";
 import { useCrossMarketEvIndex } from "@/lib/useCrossMarketEvIndex";
 import { isPolymarketTrade } from "@/lib/tradeSource";
 import { getFullDate, getTimeAgo, getUtcString } from "@/lib/time";
+import { formatImpliedProbabilitySummary } from "@/lib/tradeDetail";
 import WhaleTrackRecord from "@/components/WhaleTrackRecord";
 
 const MIN_WHALE_THRESHOLD = 500;
@@ -230,9 +231,7 @@ export default function WhaleProfilePage() {
   const [reloadKey, setReloadKey] = useState(0);
   const [retrying, setRetrying] = useState(false);
   const [showAllNearby, setShowAllNearby] = useState(false);
-  const [currentProbability, setCurrentProbability] = useState<number | null>(
-    null
-  );
+  const [liveMarketPrice, setLiveMarketPrice] = useState<number | null>(null);
   const retryCount = useRef(0);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadAbortRef = useRef<AbortController | null>(null);
@@ -250,6 +249,7 @@ export default function WhaleProfilePage() {
     retryCount.current = 0;
     setMatchedMarket(null);
     setMatchConfidence(null);
+    setLiveMarketPrice(null);
   }, [hash]);
 
   const enrichMarkets = useCallback(
@@ -286,11 +286,30 @@ export default function WhaleProfilePage() {
           if (market) confidence = "low";
         }
 
+        if (!market && found.slug) {
+          try {
+            const slugRes = await fetchWithTimeout(
+              `/api/markets?slug=${encodeURIComponent(found.slug)}`,
+              { signal }
+            );
+            if (slugRes.ok) {
+              const slugData: { markets?: MarketSummary[] } =
+                await slugRes.json();
+              market = slugData.markets?.[0] ?? null;
+              if (market) confidence = "high";
+            }
+          } catch {
+            // Slug lookup is optional
+          }
+        }
+
         if (signal.aborted) return;
 
         setMatchedMarket(market);
         setMatchConfidence(confidence);
-        setCurrentProbability(market?.probability ?? found.price);
+        if (market && Number.isFinite(market.probability)) {
+          setLiveMarketPrice(market.probability);
+        }
       } catch {
         // Market enrichment is optional
       } finally {
@@ -345,7 +364,7 @@ export default function WhaleProfilePage() {
 
     if (instant) {
       setTrade(instant);
-      setCurrentProbability(instant.price);
+      setLiveMarketPrice(null);
       setNotFound(false);
       setRetrying(false);
       finishLoading();
@@ -391,7 +410,7 @@ export default function WhaleProfilePage() {
         setRetrying(false);
         setTrade(foundTrade);
         setRelatedTrades(findRelatedTrades(trades, foundTrade));
-        setCurrentProbability(foundTrade.price);
+        setLiveMarketPrice(null);
         setNotFound(false);
         finishLoading();
       } catch (err) {
@@ -422,7 +441,7 @@ export default function WhaleProfilePage() {
 
     const found = socketTradeToTradeSummary(wsTrade);
     setTrade(found);
-    setCurrentProbability(found.price);
+    setLiveMarketPrice(null);
     setNotFound(false);
     setRetrying(false);
     setLoading(false);
@@ -449,25 +468,45 @@ export default function WhaleProfilePage() {
   useEffect(() => {
     if (!matchedMarket) return;
 
+    const applyQuote = (market: MarketSummary | null | undefined) => {
+      if (market && Number.isFinite(market.probability)) {
+        setLiveMarketPrice(market.probability);
+      }
+    };
+
     const refresh = async () => {
       try {
         const endpoint =
           matchedMarket.source === "kalshi" ? "/api/kalshi" : "/api/markets";
         const res = await fetch(endpoint);
         const data: { markets?: MarketSummary[] } = await res.json();
-        const updated = data.markets?.find((m) => m.id === matchedMarket.id);
-        if (updated) {
-          setCurrentProbability(updated.probability);
+        let updated = data.markets?.find((m) => m.id === matchedMarket.id);
+
+        if (
+          !updated &&
+          trade?.slug &&
+          matchedMarket.source === "polymarket"
+        ) {
+          const slugRes = await fetch(
+            `/api/markets?slug=${encodeURIComponent(trade.slug)}`
+          );
+          if (slugRes.ok) {
+            const slugData: { markets?: MarketSummary[] } =
+              await slugRes.json();
+            updated = slugData.markets?.[0];
+          }
         }
+
+        applyQuote(updated);
       } catch {
-        // Keep last known probability on failure
+        // Keep last known live quote on failure
       }
     };
 
     refresh();
     const interval = setInterval(refresh, 10000);
     return () => clearInterval(interval);
-  }, [matchedMarket]);
+  }, [matchedMarket, trade?.slug]);
 
   const filteredNearby = useMemo(() => {
     return relatedTrades
@@ -530,9 +569,10 @@ export default function WhaleProfilePage() {
     trade.outcome?.toLowerCase() === "no" ||
     trade.outcome?.toLowerCase() === "no ";
   const displayProbability =
-    matchConfidence === "high" && matchedMarket?.probability !== undefined
+    liveMarketPrice ??
+    (matchConfidence === "high" && matchedMarket?.probability !== undefined
       ? matchedMarket.probability
-      : trade.price ?? 0;
+      : trade.price ?? 0);
   const marketProbPct = (displayProbability * 100).toFixed(1);
   const probPct = (price * 100).toFixed(1);
   const size = trade.size;
@@ -544,7 +584,6 @@ export default function WhaleProfilePage() {
   const salaryWeeks = Math.round(size / US_WEEKLY_WAGE);
   const sizeMultiple = (size / MIN_WHALE_THRESHOLD).toFixed(1);
   const topPercent = getTopPercentTier(size);
-  const filledCircles = Math.round(displayProbability * 10);
   const impliedProb = Math.min(
     (displayProbability || trade.price) + 0.1,
     0.99
@@ -559,11 +598,6 @@ export default function WhaleProfilePage() {
   const oddsComparison = getOddsComparison(displayProbability);
   const timingAnalysis = getTimingAnalysis(trade.timestamp);
 
-  const outcomeSubject =
-    trade.outcome.toLowerCase() === "yes" || trade.outcome.toLowerCase() === "no"
-      ? trade.title
-      : trade.outcome;
-
   return (
     <main className="mx-auto min-h-screen max-w-4xl px-4 py-8 sm:px-6">
       <Link
@@ -576,7 +610,7 @@ export default function WhaleProfilePage() {
       {/* SHOULD I COPY THIS BET */}
       <CopyBetSignal
         trade={trade}
-        currentProbability={currentProbability}
+        currentProbability={liveMarketPrice ?? trade.price}
         matchedMarket={matchedMarket}
       />
 
@@ -654,8 +688,11 @@ export default function WhaleProfilePage() {
         proxyWallet={displayWallet}
         walletUnavailable={walletResolutionFailed}
         entryPrice={trade.price}
-        currentPrice={currentProbability}
+        currentPrice={liveMarketPrice}
         betSize={size}
+        marketsLoading={marketsLoading}
+        marketMatched={!!matchedMarket}
+        marketClosed={matchedMarket?.active === false}
       />
 
       {/* SECTION 2: WHAT HAPPENED */}
@@ -744,19 +781,17 @@ export default function WhaleProfilePage() {
           🎯 What Does {marketProbPct}% Actually Mean?
         </h2>
         <p className="mb-4 text-sm text-slate-300">
-          The market currently prices this at {marketProbPct}%. Here&apos;s what
-          that means in real terms:
+          {marketProbPct}% implied probability — money-weighted, not a poll of
+          opinions.
         </p>
-        <div className="mb-4 flex gap-1">
-          {Array.from({ length: 10 }).map((_, i) => (
-            <span key={i} className="text-lg">
-              {i < filledCircles ? "🟢" : "⬜"}
-            </span>
-          ))}
+        <div className="mb-2 h-3 overflow-hidden rounded-full bg-slate-700">
+          <div
+            className="h-full rounded-full bg-pulse-accent"
+            style={{ width: `${Math.min(100, displayProbability * 100)}%` }}
+          />
         </div>
-        <p className="mb-4 text-sm text-slate-300">
-          {filledCircles} out of 10 people think{" "}
-          <strong className="text-white">{outcomeSubject}</strong> will happen
+        <p className="mb-4 text-sm text-slate-400">
+          {formatImpliedProbabilitySummary(displayProbability)}
         </p>
         <div className="mb-4 rounded-lg bg-slate-900/60 p-4 text-sm text-slate-300">
           <p className="mb-1 font-medium text-white">Odds comparison</p>
@@ -851,9 +886,9 @@ export default function WhaleProfilePage() {
                   This whale bought at {(trade.price * 100).toFixed(1)}¢.
                   Buying below 50¢ means betting on an UNDERDOG. Underdogs pay
                   more if they win ({multiplier}x here) but lose more often.
-                  Smart money often bets underdogs when they believe the crowd
-                  is wrong. The question is: does this whale know something the
-                  market doesn&apos;t?
+                  Smart money often bets underdogs when they believe the market
+                  is mispriced. The question is: does this whale know something
+                  the market doesn&apos;t?
                 </>
               ) : (
                 <>

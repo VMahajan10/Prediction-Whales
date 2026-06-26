@@ -8,6 +8,8 @@ import {
 interface ClvCardProps {
   stats: ClvStats;
   averageEv?: AverageEvDisplay;
+  /** Wallet has fewer than TRACK_RECORD_RELIABILITY_FLOOR closed bets. */
+  lowSample?: boolean;
 }
 
 function clvColor(clv: number): string {
@@ -30,7 +32,7 @@ function clvSummary(clv: number): string {
  * Supplemental CLV detail below the headline Average EV metric.
  * Headline value lives in WhaleTrackRecord; this card expands coverage context.
  */
-export default function ClvCard({ stats, averageEv }: ClvCardProps) {
+export default function ClvCard({ stats, averageEv, lowSample = false }: ClvCardProps) {
   const {
     coverage,
     totalClosed,
@@ -48,7 +50,18 @@ export default function ClvCard({ stats, averageEv }: ClvCardProps) {
   const usingFallback = averageEv?.mode === "avg_return_fallback";
 
   return (
-    <div className="mt-6 rounded-xl border border-slate-700 bg-slate-900/50 p-5">
+    <div
+      className={`mt-6 rounded-xl border p-5 ${
+        lowSample
+          ? "border-slate-700/40 bg-slate-900/25"
+          : "border-slate-700 bg-slate-900/50"
+      }`}
+    >
+      {lowSample && (
+        <p className="mb-3 text-xs font-medium uppercase tracking-wide text-amber-200/80">
+          Too few closed bets — closing-line detail is not reliable yet
+        </p>
+      )}
       <h3 className="mb-1 text-base font-semibold text-white">
         {clvPrimary ? "Closing-line detail" : "Why EV fell back to avg return"}
       </h3>
@@ -67,7 +80,11 @@ export default function ClvCard({ stats, averageEv }: ClvCardProps) {
           {showWeighted && weightedClv != null && (
             <p className="mb-3 text-sm text-slate-400">
               Stake-weighted edge:{" "}
-              <span className={`font-semibold ${clvColor(weightedClv)}`}>
+              <span
+                className={`font-semibold ${
+                  lowSample ? "text-slate-400" : clvColor(weightedClv)
+                }`}
+              >
                 {formatClvCents(weightedClv)}
               </span>
             </p>

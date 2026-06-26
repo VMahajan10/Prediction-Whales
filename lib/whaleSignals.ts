@@ -65,7 +65,7 @@ export function getPriceSignal(
       return {
         emoji: "✅",
         label: "Market confirmed the bet",
-        plain: `Whale bought at ${(entryPrice * 100).toFixed(1)}%. Market now at ${(currentProb * 100).toFixed(1)}%. Price moved ${(delta * 100).toFixed(1)}% in their favor — the crowd agreed.`,
+        plain: `Whale bought at ${(entryPrice * 100).toFixed(1)}%. Market now at ${(currentProb * 100).toFixed(1)}%. Price moved ${(delta * 100).toFixed(1)}% in their favor — the market repriced upward.`,
         positive: true,
       };
     }
@@ -81,7 +81,7 @@ export function getPriceSignal(
       return {
         emoji: "⚠️",
         label: "Price moved against the whale",
-        plain: `Market dropped ${(Math.abs(delta) * 100).toFixed(1)}% since this bet. The crowd disagrees — proceed with caution.`,
+        plain: `Market dropped ${(Math.abs(delta) * 100).toFixed(1)}% since this bet. Price moved against the whale — proceed with caution.`,
         positive: false,
       };
     }

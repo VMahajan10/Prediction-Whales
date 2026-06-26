@@ -147,6 +147,14 @@ export function getTradeDirectionInsight(
   return null;
 }
 
+/** Plain-language implied probability — not a headcount of opinions. */
+export function formatImpliedProbabilitySummary(price: number): string {
+  const pct = price * 100;
+  const rounded =
+    pct >= 10 ? pct.toFixed(0) : pct >= 1 ? pct.toFixed(1) : pct.toFixed(2);
+  return `The market prices this at ~${rounded}% likely`;
+}
+
 export function getPriceAnalysis(price: number): string {
   const cents = price * 100;
 
@@ -157,7 +165,7 @@ export function getPriceAnalysis(price: number): string {
     return "Cheap shares. The market thinks this is unlikely. High risk, high reward territory. One piece of surprising news could dramatically change this price.";
   }
   if (cents < 40) {
-    return "Moderate discount. The market leans NO but isn't certain. Buyers here think the crowd is too pessimistic.";
+    return "Moderate discount. The market leans NO but isn't certain. Buyers here think the market is too pessimistic.";
   }
   if (cents < 60) {
     return "Near 50/50. The market is genuinely uncertain. These are the most interesting markets — both sides think they have an edge.";

@@ -24,7 +24,7 @@ export default function WelcomeBanner() {
       <ul className="mb-4 list-inside list-disc space-y-1 text-sm text-slate-400">
         <li>People bet on real-world events</li>
         <li>
-          The % shows how likely the crowd thinks something will happen
+          The % is implied probability from price — money-weighted, not a poll
         </li>
         <li>
           You win big on unlikely events, win small on likely events

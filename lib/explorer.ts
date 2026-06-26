@@ -80,7 +80,7 @@ export function getBeginnerAdvice(
   if (volume === 0) {
     advice.push({
       icon: "💤",
-      text: "Low activity market — the price may not reflect what people really think. Be careful.",
+      text: "Low activity market — thin trading may mean the price is stale or easy to move. Be careful.",
     });
   }
 
@@ -101,7 +101,7 @@ export function getBeginnerAdvice(
   if (prob > 0.4 && prob < 0.6) {
     advice.push({
       icon: "🪙",
-      text: "Near 50/50 — the crowd is uncertain. This is where your own research can give you an edge.",
+      text: "Near 50/50 — the market is genuinely uncertain. This is where your own research can give you an edge.",
     });
   }
 
@@ -135,16 +135,16 @@ export function getPositionNarrative(
   }
 
   if (side === "YES" && moved > 0) {
-    return "The market moved in your favor. More people now think this will happen.";
+    return "The market moved in your favor. Implied probability is higher than when you entered.";
   }
   if (side === "YES" && moved < 0) {
-    return "The market moved against you. Fewer people now think this will happen.";
+    return "The market moved against you. Implied probability is lower than when you entered.";
   }
   if (side === "NO" && moved < 0) {
-    return "The market moved in your favor. Fewer people now think this will happen, which is good for your NO bet.";
+    return "The market moved in your favor. YES priced lower — good for your NO position.";
   }
   if (side === "NO" && moved > 0) {
-    return "The market moved against you. More people now think this will happen, which hurts your NO bet.";
+    return "The market moved against you. YES priced higher — that hurts your NO bet.";
   }
 
   return pnl >= 0
@@ -156,7 +156,7 @@ export const GLOSSARY_TERMS: { term: string; definition: string }[] = [
   {
     term: "Probability",
     definition:
-      "The crowd's best guess of how likely this is to happen, shown as a percentage",
+      "Implied chance from market price — money-weighted by traders, not a vote count",
   },
   {
     term: "Spread",

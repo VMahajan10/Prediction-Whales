@@ -461,7 +461,7 @@ export function computeTrackRecord(
     0
   );
   const totalInvested = closed.reduce(
-    (sum, p) => sum + (p.totalBought ?? 0),
+    (sum, p) => sum + positionCostBasis(p),
     0
   );
   const roi =
@@ -481,6 +481,49 @@ export function computeTrackRecord(
     hasEnoughHistory: closed.length >= TRACK_RECORD_RELIABILITY_FLOOR,
     excludedEphemeralCount,
   };
+}
+
+/** Best-effort cost basis for a closed Polymarket position. */
+export function positionCostBasis(position: {
+  totalBought?: number;
+  avgPrice?: number;
+  size?: number;
+  initialValue?: number;
+  cost?: number;
+}): number {
+  const bought = position.totalBought ?? 0;
+  if (bought > 0) return bought;
+
+  const avgPrice = position.avgPrice ?? 0;
+  const size = position.size ?? 0;
+  if (avgPrice > 0 && size > 0) return avgPrice * size;
+
+  const initial = position.initialValue ?? position.cost ?? 0;
+  return initial > 0 ? initial : 0;
+}
+
+/** Cached payloads missing roi or cost basis need a fresh compute, not a patch. */
+export function needsTrackRecordRecompute(track: TrackRecord): boolean {
+  return (
+    track.closedCount > 0 &&
+    (track.roi == null ||
+      track.totalInvested == null ||
+      track.totalInvested === 0)
+  );
+}
+
+/** Backfill roi when cached payload has cost basis but omitted roi. */
+export function repairTrackRecord(track: TrackRecord): TrackRecord {
+  if (track.closedCount === 0) return track;
+
+  const { totalInvested, totalRealizedPnl } = track;
+  let { roi } = track;
+
+  if (roi == null && totalInvested > 0) {
+    roi = (totalRealizedPnl / totalInvested) * 100;
+  }
+
+  return roi === track.roi ? track : { ...track, roi };
 }
 
 /** Short-term crypto up/down bots skew win-rate stats — exclude from track record. */
@@ -739,6 +782,23 @@ export async function fetchMarkets(): Promise<MarketSummary[]> {
   }
 
   return (data as GammaMarket[]).map(normalizeMarket);
+}
+
+export async function fetchMarketBySlug(
+  slug: string
+): Promise<MarketSummary | null> {
+  try {
+    const res = await fetch(
+      `${GAMMA_API_BASE}/markets?slug=${encodeURIComponent(slug)}`,
+      { headers: { Accept: "application/json" }, next: { revalidate: 30 } }
+    );
+    if (!res.ok) return null;
+    const data: unknown = await res.json();
+    if (!Array.isArray(data) || data.length === 0) return null;
+    return normalizeMarket(data[0] as GammaMarket);
+  } catch {
+    return null;
+  }
 }
 
 export async function fetchTrades(): Promise<TradeSummary[]> {

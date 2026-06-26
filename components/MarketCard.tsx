@@ -52,7 +52,7 @@ function ExplorerMarketCard({ market }: { market: MarketSummary }) {
 
       <div className="mb-4">
         <p className="mb-2 text-xs text-pulse-muted">
-          The crowd thinks this is:{" "}
+          Market prices this as:{" "}
           <span className="font-semibold uppercase text-white">
             {likelihood.label}
           </span>

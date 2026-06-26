@@ -75,6 +75,35 @@ export interface KalshiOrderBook {
   no: KalshiOrderBookLevel[];
 }
 
+/** Highest resting bid in a Kalshi book side (API sorts ascending; best is last). */
+export function bestOrderBookBid(
+  levels: KalshiOrderBookLevel[]
+): KalshiOrderBookLevel | null {
+  if (levels.length === 0) return null;
+  return levels.reduce((best, level) =>
+    level.price > best.price ? level : best
+  );
+}
+
+/**
+ * Kalshi lists bids only. A bid on the opposite outcome at X is the same
+ * liquidity as an ask on this outcome at (1 − X).
+ */
+export function deriveComplementAsks(
+  oppositeBids: KalshiOrderBookLevel[]
+): KalshiOrderBookLevel[] {
+  return oppositeBids
+    .map((bid) => ({ price: 1 - bid.price, size: bid.size }))
+    .filter((level) => level.price > 0 && level.size > 0)
+    .sort((a, b) => a.price - b.price);
+}
+
+export function sortBidsBestFirst(
+  levels: KalshiOrderBookLevel[]
+): KalshiOrderBookLevel[] {
+  return [...levels].sort((a, b) => b.price - a.price);
+}
+
 export interface KalshiCandlestick {
   endPeriodTs: number;
   volume: number;

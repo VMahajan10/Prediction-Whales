@@ -13,6 +13,7 @@ import {
   GLOSSARY_TERMS,
 } from "@/lib/explorer";
 import { generateAnalysis } from "@/lib/marketAnalysis";
+import { formatImpliedProbabilitySummary } from "@/lib/tradeDetail";
 import type { Market, TradeSummary } from "@/lib/polymarket";
 import { formatVolumeUsd } from "@/lib/polymarket";
 import {
@@ -198,7 +199,9 @@ export default function MarketDetailPage() {
         const res = await fetch(endpoint);
         const data: { markets?: Market[] } = await res.json();
         const updated = data.markets?.find((m) => m.id === market.id);
-        if (updated) setLiveProbability(updated.probability);
+        if (updated?.probability != null && Number.isFinite(updated.probability)) {
+          setLiveProbability(updated.probability);
+        }
       } catch {
         // Keep last known probability on failure
       }
@@ -287,6 +290,7 @@ export default function MarketDetailPage() {
   const isKalshi = market.source === "kalshi";
   const prob = liveProbability;
   const sentiment = getMarketSentiment(prob);
+  const probabilityGlossary = GLOSSARY_TERMS.find((t) => t.term === "Probability");
   const probDisplay = formatProbDisplay(prob);
   const noProbDisplay = formatProbDisplay(1 - prob);
   const amount = Math.min(Math.max(1, dollarAmount), cash);
@@ -351,18 +355,28 @@ export default function MarketDetailPage() {
             This market asks: <strong className="text-white">{market.question}</strong>
           </p>
           <p className="mt-3 text-sm leading-relaxed text-slate-300">
-            Right now, the crowd thinks there is a{" "}
+            {formatImpliedProbabilitySummary(prob)} — money-weighted, not a poll
+            of opinions.
+          </p>
+          <div className="mt-3 mb-2 h-3 overflow-hidden rounded-full bg-slate-700">
+            <div
+              className="h-full rounded-full bg-pulse-accent"
+              style={{ width: `${Math.min(100, prob * 100)}%` }}
+            />
+          </div>
+          <p className="text-sm text-slate-400">
             <GlossaryTooltip
               term="Probability"
-              definition="The crowd's best guess of how likely this is to happen, shown as a percentage"
+              definition={
+                probabilityGlossary?.definition ??
+                "Implied chance from market price — money-weighted, not a vote count"
+              }
             >
               <span className="font-semibold text-pulse-accent">
                 {probDisplay}%
               </span>
             </GlossaryTooltip>{" "}
-            chance this happens. That means out of 100 people betting on this,{" "}
-            {Math.round(prob * 100)} think YES and{" "}
-            {100 - Math.round(prob * 100)} think NO.
+            implied probability for YES
           </p>
         </section>
 
@@ -416,7 +430,7 @@ export default function MarketDetailPage() {
           <p className="text-sm text-slate-400">
             💡 In a perfect market, EV is always $0 because prices adjust until
             no one has an edge. Real traders look for markets where they think
-            the crowd is WRONG.
+            the price is wrong.
           </p>
         </section>
 

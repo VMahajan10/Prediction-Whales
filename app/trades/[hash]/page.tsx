@@ -33,6 +33,7 @@ import { useResolvedWallet } from "@/lib/useResolvedWallet";
 import { useCrossMarketEvIndex } from "@/lib/useCrossMarketEvIndex";
 import { getFullDate, getTimeAgo, getUtcString } from "@/lib/time";
 import {
+  formatImpliedProbabilitySummary,
   getPlainEnglishOutcome,
   getPriceAnalysis,
   getPriceMovementMessage,
@@ -243,7 +244,11 @@ export default function TradeDetailPage() {
           m.question?.toLowerCase().includes(needle)
         );
         if (matched) {
-          setCurrentProbability(matched.probability);
+          const next =
+            matched.probability != null && Number.isFinite(matched.probability)
+              ? matched.probability
+              : null;
+          if (next != null) setCurrentProbability(next);
         }
       } catch {
         // Keep last known probability on failure
@@ -296,7 +301,6 @@ export default function TradeDetailPage() {
   const profitPct =
     price > 0 ? ((1 / price - 1) * 100).toFixed(1) : "0";
   const multiplier = price > 0 ? (1 / price).toFixed(1) : "—";
-  const filledCircles = Math.round(price * 10);
   const tradeClass = getTradeClass(size);
   const activeTier = getTradeTierIndex(size);
   const plainOutcome = getPlainEnglishOutcome(trade);
@@ -613,19 +617,19 @@ export default function TradeDetailPage() {
         <p className="mb-6 rounded-lg bg-slate-900/60 p-4 text-sm text-slate-300">
           {priceAnalysis}
         </p>
-        <p className="mb-3 text-sm text-slate-300">
+        <p className="mb-4 text-sm text-slate-300">
           {priceCents}¢ per share ={" "}
           <strong className="text-white">{probPct}%</strong> implied probability
+          — money-weighted, not a poll of opinions.
         </p>
-        <div className="mb-2 flex gap-1">
-          {Array.from({ length: 10 }).map((_, i) => (
-            <span key={i} className="text-lg">
-              {i < filledCircles ? "🟢" : "⬜"}
-            </span>
-          ))}
+        <div className="mb-2 h-3 overflow-hidden rounded-full bg-slate-700">
+          <div
+            className="h-full rounded-full bg-pulse-accent"
+            style={{ width: `${Math.min(100, price * 100)}%` }}
+          />
         </div>
         <p className="text-sm text-slate-400">
-          {filledCircles} out of 10 people think this will happen
+          {formatImpliedProbabilitySummary(price)}
         </p>
       </section>
 
@@ -653,8 +657,9 @@ export default function TradeDetailPage() {
                 goes higher. If many traders follow, this could become a
                 self-fulfilling signal.{"\n\n"}
                 Real example: If 10 whales all BUY YES on the same market, the
-                price moves from 30% to 45%. That price change is the crowd
-                updating their belief based on the whales&apos; actions.
+                price moves from 30% to 45%. That repricing reflects new money
+                entering at higher prices — not a headcount of who changed their
+                mind.
               </p>
             </>
           ) : (
