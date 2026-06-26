@@ -1,6 +1,9 @@
 import { fetchKalshiTrades } from "@/lib/kalshiTrades";
 import { NextResponse } from "next/server";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 let cache: {
   minTs: number | undefined;
   data: { trades: Awaited<ReturnType<typeof fetchKalshiTrades>> };

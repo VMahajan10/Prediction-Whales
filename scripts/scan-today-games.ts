@@ -10,7 +10,7 @@ async function main() {
   const today = new Date(nowSec * 1000).toISOString().slice(0, 10);
   const todayGames = new Map<string, ReturnType<typeof snapshotGameEv>[]>();
 
-  for (const e of index.values()) {
+  for (const e of Array.from(index.values())) {
     if (e.game.date !== today) continue;
     const gid = gameMatchId(e.game);
     const list = todayGames.get(gid) ?? [];
@@ -19,7 +19,7 @@ async function main() {
   }
 
   console.log(`Today (${today}) matched games: ${todayGames.size}\n`);
-  for (const [gid, snaps] of todayGames) {
+  for (const [gid, snaps] of Array.from(todayGames.entries())) {
     const s = snaps.find((x) => x.outcome === "team_a") ?? snaps[0];
     console.log(gid);
     console.log(

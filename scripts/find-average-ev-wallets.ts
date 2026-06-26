@@ -48,9 +48,9 @@ async function main() {
       "https://data-api.polymarket.com/trades?limit=80"
     );
     const trades = (await res.json()) as Array<{ proxyWallet?: string }>;
-    wallets = [
-      ...new Set(trades.map((t) => t.proxyWallet).filter(Boolean) as string[]),
-    ];
+    wallets = Array.from(
+      new Set(trades.map((t) => t.proxyWallet).filter(Boolean) as string[])
+    );
   }
 
   const results = [];

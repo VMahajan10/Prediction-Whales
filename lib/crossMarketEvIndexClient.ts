@@ -14,9 +14,9 @@ let refreshTimer: ReturnType<typeof setInterval> | null = null;
 let subscriberCount = 0;
 
 function notify(): void {
-  for (const listener of listeners) {
+  listeners.forEach((listener) => {
     listener(index, loading);
-  }
+  });
 }
 
 function parseEntries(

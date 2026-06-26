@@ -11,6 +11,9 @@ import {
   findTradeByHash,
 } from "@/lib/whaleProfile";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 async function fetchKalshiMarkets(): Promise<MarketSummary[]> {
   try {
     const base =

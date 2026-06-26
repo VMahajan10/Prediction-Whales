@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { fetchTrades } from "@/lib/polymarket";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export async function GET() {
   try {
     const trades = await fetchTrades();

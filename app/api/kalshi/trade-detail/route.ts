@@ -8,6 +8,9 @@ import {
 } from "@/lib/kalshiDetail";
 import { NextRequest, NextResponse } from "next/server";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 let cache: Map<
   string,
   { data: unknown; timestamp: number }

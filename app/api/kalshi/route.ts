@@ -3,6 +3,9 @@ import { cacheKalshiTitlesFromMarkets } from "@/lib/kalshiTitleResolver";
 import { recordPrices } from "@/lib/kalshiPriceStore";
 import { NextResponse } from "next/server";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 let cache: { data: { markets: unknown[] }; timestamp: number } | null = null;
 const CACHE_TTL = 10000; // 10 seconds
 
