@@ -2,8 +2,14 @@ import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
 import * as schema from "./schema";
 
-let sql: ReturnType<typeof neon> | null = null;
-let db: ReturnType<typeof drizzle<typeof schema>> | null = null;
+function createDb(connectionString: string) {
+  const client = neon(connectionString);
+  return drizzle(client, { schema });
+}
+
+type Database = ReturnType<typeof createDb>;
+
+let db: Database | null = null;
 
 export function isDatabaseEnabled(): boolean {
   return !!process.env.DATABASE_URL;
@@ -12,15 +18,14 @@ export function isDatabaseEnabled(): boolean {
 /**
  * Neon HTTP driver — no TCP pool; safe for Vercel serverless cold starts.
  */
-export function getDb() {
+export function getDb(): Database {
   if (!isDatabaseEnabled()) {
     throw new Error("DATABASE_URL is not configured");
   }
   if (!db) {
-    sql = neon(process.env.DATABASE_URL!);
-    db = drizzle(sql, { schema });
+    db = createDb(process.env.DATABASE_URL!);
   }
   return db;
 }
 
-export type Database = ReturnType<typeof getDb>;
+export type { Database };
