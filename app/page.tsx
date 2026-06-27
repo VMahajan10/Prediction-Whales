@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import BeginnerGuide from "@/components/BeginnerGuide";
+import DemoLogoutButton from "@/components/DemoLogoutButton";
 import MarketFeed from "@/components/MarketFeed";
 import MarketMovers from "@/components/MarketMovers";
+import MobileAppShell from "@/components/MobileAppShell";
 import NewWhaleToast from "@/components/NewWhaleToast";
 import TradesFeed from "@/components/TradesFeed";
 import WelcomeBanner from "@/components/WelcomeBanner";
@@ -47,6 +49,7 @@ function HomeDashboard() {
   const [portfolioTotal, setPortfolioTotal] = useState(1000);
   const [explorerMode, setExplorerModeState] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(false);
+  const [showMore, setShowMore] = useState(false);
   const { whales, connected, kalshiOk, newWhale, dismissNewWhale } =
     useWhaleFeed();
   const { bookmarkCount } = useBookmarkedTraders();
@@ -138,67 +141,37 @@ function HomeDashboard() {
   }, [refreshPortfolioTotal]);
 
   return (
-    <main className="mx-auto min-h-screen max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-      <header className="mb-10 border-b border-pulse-border pb-8">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-pulse-accent/20">
-              <span className="text-xl font-bold text-pulse-accent">M</span>
+    <MobileAppShell showNav={!explorerMode}>
+      <main className="min-h-screen px-4 py-5">
+        <header className="mb-6 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <div className="flex h-9 w-9 items-center justify-center rounded-full border border-pulse-border bg-pulse-card">
+              <span className="text-sm font-bold text-pulse-accent">M</span>
             </div>
             <div>
-              <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
-                MarketPulse
-              </h1>
-              <p className="text-sm text-pulse-muted">
-                {explorerMode
-                  ? "Explorer Mode · Learn prediction markets"
-                  : "Polymarket intelligence dashboard · live WebSocket feed"}
+              <p className="text-sm font-bold text-white">Prediction Market</p>
+              <p className="text-[10px] uppercase tracking-wide text-pulse-label">
+                Whale intelligence
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <DemoLogoutButton />
             <button
               type="button"
               onClick={toggleExplorerMode}
-              className="rounded-lg border border-blue-500/40 bg-slate-800 px-4 py-2 text-sm font-medium text-white transition-colors hover:border-blue-400 hover:bg-slate-700"
+              className="rounded-full border border-pulse-border bg-pulse-card px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-pulse-muted hover:text-white"
             >
-              {explorerMode
-                ? "📊 Switch to Trader Mode"
-                : "🎓 Explorer Mode"}
+              {explorerMode ? "Trader" : "Learn"}
             </button>
-            <Link
-              href="/following"
-              className="rounded-lg border border-pulse-border bg-pulse-card/60 px-4 py-2 text-sm font-medium text-white transition-colors hover:border-amber-500/40 hover:text-amber-200"
-            >
-              ⭐ Following{bookmarkCount > 0 ? ` (${bookmarkCount})` : ""}
-            </Link>
-            <Link
-              href="/portfolio"
-              className="rounded-lg border border-pulse-border bg-pulse-card/60 px-4 py-2 text-sm font-medium text-white transition-colors hover:border-slate-500"
-            >
-              💼 ${portfolioTotal.toFixed(2)}
-            </Link>
           </div>
-        </div>
-      </header>
+        </header>
 
-      {explorerMode && <WelcomeBanner />}
-      {explorerMode && <BeginnerGuide />}
+        {explorerMode && <WelcomeBanner />}
+        {explorerMode && <BeginnerGuide />}
 
-      <div className="grid gap-8 lg:grid-cols-3">
-        <section className="lg:col-span-2">
-          {!explorerMode && pmMarkets.length > 0 && (
-            <div className="mb-8">
-              <h2 className="mb-4 text-lg font-semibold text-white">
-                🔥 Market Movers (1h)
-              </h2>
-              <div className="rounded-xl border border-pulse-border bg-pulse-card/40 p-4">
-                <MarketMovers markets={pmMarkets} />
-              </div>
-            </div>
-          )}
-
-          {!explorerMode && (
+        {!explorerMode && (
+          <>
             <WhaleTracker
               whales={whales}
               connected={connected}
@@ -206,55 +179,96 @@ function HomeDashboard() {
               soundEnabled={soundEnabled}
               onToggleSound={toggleSound}
             />
-          )}
-
-          {!explorerMode && (
             <NewWhaleToast whale={newWhale} onDismiss={dismissNewWhale} />
-          )}
 
-          <section id="market-feed" className="mb-8">
-            <h2 className="mb-4 text-lg font-semibold text-white">
-              ⚡ Polymarket · Prediction Markets
-            </h2>
-            <MarketFeed
-              markets={pmMarkets}
-              loading={loading}
-              error={pmError}
-              lastUpdated={lastUpdated}
-              onRetry={() => {
-                setLoading(true);
-                loadPolymarket();
-              }}
-              explorerMode={explorerMode}
-            />
-          </section>
+            <div className="mt-6 border-t border-pulse-border pt-4">
+              <button
+                type="button"
+                onClick={() => setShowMore((v) => !v)}
+                className="flex w-full items-center justify-between rounded-pulse border border-pulse-border bg-pulse-card px-4 py-3 text-left text-sm font-semibold text-white"
+              >
+                <span>More markets & live trades</span>
+                <span className="text-pulse-accent">{showMore ? "−" : "+"}</span>
+              </button>
+            </div>
 
-          <div className="my-8 border-t border-pulse-border" />
+            {showMore && (
+              <div className="mt-4 space-y-6">
+                {pmMarkets.length > 0 && (
+                  <section>
+                    <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-white">
+                      Market Movers
+                    </h2>
+                    <div className="pulse-card p-3">
+                      <MarketMovers markets={pmMarkets} />
+                    </div>
+                  </section>
+                )}
 
-          <section>
-            <h2 className="mb-4 text-lg font-semibold text-white">
-              📈 Kalshi Markets
-            </h2>
-            <MarketFeed
-              markets={kalshiMarkets}
-              loading={kalshiLoading}
-              error={kalshiError}
-              lastUpdated={kalshiLastUpdated}
-              onRetry={() => {
-                setKalshiLoading(true);
-                loadKalshi();
-              }}
-              explorerMode={explorerMode}
-            />
-          </section>
-        </section>
+                <section>
+                  <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-white">
+                    Polymarket
+                  </h2>
+                  <MarketFeed
+                    markets={pmMarkets}
+                    loading={loading}
+                    error={pmError}
+                    lastUpdated={lastUpdated}
+                    onRetry={() => {
+                      setLoading(true);
+                      loadPolymarket();
+                    }}
+                    explorerMode={explorerMode}
+                  />
+                </section>
 
-        <aside className="lg:col-span-1">
-          <div className="rounded-xl border border-pulse-border bg-pulse-card/40 p-4">
-            <TradesFeed />
+                <section>
+                  <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-white">
+                    Kalshi
+                  </h2>
+                  <MarketFeed
+                    markets={kalshiMarkets}
+                    loading={kalshiLoading}
+                    error={kalshiError}
+                    lastUpdated={kalshiLastUpdated}
+                    onRetry={() => {
+                      setKalshiLoading(true);
+                      loadKalshi();
+                    }}
+                    explorerMode={explorerMode}
+                  />
+                </section>
+
+                <section>
+                  <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-white">
+                    Live Trades
+                  </h2>
+                  <div className="pulse-card p-3">
+                    <TradesFeed />
+                  </div>
+                </section>
+              </div>
+            )}
+          </>
+        )}
+
+        {explorerMode && (
+          <div className="mt-8 space-y-6">
+            <Link
+              href="/following"
+              className="block rounded-pulse border border-pulse-border bg-pulse-card px-4 py-3 text-sm font-semibold text-white"
+            >
+              ⭐ Watchlist{bookmarkCount > 0 ? ` (${bookmarkCount})` : ""}
+            </Link>
+            <Link
+              href="/portfolio"
+              className="block rounded-pulse border border-pulse-border bg-pulse-card px-4 py-3 text-sm font-semibold text-white"
+            >
+              💼 Portfolio · ${portfolioTotal.toFixed(2)}
+            </Link>
           </div>
-        </aside>
-      </div>
-    </main>
+        )}
+      </main>
+    </MobileAppShell>
   );
 }

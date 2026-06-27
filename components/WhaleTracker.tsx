@@ -6,17 +6,12 @@ import BookmarkTraderButton from "@/components/BookmarkTraderButton";
 import PlatformFilterToggle from "@/components/PlatformFilterToggle";
 import { useLiveFeedPlatform } from "@/lib/LiveFeedPlatformContext";
 import { liveFeedPlatformLabel } from "@/lib/liveFeedMerge";
-import { formatTradeTimeLocal } from "@/lib/time";
 import {
   stashKalshiTradeForNavigation,
   stashTradeForNavigation,
   whaleTradeToKalshiFeedTrade,
 } from "@/lib/tradeNavigationStore";
-import {
-  windowProgress,
-  windowRemainingSec,
-  type WhaleTrade,
-} from "@/lib/whaleTrades";
+import type { WhaleTrade } from "@/lib/whaleTrades";
 
 const TOP_WHALE_COUNT = 10;
 
@@ -28,145 +23,144 @@ interface WhaleTrackerProps {
   onToggleSound: () => void;
 }
 
-function truncateTitle(title: string, maxLen: number): string {
-  if (title.length <= maxLen) return title;
-  return `${title.slice(0, maxLen)}…`;
-}
-
-function formatWhaleSize(size: number): string {
-  return `$${Math.round(size).toLocaleString("en-US")}`;
-}
-
-function truncateTxHash(hash: string): string {
-  if (hash.length <= 10) return hash;
-  return `${hash.slice(0, 6)}...${hash.slice(-4)}`;
-}
-
 function secondsAgo(detectedAt: number, now: number): number {
   return Math.max(0, Math.floor((now - detectedAt) / 1000));
 }
 
-function SourceBadge({ source }: { source: WhaleTrade["source"] }) {
-  if (source === "kalshi") {
-    return (
-      <span className="shrink-0 rounded bg-teal-900/40 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-teal-300">
-        Kalshi
-      </span>
-    );
+function inferCategory(title: string): string {
+  const t = title.toLowerCase();
+  if (
+    /mlb|marlins|pirates|vs\.|nfl|nba|fifa|world cup|goals|spread|soccer|o\/u/.test(
+      t
+    )
+  ) {
+    return "SPORTS";
   }
+  if (/congress|trump|election|senate|president|house/.test(t)) {
+    return "POLITICS";
+  }
+  if (/btc|eth|crypto|bitcoin/.test(t)) {
+    return "CRYPTO";
+  }
+  return "MARKET";
+}
+
+function traderLabel(trade: WhaleTrade): string {
+  if (trade.proxyWallet) {
+    return `${trade.proxyWallet.slice(0, 6)}…${trade.proxyWallet.slice(-4)}`;
+  }
+  if (trade.source === "kalshi") return "Anonymous";
+  return "Whale trader";
+}
+
+function traderInitials(trade: WhaleTrade): string {
+  if (trade.proxyWallet) return trade.proxyWallet.slice(2, 4).toUpperCase();
+  return trade.source === "kalshi" ? "K" : "W";
+}
+
+function formatStake(size: number): string {
+  return `$${Math.round(size).toLocaleString("en-US")}`;
+}
+
+function StatCell({
+  label,
+  value,
+  valueClass = "text-white",
+}: {
+  label: string;
+  value: string;
+  valueClass?: string;
+}) {
   return (
-    <span className="shrink-0 rounded bg-slate-700/60 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-400">
-      Polymarket
-    </span>
+    <div className="rounded-lg bg-pulse-surface px-3 py-2.5">
+      <p className="pulse-label text-pulse-label">{label}</p>
+      <p className={`mt-1 text-sm font-bold ${valueClass}`}>{value}</p>
+    </div>
   );
 }
 
-function WhaleRowBody({ trade, now }: { trade: WhaleTrade; now: number }) {
+function WhaleFeedCard({ trade, now }: { trade: WhaleTrade; now: number }) {
   const ageSec = secondsAgo(trade.detectedAt, now);
-  const progress = trade.isLive ? windowProgress(trade.detectedAt, now) : 100;
-  const remaining = trade.isLive
-    ? windowRemainingSec(trade.detectedAt, now)
-    : 0;
   const isKalshi = trade.source === "kalshi";
+  const isBuy = isKalshi ? trade.outcome === "Yes" : trade.side === "BUY";
+  const category = inferCategory(trade.title);
+  const platform = isKalshi ? "Kalshi" : "Polymarket";
 
-  return (
-    <>
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0 flex-1">
-          <div className="mb-1 flex items-center gap-2">
-            <SourceBadge source={trade.source} />
-            <p className="min-w-0 flex-1 text-sm font-medium text-white">
-              {truncateTitle(trade.title, 50)}
-            </p>
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {trade.isLive && (
-            <span className="rounded-full bg-green-500/20 px-2 py-0.5 text-xs font-semibold text-green-400">
-              LIVE
-            </span>
-          )}
-          <span
-            className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-              isKalshi
-                ? trade.outcome === "Yes"
-                  ? "bg-pulse-yes/20 text-pulse-yes"
-                  : "bg-red-500/20 text-red-400"
-                : trade.side === "BUY"
-                  ? "bg-pulse-yes/20 text-pulse-yes"
-                  : "bg-red-500/20 text-red-400"
-            }`}
-          >
-            {isKalshi ? trade.outcome : trade.side}
+  const cardInner = (
+    <article className="pulse-card p-4 transition-colors hover:border-pulse-muted">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded bg-pulse-surface px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-pulse-muted">
+            {category}
+          </span>
+          <span className="rounded bg-pulse-surface px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
+            {platform}
           </span>
         </div>
-      </div>
-      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-pulse-muted">
-        {!isKalshi && <span className="text-white">{trade.outcome}</span>}
-        <span className="font-semibold text-white">
-          {formatWhaleSize(trade.usdNotional)}
+        <span className="text-[11px] font-medium text-pulse-label">
+          {ageSec}s
         </span>
-        <span>{(trade.price * 100).toFixed(1)}¢</span>
-        <span>{formatTradeTimeLocal(trade.timestamp)}</span>
-        <span className="text-pulse-accent">detected {ageSec}s ago</span>
-        {isKalshi ? (
-          <span className="text-slate-500">Anonymous trade</span>
-        ) : (
-          <span
-            role="link"
-            tabIndex={0}
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              window.open(
-                `https://polygonscan.com/tx/${trade.transactionHash}`,
-                "_blank",
-                "noopener,noreferrer"
-              );
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                e.stopPropagation();
-                window.open(
-                  `https://polygonscan.com/tx/${trade.transactionHash}`,
-                  "_blank",
-                  "noopener,noreferrer"
-                );
-              }
-            }}
-            className="font-mono text-pulse-accent hover:underline"
-          >
-            {truncateTxHash(trade.transactionHash)}
-          </span>
+      </div>
+
+      <h3 className="text-sm font-bold uppercase leading-snug tracking-wide text-white">
+        {trade.title}
+      </h3>
+
+      <div className="mt-4 flex items-center gap-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-pulse-accent/20 text-xs font-bold text-pulse-accent">
+          {traderInitials(trade)}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold text-white">
+            {traderLabel(trade)}
+          </p>
+          {!isKalshi && (
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-pulse-yes">
+              Whale · ≥$500
+            </p>
+          )}
+        </div>
+        {!isKalshi && (
+          <BookmarkTraderButton
+            wallet={trade.proxyWallet}
+            txHash={trade.transactionHash}
+            assetId={trade.assetId}
+            trade={trade}
+            size="sm"
+          />
         )}
       </div>
-      {trade.isLive && remaining > 0 && (
-        <div className="mt-2">
-          <div className="mb-1 flex justify-between text-[10px] text-slate-500">
-            <span>Window closing (est.)</span>
-            <span>{remaining}s left</span>
-          </div>
-          <div className="h-1 overflow-hidden rounded-full bg-slate-700">
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-green-500 to-yellow-500 transition-all duration-1000"
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-        </div>
-      )}
-    </>
+
+      <div className="mt-3 flex items-center justify-between gap-2">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-pulse-muted">
+          Backing {trade.outcome}
+        </p>
+        <span
+          className={`text-[11px] font-bold uppercase tracking-wider ${
+            isBuy ? "text-pulse-yes" : "text-pulse-no"
+          }`}
+        >
+          {isKalshi ? trade.outcome : trade.side}
+        </span>
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <StatCell
+          label="Entry"
+          value={`${(trade.price * 100).toFixed(0)}¢`}
+        />
+        <StatCell label="Now" value={`${(trade.price * 100).toFixed(0)}¢`} />
+        <StatCell label="Stake" value={formatStake(trade.usdNotional)} />
+        <StatCell
+          label="Avg. EV"
+          value="—"
+          valueClass="text-pulse-label"
+        />
+      </div>
+    </article>
   );
-}
 
-function WhaleRow({ trade, now }: { trade: WhaleTrade; now: number }) {
-  const rowClass = `block rounded-lg border px-3 py-2 transition-colors hover:bg-slate-700 ${
-    trade.isLive
-      ? "border-green-500/30 bg-green-500/5"
-      : "border-pulse-border bg-pulse-card/60"
-  }`;
-
-  if (trade.source === "kalshi") {
+  if (isKalshi) {
     const feedTrade = whaleTradeToKalshiFeedTrade(trade);
     const href =
       trade.ticker != null
@@ -180,9 +174,9 @@ function WhaleRow({ trade, now }: { trade: WhaleTrade; now: number }) {
           onClick={() => {
             if (feedTrade) stashKalshiTradeForNavigation(feedTrade);
           }}
-          className={`cursor-pointer ${rowClass}`}
+          className="block"
         >
-          <WhaleRowBody trade={trade} now={now} />
+          {cardInner}
         </Link>
       </li>
     );
@@ -190,23 +184,13 @@ function WhaleRow({ trade, now }: { trade: WhaleTrade; now: number }) {
 
   return (
     <li>
-      <div className={`flex items-start gap-2 ${rowClass}`}>
-        <Link
-          href={`/whales/${encodeURIComponent(trade.transactionHash)}`}
-          onClick={() => stashTradeForNavigation(trade)}
-          className="min-w-0 flex-1 cursor-pointer"
-        >
-          <WhaleRowBody trade={trade} now={now} />
-        </Link>
-        <BookmarkTraderButton
-          wallet={trade.proxyWallet}
-          txHash={trade.transactionHash}
-          assetId={trade.assetId}
-          trade={trade}
-          size="sm"
-          className="mt-1"
-        />
-      </div>
+      <Link
+        href={`/whales/${encodeURIComponent(trade.transactionHash)}`}
+        onClick={() => stashTradeForNavigation(trade)}
+        className="block"
+      >
+        {cardInner}
+      </Link>
     </li>
   );
 }
@@ -227,72 +211,56 @@ export default function WhaleTracker({
     return () => clearInterval(interval);
   }, []);
 
-  const pmCount = whales.filter((w) => w.source === "polymarket").length;
-  const kalshiCount = whales.filter((w) => w.source === "kalshi").length;
-
   return (
-    <div className="mb-8">
-      <div className="mb-4 flex flex-col gap-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h2 className="text-lg font-semibold text-white">🐋 Whale Tracker</h2>
-            <p className="text-sm text-pulse-muted">
-              Trades ≥ $500 ·{" "}
-              {connected ? (
-                <span className="text-green-400">live WebSocket</span>
-              ) : (
-                <span>connecting…</span>
-              )}
-              {kalshiOk && platform !== "polymarket" && (
-                <span className="text-slate-500"> · +Kalshi poll</span>
-              )}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onToggleSound}
-              className="rounded-lg border border-pulse-border bg-slate-800 px-3 py-1 text-xs text-slate-300 transition-colors hover:bg-slate-700"
-              title="Toggle whale sound alerts (≥$5k)"
-            >
-              {soundEnabled ? "🔔 Sound on" : "🔕 Sound off"}
-            </button>
-            <span className="rounded-full bg-pulse-accent/20 px-3 py-1 text-sm font-medium text-pulse-accent">
-              {whales.length} whales
+    <div>
+      <div className="mb-4 flex items-center justify-between gap-3 px-1">
+        <div className="flex items-center gap-2">
+          <h2 className="text-lg font-bold text-white">Whale Feed</h2>
+          {connected && (
+            <span className="rounded bg-pulse-yes/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-pulse-yes">
+              Live
             </span>
-          </div>
+          )}
         </div>
-        <PlatformFilterToggle value={platform} onChange={setPlatform} />
+        <button
+          type="button"
+          onClick={onToggleSound}
+          className="rounded-full border border-pulse-border bg-pulse-card px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-pulse-muted transition-colors hover:text-white"
+        >
+          {soundEnabled ? "Sound on" : "Sound off"}
+        </button>
       </div>
 
-      <div className="mb-3 text-xs text-slate-500">
-        Showing top {topWhales.length} of {whales.length} · {pmCount} PM ·{" "}
-        {kalshiCount} Kalshi · {liveFeedPlatformLabel(platform)}
-      </div>
+      <PlatformFilterToggle value={platform} onChange={setPlatform} className="mb-4 px-1" />
 
-      <div className="rounded-xl border border-pulse-border bg-pulse-card/40 p-4">
-        {topWhales.length === 0 ? (
-          <p className="py-4 text-sm text-pulse-muted">
+      <p className="mb-4 px-1 text-[10px] uppercase tracking-wide text-pulse-label">
+        {topWhales.length} of {whales.length} · {liveFeedPlatformLabel(platform)}
+        {kalshiOk && platform !== "polymarket" ? " · +Kalshi" : ""}
+      </p>
+
+      {topWhales.length === 0 ? (
+        <div className="pulse-card px-4 py-8 text-center">
+          <p className="text-sm text-pulse-muted">
             {connected || kalshiOk
-              ? "Watching for whale trades (≥ $500)…"
+              ? "Watching for whale trades ≥ $500…"
               : "Connecting to live feed…"}
           </p>
-        ) : (
-          <ul className="space-y-2">
-            {topWhales.map((trade) => (
-              <WhaleRow
-                key={
-                  trade.source === "kalshi"
-                    ? `kalshi:${trade.id}`
-                    : trade.transactionHash || trade.id
-                }
-                trade={trade}
-                now={now}
-              />
-            ))}
-          </ul>
-        )}
-      </div>
+        </div>
+      ) : (
+        <ul className="space-y-3">
+          {topWhales.map((trade) => (
+            <WhaleFeedCard
+              key={
+                trade.source === "kalshi"
+                  ? `kalshi:${trade.id}`
+                  : trade.transactionHash || trade.id
+              }
+              trade={trade}
+              now={now}
+            />
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

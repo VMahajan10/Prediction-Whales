@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo } from "react";
 import BookmarkTraderButton from "@/components/BookmarkTraderButton";
+import MobileAppShell from "@/components/MobileAppShell";
 import { LiveFeedPlatformProvider } from "@/lib/LiveFeedPlatformContext";
 import { getCachedWhaleTrade } from "@/lib/whaleCache";
 import { formatTradeTimeLocal } from "@/lib/time";
@@ -138,7 +139,7 @@ function FollowingContent() {
   }, [whales, bookmarkSet]);
 
   return (
-    <main className="mx-auto min-h-screen max-w-3xl px-4 py-8 sm:px-6">
+    <main className="min-h-screen px-4 py-5">
       <Link
         href="/"
         className="mb-6 inline-block text-sm text-pulse-muted transition-colors hover:text-white"
@@ -219,7 +220,9 @@ function FollowingContent() {
 export default function FollowingPage() {
   return (
     <LiveFeedPlatformProvider>
-      <FollowingContent />
+      <MobileAppShell>
+        <FollowingContent />
+      </MobileAppShell>
     </LiveFeedPlatformProvider>
   );
 }

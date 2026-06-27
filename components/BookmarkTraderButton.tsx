@@ -21,7 +21,7 @@ function StarIcon({ filled }: { filled: boolean }) {
     return (
       <svg
         viewBox="0 0 24 24"
-        className="h-full w-full fill-amber-400 text-amber-400"
+        className="h-full w-full fill-pulse-accent text-pulse-accent"
         aria-hidden
       >
         <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
@@ -111,10 +111,10 @@ export default function BookmarkTraderButton({
       }}
       className={`inline-flex shrink-0 items-center justify-center rounded-lg border transition-colors ${
         disabled
-          ? "cursor-not-allowed border-slate-700/60 text-slate-600"
+          ? "cursor-not-allowed border-pulse-border text-pulse-label"
           : bookmarked
-            ? "border-amber-500/40 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20"
-            : "border-slate-600 bg-slate-800/80 text-slate-400 hover:border-amber-500/40 hover:text-amber-300"
+            ? "border-pulse-accent/50 bg-pulse-accent/10 text-pulse-accent hover:bg-pulse-accent/20"
+            : "border-pulse-border bg-pulse-card text-pulse-muted hover:border-pulse-accent/50 hover:text-pulse-accent"
       } ${dimension} ${className}`}
     >
       {resolving ? (

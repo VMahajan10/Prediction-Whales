@@ -18,7 +18,7 @@ export default function PlatformFilterToggle({
 }: PlatformFilterToggleProps) {
   return (
     <div
-      className={`flex rounded-lg border border-slate-600/80 bg-slate-800/80 p-0.5 ${className}`}
+      className={`flex gap-2 overflow-x-auto pb-1 ${className}`}
       role="group"
       aria-label="Filter trades by platform"
     >
@@ -30,11 +30,7 @@ export default function PlatformFilterToggle({
             type="button"
             onClick={() => onChange(option.value)}
             aria-pressed={active}
-            className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-              active
-                ? "bg-slate-600 text-white shadow-sm"
-                : "text-slate-400 hover:text-slate-200"
-            }`}
+            className={`pulse-chip ${active ? "pulse-chip-active" : "pulse-chip-inactive"}`}
           >
             {option.label}
           </button>
