@@ -893,6 +893,8 @@ export default function TradeDetailPage() {
             trade={trade}
             currentProbability={currentProbability}
             matchedMarket={matchedMarket}
+            proxyWallet={displayWallet}
+            walletUnavailable={walletResolutionFailed}
           />
 
           <WhaleTrackRecord

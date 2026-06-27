@@ -2,30 +2,59 @@
 
 import { trackCopyTap } from "@/lib/copyTracking";
 import {
-  buildCopySignals,
   getCopyBetButtonConfig,
-  getCopyVerdict,
+  getCopySignalsAndVerdict,
+  type TrackRecordCopyContext,
 } from "@/lib/copyBetSignal";
 import { getPolymarketTradeUrl, type MarketSummary, type TradeSummary } from "@/lib/polymarket";
+import { useWhaleTrackRecord } from "@/lib/useWhaleTrackRecord";
 import { VERDICT_BADGE_CLASSES } from "@/lib/whaleSignals";
 
 interface CopyBetSignalProps {
   trade: TradeSummary;
   currentProbability: number | null;
   matchedMarket?: MarketSummary | null;
+  proxyWallet?: string;
+  walletUnavailable?: boolean;
 }
 
 export default function CopyBetSignal({
   trade,
   currentProbability,
   matchedMarket,
+  proxyWallet,
+  walletUnavailable = false,
 }: CopyBetSignalProps) {
+  const { trackRecord, loading: trackLoading, error: trackError } =
+    useWhaleTrackRecord(proxyWallet);
+
+  const trackContext: TrackRecordCopyContext = {
+    proxyWallet,
+    loading: !!proxyWallet && trackLoading && !trackRecord,
+    unavailable: walletUnavailable || (!!proxyWallet && !!trackError),
+    closedCount: trackRecord?.closedCount,
+    hasEnoughHistory: trackRecord?.hasEnoughHistory,
+    winRate: trackRecord?.winRate,
+    roi: trackRecord?.roi,
+  };
+
   const isSell = trade.side === "SELL";
-  const copySignals = buildCopySignals(trade, currentProbability, matchedMarket);
-  const copyVerdict = getCopyVerdict(trade, currentProbability, matchedMarket);
+  const { signals: copySignals, verdict: copyVerdict } = getCopySignalsAndVerdict(
+    trade,
+    currentProbability,
+    matchedMarket,
+    trackContext
+  );
   const verdict = copyVerdict.verdict;
   const polymarketUrl = getPolymarketTradeUrl(trade);
   const buttonConfig = getCopyBetButtonConfig(verdict, trade.side);
+
+  const cautionVerdicts = new Set([
+    "Promising Bet, Unproven Trader",
+    "Unproven Trader — Limited Track Record",
+    "Proceed With Caution",
+    "Weak Signal",
+  ]);
 
   return (
     <section className="mb-8 rounded-xl border border-pulse-border bg-slate-800 p-6">
@@ -51,8 +80,8 @@ export default function CopyBetSignal({
         </h2>
         <p className="text-sm text-slate-400">
           {isSell
-            ? "5 signals analyzed · This is an EXIT trade"
-            : "5 signals analyzed · Updated live"}
+            ? "6 signals analyzed · This is an EXIT trade"
+            : "6 signals analyzed · Trade quality + trader track record"}
         </p>
       </div>
 
@@ -85,7 +114,9 @@ export default function CopyBetSignal({
         <p className="mt-2 text-center text-xs text-slate-500">
           {verdict === "Strong Copy Signal" || verdict === "Worth Considering"
             ? "You'll be taken to Polymarket to place this bet with real money. Only invest what you can afford to lose."
-            : "View the market on Polymarket to research before deciding."}
+            : cautionVerdicts.has(verdict)
+              ? "This signal is capped by trader history — research on Polymarket before copying."
+              : "View the market on Polymarket to research before deciding."}
         </p>
       </div>
     </section>

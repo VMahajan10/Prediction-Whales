@@ -613,6 +613,8 @@ export default function WhaleProfilePage() {
         trade={trade}
         currentProbability={liveMarketPrice ?? trade.price}
         matchedMarket={matchedMarket}
+        proxyWallet={displayWallet}
+        walletUnavailable={walletResolutionFailed}
       />
 
       {tradeEvInput && (
