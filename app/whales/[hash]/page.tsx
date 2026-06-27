@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CopyBetSignal from "@/components/CopyBetSignal";
 import CrossMarketEvBadge from "@/components/CrossMarketEvBadge";
+import BookmarkTraderButton from "@/components/BookmarkTraderButton";
 import LoadErrorCard from "@/components/LoadErrorCard";
 import TradeDetailSkeleton, {
   EnrichmentSkeleton,
@@ -624,14 +625,27 @@ export default function WhaleProfilePage() {
 
       {/* SECTION 1: WHALE IDENTITY */}
       <section className="mb-8 rounded-xl border border-pulse-border bg-slate-800 p-6">
-        <h2 className="mb-4 text-lg font-semibold text-white">
-          🐋 Whale Identity
-        </h2>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold text-white">🐋 Whale Identity</h2>
+          <BookmarkTraderButton
+            wallet={displayWallet}
+            txHash={trade.transactionHash}
+            assetId={trade.assetId}
+            trade={trade}
+          />
+        </div>
         <div className="grid gap-6 sm:grid-cols-2">
           <div className="rounded-xl border border-slate-700 bg-slate-900/50 p-4">
-            <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">
-              Proxy Wallet
-            </p>
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                Proxy Wallet
+              </p>
+              {displayWallet && (
+                <span className="text-[10px] text-slate-500">
+                  Star to follow this trader
+                </span>
+              )}
+            </div>
             {displayWallet ? (
               <>
                 <p className="font-mono text-lg font-semibold text-white">
@@ -640,6 +654,12 @@ export default function WhaleProfilePage() {
                 <p className="mt-1 break-all font-mono text-xs text-slate-500">
                   {displayWallet}
                 </p>
+                <Link
+                  href={`/traders/${encodeURIComponent(displayWallet)}/history`}
+                  className="mt-3 inline-block text-sm font-medium text-pulse-accent hover:underline"
+                >
+                  View full trade history →
+                </Link>
               </>
             ) : walletResolutionFailed ? (
               <p className="text-sm text-slate-400">

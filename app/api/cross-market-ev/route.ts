@@ -116,6 +116,8 @@ function buildSyntheticStaleInPlay(
     outcome: entry.outcome,
     kalshiBook: staleKalshi,
     polymarketBook: entry.polymarket,
+    manifoldBook: entry.manifold,
+    sportsbookBook: entry.sportsbook,
     nowSec,
   });
 
@@ -142,6 +144,8 @@ function buildSyntheticWideSpreadPreMatch(
     outcome: entry.outcome,
     kalshiBook: wideKalshi,
     polymarketBook: entry.polymarket,
+    manifoldBook: entry.manifold,
+    sportsbookBook: entry.sportsbook,
     nowSec,
   });
 
@@ -190,6 +194,7 @@ export async function GET() {
         outcome: entry.outcome,
         kalshiBook: entry.kalshi,
         polymarketBook: entry.polymarket,
+        manifoldBook: entry.manifold,
         nowSec,
       });
 

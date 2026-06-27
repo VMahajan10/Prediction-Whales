@@ -1,9 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import type { CategoryStats, ClvStats, TrackRecord } from "@/lib/polymarket";
+import type { TrackRecord } from "@/lib/polymarket";
 import {
-  repairTrackRecord,
   TRACK_RECORD_RELIABILITY_FLOOR,
 } from "@/lib/polymarket";
 import CategoryRoiBreakdown from "@/components/CategoryRoiBreakdown";
@@ -12,6 +10,9 @@ import {
   applyLowSampleAverageEv,
   resolveAverageEvDisplay,
 } from "@/lib/averageEvDisplay";
+import {
+  useWhaleTrackRecord,
+} from "@/lib/useWhaleTrackRecord";
 
 interface WhaleTrackRecordProps {
   proxyWallet?: string;
@@ -22,17 +23,8 @@ interface WhaleTrackRecordProps {
   marketsLoading?: boolean;
   marketMatched?: boolean;
   marketClosed?: boolean;
-}
-
-interface TrackRecordResponse {
-  wallet: string | null;
-  trackRecord: TrackRecord | null;
-  openPositionCount: number;
-  categoryStats?: CategoryStats[];
-  clvStats?: ClvStats | null;
-  resolved: boolean;
-  cached?: boolean;
-  error?: string;
+  /** When provided, skips internal fetch (share one load with profile history). */
+  externalRecord?: ReturnType<typeof useWhaleTrackRecord>;
 }
 
 function formatDollars(n: number): string {
@@ -221,69 +213,30 @@ export default function WhaleTrackRecord({
   marketsLoading = false,
   marketMatched = false,
   marketClosed = false,
+  externalRecord,
 }: WhaleTrackRecordProps) {
-  const [data, setData] = useState<TrackRecordResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const requestId = useRef(0);
-
-  useEffect(() => {
-    if (!proxyWallet) {
-      setData(null);
-      setLoading(false);
-      setError(null);
-      return;
-    }
-
-    const id = ++requestId.current;
-    setLoading(true);
-    setError(null);
-    setData(null);
-
-    const load = async () => {
-      try {
-        const res = await fetch(
-          `/api/whale-track-record?wallet=${encodeURIComponent(proxyWallet)}`
-        );
-        if (id !== requestId.current) return;
-
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body.error ?? `HTTP ${res.status}`);
-        }
-
-        const result: TrackRecordResponse = await res.json();
-        if (id !== requestId.current) return;
-
-        setData((prev) => {
-          if (prev?.resolved && prev.trackRecord && !result.trackRecord) {
-            return prev;
-          }
-          return result;
-        });
-      } catch (err) {
-        if (id !== requestId.current) return;
-        setError(
-          err instanceof Error ? err.message : "Failed to load track record"
-        );
-      } finally {
-        if (id === requestId.current) {
-          setLoading(false);
-        }
-      }
-    };
-
-    void load();
-  }, [proxyWallet]);
-
-  const trackRecord = data?.trackRecord
-    ? repairTrackRecord(data.trackRecord)
-    : null;
+  const internalRecord = useWhaleTrackRecord(
+    externalRecord ? undefined : proxyWallet
+  );
+  const { data, trackRecord, loading, error } = externalRecord ?? internalRecord;
   const waitingForWallet = !proxyWallet && !walletUnavailable;
   const loadingRecord = !!proxyWallet && loading && !trackRecord;
   const hasEnoughHistory = trackRecord?.hasEnoughHistory ?? false;
   const closedCount = trackRecord?.closedCount ?? 0;
   const openPositionCount = data?.openPositionCount ?? 0;
+  const totalClosed = trackRecord?.totalBets ?? closedCount;
+  const totalPositions = totalClosed + openPositionCount;
+  const betCountSublabel =
+    totalClosed > 0 && openPositionCount > 0
+      ? `${totalClosed} closed · ${openPositionCount} open`
+      : undefined;
+  const betCountExplain = !trackRecord
+    ? "How many positions this wallet has placed."
+    : totalPositions === 0
+      ? "No positions tracked for this wallet yet."
+      : openPositionCount > 0
+        ? `${totalPositions} position${totalPositions === 1 ? "" : "s"} tracked — ${totalClosed} closed, ${openPositionCount} still open. More history improves stat reliability.`
+        : `${totalClosed} closed position${totalClosed === 1 ? "" : "s"} tracked. More history improves stat reliability.`;
   const noClosedHistory = closedCount === 0;
   const isLowSample = !noClosedHistory && !hasEnoughHistory;
   const emptyMetricBadge =
@@ -294,6 +247,7 @@ export default function WhaleTrackRecord({
 
   let averageEv = resolveAverageEvDisplay(data?.clvStats, trackRecord, {
     emptyMetricBadge,
+    crossMarketEvStats: data?.crossMarketEvStats,
   });
   if (isLowSample && trackRecord) {
     averageEv = applyLowSampleAverageEv(averageEv, closedCount);
@@ -519,13 +473,16 @@ export default function WhaleTrackRecord({
           muted={isLowSample}
         />
         <MetricBox
-          value={trackRecord ? `${trackRecord.closedCount} closed` : "—"}
-          label="Total Bets"
-          explain={
+          value={
             trackRecord
-              ? `${trackRecord.totalBets} total positions tracked (${data?.openPositionCount ?? 0} still open). More history = more reliable stats.`
-              : "How many bets this wallet has placed."
+              ? totalPositions > 0
+                ? String(totalPositions)
+                : "0"
+              : "—"
           }
+          label="Total Bets"
+          sublabel={betCountSublabel}
+          explain={betCountExplain}
         />
         <MetricBox
           value={entryVsCurrentValue}
@@ -561,6 +518,7 @@ export default function WhaleTrackRecord({
         <ClvCard
           stats={data.clvStats}
           averageEv={averageEv}
+          crossMarketEvStats={data.crossMarketEvStats}
           lowSample={isLowSample}
         />
       )}

@@ -1,4 +1,7 @@
 import type { TradeSummary } from "@/lib/polymarket";
+import { MIN_WHALE_USD } from "@/lib/whaleTrades";
+
+export { MIN_WHALE_USD };
 
 export interface TradeClass {
   label: string;
@@ -8,68 +11,87 @@ export interface TradeClass {
   percentile: string;
   tier: number;
   barFill: number;
+  /** True when notional clears the platform whale threshold (≥$500). */
+  qualifiesAsWhale: boolean;
 }
 
 export const TRADE_TIERS: TradeClass[] = [
   {
-    label: "Shrimp",
+    label: "Minnow",
     emoji: "🦐",
     color: "slate",
     description:
-      "Small retail bet. Under $100 — casual or experimental trading.",
+      "Small retail bet (under $100). Casual or experimental — below our $500 whale threshold.",
     percentile: "bottom 80%",
     tier: 0,
     barFill: 0,
+    qualifiesAsWhale: false,
   },
   {
     label: "Fish",
     emoji: "🐟",
     color: "green",
     description:
-      "Active retail trader. $100-$999 bets are common among engaged participants.",
+      "Active retail size ($100–$499). Engaged trader, but still below the $500 whale threshold.",
     percentile: "top 20%",
     tier: 1,
-    barFill: 4,
-  },
-  {
-    label: "Dolphin",
-    emoji: "🐬",
-    color: "cyan",
-    description:
-      "Above average trader. Not a whale but still meaningful — these traders often have more information than casual bettors.",
-    percentile: "top 5%",
-    tier: 2,
-    barFill: 8,
+    barFill: 2,
+    qualifiesAsWhale: false,
   },
   {
     label: "Whale",
     emoji: "🐋",
-    color: "blue",
+    color: "cyan",
     description:
-      "Major player. $5,000+ bets represent serious conviction. Worth tracking closely.",
-    percentile: "top 1%",
-    tier: 3,
-    barFill: 9,
+      "Qualifies as a whale trade (≥$500). Clears our tracker threshold — meaningful size worth watching.",
+    percentile: "top 10%",
+    tier: 2,
+    barFill: 5,
+    qualifiesAsWhale: true,
   },
   {
-    label: "Mega Whale",
+    label: "Large",
+    emoji: "🐬",
+    color: "cyan",
+    description:
+      "Large whale trade ($1k–$4.9k). Well above the $500 minimum — strong conviction signal.",
+    percentile: "top 5%",
+    tier: 3,
+    barFill: 7,
+    qualifiesAsWhale: true,
+  },
+  {
+    label: "Major",
+    emoji: "⚡",
+    color: "blue",
+    description:
+      "Major whale trade ($5k–$9.9k). Serious money — these trades often move market prices.",
+    percentile: "top 1%",
+    tier: 4,
+    barFill: 9,
+    qualifiesAsWhale: true,
+  },
+  {
+    label: "Mega",
     emoji: "🐋🐋🐋",
     color: "purple",
     description:
-      "Extremely rare. This is institutional-level money. These trades can single-handedly move market prices.",
+      "Mega whale ($10k+). Institutional-level size — extremely rare and market-moving.",
     percentile: "top 0.1%",
-    tier: 4,
+    tier: 5,
     barFill: 10,
+    qualifiesAsWhale: true,
   },
 ];
 
 export const TIER_RANGES = [
-  { label: "Shrimp", emoji: "🦐", range: "$1-99" },
-  { label: "Fish", emoji: "🐟", range: "$100-999" },
-  { label: "Dolphin", emoji: "🐬", range: "$1k-4.9k" },
-  { label: "Whale", emoji: "🐋", range: "$5k-9.9k" },
-  { label: "Mega", emoji: "🐋", range: "$10k+" },
-];
+  { label: "Minnow", emoji: "🦐", range: "$1-99", qualifiesAsWhale: false },
+  { label: "Fish", emoji: "🐟", range: "$100-499", qualifiesAsWhale: false },
+  { label: "Whale", emoji: "🐋", range: "$500-999", qualifiesAsWhale: true },
+  { label: "Large", emoji: "🐬", range: "$1k-4.9k", qualifiesAsWhale: true },
+  { label: "Major", emoji: "⚡", range: "$5k-9.9k", qualifiesAsWhale: true },
+  { label: "Mega", emoji: "🐋", range: "$10k+", qualifiesAsWhale: true },
+] as const;
 
 export const TIER_COLOR_CLASSES: Record<TradeClass["color"], string> = {
   purple: "bg-purple-500/20 text-purple-300 border-purple-500/40",
@@ -79,28 +101,23 @@ export const TIER_COLOR_CLASSES: Record<TradeClass["color"], string> = {
   slate: "bg-slate-700 text-slate-300 border-slate-600",
 };
 
-export function getTradeClass(size: number): TradeClass {
-  if (size >= 10000) {
-    return { ...TRADE_TIERS[4], label: "Mega Whale 🐋🐋🐋" };
-  }
-  if (size >= 5000) {
-    return { ...TRADE_TIERS[3], label: "Whale 🐋🐋" };
-  }
-  if (size >= 1000) {
-    return { ...TRADE_TIERS[2], label: "Dolphin 🐬" };
-  }
-  if (size >= 100) {
-    return { ...TRADE_TIERS[1], label: "Fish 🐟" };
-  }
-  return { ...TRADE_TIERS[0], label: "Shrimp 🦐" };
-}
-
 export function getTradeTierIndex(size: number): number {
-  if (size >= 10000) return 4;
-  if (size >= 5000) return 3;
-  if (size >= 1000) return 2;
+  if (size >= 10_000) return 5;
+  if (size >= 5_000) return 4;
+  if (size >= 1_000) return 3;
+  if (size >= MIN_WHALE_USD) return 2;
   if (size >= 100) return 1;
   return 0;
+}
+
+export function getTradeClass(size: number): TradeClass {
+  const tier = TRADE_TIERS[getTradeTierIndex(size)];
+  const emojiSuffix =
+    tier.tier >= 4 ? " 🐋🐋" : tier.qualifiesAsWhale ? " 🐋" : "";
+  return {
+    ...tier,
+    label: `${tier.label}${emojiSuffix}`,
+  };
 }
 
 export function getPlainEnglishOutcomeLabel(outcome: string): string {
@@ -219,8 +236,8 @@ export function getQuickTakeForTrade(
         : "contested market";
 
   const conviction =
-    side === "BUY" && size >= 1000
-      ? "The position size suggests conviction, not casual betting."
+    side === "BUY" && size >= MIN_WHALE_USD
+      ? "The position size qualifies as a whale trade and suggests conviction, not casual betting."
       : "Monitor for follow-up activity in this market.";
 
   return `A ${sizeClass} trader ${direction} at ${(price * 100).toFixed(1)}% — ${priceContext}. ${conviction}`;

@@ -4,7 +4,7 @@ import {
   type OutcomeBooks,
 } from "@/lib/crossMarketEv";
 
-const CACHE_KEY = "cross-market-ev:index:v1";
+const CACHE_KEY = "cross-market-ev:index:v4";
 const CACHE_TTL_SEC = 45;
 const REVALIDATE_AFTER_MS = 30_000;
 
@@ -51,6 +51,8 @@ function serializeIndex(
       outcome: entry.outcome,
       kalshi: entry.kalshi,
       polymarket: entry.polymarket,
+      manifold: entry.manifold,
+      sportsbook: entry.sportsbook,
       label: entry.label,
     })),
     cachedAt: Date.now(),
@@ -143,6 +145,8 @@ export function entriesToMap(
       outcome: entry.outcome,
       kalshi: entry.kalshi,
       polymarket: entry.polymarket,
+      manifold: entry.manifold ?? null,
+      sportsbook: entry.sportsbook ?? null,
       label: entry.label,
     });
   }

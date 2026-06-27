@@ -1,7 +1,12 @@
 import { Redis } from "@upstash/redis";
 import type { CategoryStats, ClvStats, TrackRecord } from "@/lib/polymarket";
+import type { CrossMarketEvStats } from "@/lib/crossMarketEvStats";
+import type {
+  TraderClosedPosition,
+  TraderOpenPosition,
+} from "@/lib/traderProfile";
 
-const CACHE_VERSION = "v6";
+const CACHE_VERSION = "v8";
 const KEY_PREFIX = `whale:stats:${CACHE_VERSION}:`;
 const TTL_SEC = 600; // 10 minutes
 
@@ -10,6 +15,11 @@ export interface CachedWhaleStats {
   openPositionCount: number;
   categoryStats: CategoryStats[];
   clvStats: ClvStats;
+  crossMarketEvStats?: CrossMarketEvStats;
+  closedPositions?: TraderClosedPosition[];
+  openPositions?: TraderOpenPosition[];
+  closedPositionsFetched?: number;
+  closedPositionsApiLimit?: number;
   cachedAt: number;
 }
 
@@ -59,7 +69,12 @@ export async function setCachedTrackRecord(
   trackRecord: TrackRecord,
   openPositionCount: number,
   categoryStats: CategoryStats[] = [],
-  clvStats?: ClvStats
+  clvStats?: ClvStats,
+  crossMarketEvStats?: CrossMarketEvStats,
+  closedPositions: TraderClosedPosition[] = [],
+  openPositions: TraderOpenPosition[] = [],
+  closedPositionsFetched = 0,
+  closedPositionsApiLimit = 500
 ): Promise<boolean> {
   const client = getRedis();
   if (!client) return false;
@@ -80,6 +95,11 @@ export async function setCachedTrackRecord(
         coverageFloor: 5,
         positions: [],
       },
+      crossMarketEvStats,
+      closedPositions,
+      openPositions,
+      closedPositionsFetched,
+      closedPositionsApiLimit,
       cachedAt: Date.now(),
     };
     await client.set(key, payload, { ex: TTL_SEC });

@@ -3,9 +3,12 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import CrossMarketEvBadge from "@/components/CrossMarketEvBadge";
+import PlatformFilterToggle from "@/components/PlatformFilterToggle";
 import { getTimeAgo } from "@/lib/time";
 import type { FeedTrade } from "@/lib/kalshiTrades";
 import type { OutcomeBooks } from "@/lib/crossMarketEv";
+import { useLiveFeedPlatform } from "@/lib/LiveFeedPlatformContext";
+import { liveFeedPlatformLabel } from "@/lib/liveFeedMerge";
 import { useLiveFeed } from "@/lib/useLiveFeed";
 import {
   feedTradeToSummary,
@@ -148,12 +151,20 @@ function TradeRowContent({
 }
 
 export default function TradesFeed() {
-  const { trades, polymarketConnected, kalshiOk } = useLiveFeed();
+  const { platform, setPlatform } = useLiveFeedPlatform();
+  const { trades, polymarketConnected, kalshiOk } = useLiveFeed(platform);
   const { index: evIndex } = useCrossMarketEvIndex();
   const [newTradeKeys, setNewTradeKeys] = useState<Set<string>>(new Set());
   const prevLatestKey = useRef<string | null>(null);
 
+  const handlePlatformChange = (next: typeof platform) => {
+    setPlatform(next);
+    prevLatestKey.current = null;
+    setNewTradeKeys(new Set());
+  };
+
   const whales = trades.filter((t) => isWhaleNotional(t.usdNotional));
+  const platformLabel = liveFeedPlatformLabel(platform);
 
   useEffect(() => {
     if (trades.length === 0) return;
@@ -180,32 +191,38 @@ export default function TradesFeed() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-white">Live Trades</h2>
-        <div className="flex items-center gap-2">
-          {polymarketConnected ? (
-            <span className="flex items-center gap-1 text-xs text-green-400">
-              <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
+      <div className="mb-3 flex flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-white">Live Trades</h2>
+          <div className="flex items-center gap-2">
+            {polymarketConnected ? (
+              <span className="flex items-center gap-1 text-xs text-green-400">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
+                </span>
+                Live
+                {kalshiOk && platform !== "polymarket" && (
+                  <span className="text-slate-500">+Kalshi</span>
+                )}
               </span>
-              Live
-              {kalshiOk && (
-                <span className="text-slate-500">+Kalshi</span>
-              )}
-            </span>
-          ) : (
-            <span className="flex items-center gap-1 text-xs text-slate-400">
-              <span className="h-2 w-2 rounded-full bg-slate-500" />
-              Connecting
-            </span>
-          )}
+            ) : (
+              <span className="flex items-center gap-1 text-xs text-slate-400">
+                <span className="h-2 w-2 rounded-full bg-slate-500" />
+                Connecting
+              </span>
+            )}
+          </div>
         </div>
+        <PlatformFilterToggle
+          value={platform}
+          onChange={handlePlatformChange}
+        />
       </div>
 
       <div className="mb-2 text-xs text-slate-500">
         {trades.length} recent trades · {whales.length} whale
-        {whales.length !== 1 ? "s" : ""}
+        {whales.length !== 1 ? "s" : ""} · {platformLabel}
       </div>
 
       <div className="max-h-[480px] flex-1 space-y-1 overflow-y-auto">

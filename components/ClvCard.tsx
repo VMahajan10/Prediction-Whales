@@ -1,13 +1,16 @@
 import type { ClvStats } from "@/lib/polymarket";
+import type { CrossMarketEvStats } from "@/lib/crossMarketEvStats";
 import {
   formatClvCents,
   isClvAverageEvComputable,
   type AverageEvDisplay,
 } from "@/lib/averageEvDisplay";
+import { fairSourceLabel } from "@/lib/crossMarketEvDisplay";
 
 interface ClvCardProps {
   stats: ClvStats;
   averageEv?: AverageEvDisplay;
+  crossMarketEvStats?: CrossMarketEvStats | null;
   /** Wallet has fewer than TRACK_RECORD_RELIABILITY_FLOOR closed bets. */
   lowSample?: boolean;
 }
@@ -32,7 +35,12 @@ function clvSummary(clv: number): string {
  * Supplemental CLV detail below the headline Average EV metric.
  * Headline value lives in WhaleTrackRecord; this card expands coverage context.
  */
-export default function ClvCard({ stats, averageEv, lowSample = false }: ClvCardProps) {
+export default function ClvCard({
+  stats,
+  averageEv,
+  crossMarketEvStats,
+  lowSample = false,
+}: ClvCardProps) {
   const {
     coverage,
     totalClosed,
@@ -47,7 +55,14 @@ export default function ClvCard({ stats, averageEv, lowSample = false }: ClvCard
 
   const coverageLabel = `${coverage} of ${totalClosed} closed bet${totalClosed === 1 ? "" : "s"}`;
   const clvPrimary = isClvAverageEvComputable(stats);
+  const usingCrossMarket = averageEv?.mode === "cross_market";
   const usingFallback = averageEv?.mode === "avg_return_fallback";
+  const crossMarketCoverage =
+    crossMarketEvStats && crossMarketEvStats.totalEvaluated > 0
+      ? `${crossMarketEvStats.coverage} of ${crossMarketEvStats.totalEvaluated} position${
+          crossMarketEvStats.totalEvaluated === 1 ? "" : "s"
+        }`
+      : null;
 
   return (
     <div
@@ -63,15 +78,40 @@ export default function ClvCard({ stats, averageEv, lowSample = false }: ClvCard
         </p>
       )}
       <h3 className="mb-1 text-base font-semibold text-white">
-        {clvPrimary ? "Closing-line detail" : "Why EV fell back to avg return"}
+        {clvPrimary
+          ? "Closing-line detail"
+          : usingCrossMarket
+            ? "Cross-market EV detail"
+            : "Why EV fell back to avg return"}
       </h3>
       <p className="mb-4 text-xs text-slate-400">
         {clvPrimary
           ? "Beat the Closing Line — did they get a better entry than the market's last consensus before settlement?"
-          : "We could not compute a reliable closing-line edge for this wallet."}
+          : usingCrossMarket
+            ? "Matched sports bets priced against the other venue's live quote on the same game."
+            : "We could not compute a reliable closing-line edge for this wallet."}
       </p>
 
-      {clvPrimary && avgClv != null ? (
+      {usingCrossMarket && crossMarketEvStats?.avgEv != null ? (
+        <div className="rounded-lg border border-slate-600/50 bg-slate-800/40 px-4 py-3">
+          <p className="mb-2 text-sm font-medium text-slate-300">
+            Average EV uses cross-market matches
+            {crossMarketEvStats.fairSource
+              ? ` vs ${fairSourceLabel(crossMarketEvStats.fairSource)}`
+              : ""}
+          </p>
+          {crossMarketCoverage && (
+            <p className="mb-2 text-sm text-slate-400">
+              Measured on {crossMarketCoverage} with live venue quotes.
+            </p>
+          )}
+          <p className="text-sm leading-relaxed text-slate-400">
+            Closing-line EV was not available for enough bets, but deterministic
+            sports matches found comparable prices on the other platform. This is
+            forward-looking venue comparison, not settlement profit.
+          </p>
+        </div>
+      ) : clvPrimary && avgClv != null ? (
         <>
           <p className="mb-3 text-sm font-medium text-slate-300">
             Measured on {coverageLabel} with a clean closing line.
@@ -110,9 +150,17 @@ export default function ClvCard({ stats, averageEv, lowSample = false }: ClvCard
           </p>
           {usingFallback && (
             <p className="mb-2 text-sm leading-relaxed text-amber-200/90">
-              The Average EV slot above shows{" "}
+              The slot above shows{" "}
               <span className="font-medium">avg return per bet</span> instead —
-              historical profit/loss per closed position, not closing-line edge.
+              historical profit/loss per closed position, not closing-line or
+              cross-market edge.
+            </p>
+          )}
+          {!usingFallback && !usingCrossMarket && crossMarketCoverage && (
+            <p className="mb-2 text-sm leading-relaxed text-slate-400">
+              Cross-market matches: {crossMarketCoverage} — not enough for
+              Average EV ({crossMarketEvStats?.coverageFloor ?? coverageFloor}{" "}
+              required).
             </p>
           )}
           {!hasEnoughCoverage && (

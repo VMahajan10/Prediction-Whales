@@ -69,5 +69,7 @@ export function resolveCrossMarketEvForTrade(
     outcome: entry.outcome,
     kalshiBook: entry.kalshi,
     polymarketBook: entry.polymarket,
+    manifoldBook: entry.manifold,
+    sportsbookBook: entry.sportsbook,
   });
 }

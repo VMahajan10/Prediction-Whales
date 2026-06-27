@@ -5,6 +5,7 @@ import {
   repairTrackRecord,
   resolveWalletByTradeHash,
 } from "@/lib/polymarket";
+import { CLOSED_POSITIONS_API_LIMIT } from "@/lib/traderProfile";
 import {
   getCachedTrackRecord,
   isTrackRecordCacheEnabled,
@@ -13,6 +14,13 @@ import {
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+
+const EMPTY_POSITIONS = {
+  closedPositions: [] as const,
+  openPositions: [] as const,
+  closedPositionsFetched: 0,
+  closedPositionsApiLimit: CLOSED_POSITIONS_API_LIMIT,
+};
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -40,7 +48,9 @@ export async function GET(request: Request) {
         openPositionCount: 0,
         categoryStats: [],
         clvStats: null,
+        crossMarketEvStats: null,
         resolved: false,
+        ...EMPTY_POSITIONS,
       });
     }
 
@@ -53,6 +63,13 @@ export async function GET(request: Request) {
         openPositionCount: cached.openPositionCount,
         categoryStats: cached.categoryStats ?? [],
         clvStats: cached.clvStats ?? null,
+        crossMarketEvStats: cached.crossMarketEvStats ?? null,
+        closedPositions: cached.closedPositions ?? [],
+        openPositions: cached.openPositions ?? [],
+        closedPositionsFetched:
+          cached.closedPositionsFetched ?? cached.closedPositions?.length ?? 0,
+        closedPositionsApiLimit:
+          cached.closedPositionsApiLimit ?? CLOSED_POSITIONS_API_LIMIT,
         resolved: true,
         cached: true,
         cacheEnabled: isTrackRecordCacheEnabled(),
@@ -70,7 +87,12 @@ export async function GET(request: Request) {
         trackRecord,
         result.openPositionCount,
         result.categoryStats,
-        result.clvStats
+        result.clvStats,
+        result.crossMarketEvStats,
+        result.closedPositions,
+        result.openPositions,
+        result.closedPositionsFetched,
+        result.closedPositionsApiLimit
       );
     }
 
@@ -91,8 +113,10 @@ export async function GET(request: Request) {
         openPositionCount: 0,
         categoryStats: [],
         clvStats: null,
+        crossMarketEvStats: null,
         resolved: false,
         error: message,
+        ...EMPTY_POSITIONS,
       },
       { status: 500 }
     );

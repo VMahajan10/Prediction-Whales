@@ -29,6 +29,8 @@ function parseEntries(
       outcome: entry.outcome,
       kalshi: entry.kalshi,
       polymarket: entry.polymarket,
+      manifold: entry.manifold ?? null,
+      sportsbook: entry.sportsbook ?? null,
       label: entry.label,
     });
   }

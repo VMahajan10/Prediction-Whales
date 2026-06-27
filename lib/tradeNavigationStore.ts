@@ -34,6 +34,24 @@ export function feedTradeToSummary(trade: FeedTrade): TradeSummary | null {
   };
 }
 
+/** Reconstruct a Kalshi feed row from a whale tracker entry for fast detail navigation. */
+export function whaleTradeToKalshiFeedTrade(trade: WhaleTrade): FeedTrade | null {
+  if (trade.source !== "kalshi") return null;
+  return {
+    id: trade.id,
+    source: "kalshi",
+    title: trade.title,
+    outcome: trade.outcome,
+    side: trade.side,
+    price: trade.price,
+    size: trade.usdNotional,
+    usdNotional: trade.usdNotional,
+    timestamp: trade.timestamp,
+    traceable: true,
+    ticker: trade.ticker,
+  };
+}
+
 export function stashTradeForNavigation(trade: TradeSummary | WhaleTrade): void {
   if (!trade.transactionHash) return;
   const key = hashKey(trade.transactionHash);

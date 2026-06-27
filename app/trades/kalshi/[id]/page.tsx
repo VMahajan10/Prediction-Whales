@@ -37,6 +37,7 @@ import {
   getTradeClass,
   getTradeDirectionInsight,
   getTradeTierIndex,
+  MIN_WHALE_USD,
   TIER_COLOR_CLASSES,
   TIER_RANGES,
   TRADE_TIERS,
@@ -535,6 +536,16 @@ export default function KalshiTradeDetailPage() {
           <p className="mx-auto mt-4 max-w-lg text-sm text-slate-400">
             {tradeClass.description}
           </p>
+          {tradeClass.qualifiesAsWhale ? (
+            <p className="mt-3 text-sm font-medium text-teal-300">
+              🐋 Qualifies as a whale trade (≥${MIN_WHALE_USD} notional)
+            </p>
+          ) : (
+            <p className="mt-3 text-xs text-slate-500">
+              Below the ${MIN_WHALE_USD} whale threshold — not shown in the whale
+              tracker
+            </p>
+          )}
           <p className="mt-2 text-xs text-slate-500">
             This trade is in the {tradeClass.percentile} of all trades
           </p>
@@ -544,21 +555,27 @@ export default function KalshiTradeDetailPage() {
             const tierData = TRADE_TIERS[i];
             const isActive = i === activeTier;
             return (
-              <div
-                key={tier.label}
-                className={`flex items-center gap-3 rounded-lg px-3 py-2 text-xs ${
-                  isActive
-                    ? "border border-pulse-accent/50 bg-pulse-accent/10"
-                    : "border border-transparent"
-                }`}
-              >
-                <span className="w-16 shrink-0 text-slate-400">
-                  {tier.emoji} {tier.label}
-                </span>
-                <span className="w-20 shrink-0 text-slate-500">
-                  {tier.range}
-                </span>
-                <SizeBar filled={tierData.barFill} />
+              <div key={tier.label}>
+                {i === 2 && (
+                  <p className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-teal-400/80">
+                    Whale trades (≥${MIN_WHALE_USD})
+                  </p>
+                )}
+                <div
+                  className={`flex items-center gap-3 rounded-lg px-3 py-2 text-xs ${
+                    isActive
+                      ? "border border-pulse-accent/50 bg-pulse-accent/10"
+                      : "border border-transparent"
+                  }`}
+                >
+                  <span className="w-16 shrink-0 text-slate-400">
+                    {tier.emoji} {tier.label}
+                  </span>
+                  <span className="w-20 shrink-0 text-slate-500">
+                    {tier.range}
+                  </span>
+                  <SizeBar filled={tierData.barFill} />
+                </div>
               </div>
             );
           })}

@@ -18,7 +18,17 @@ export function formatEvPercent(ev: number): string {
 export function fairSourceLabel(
   source: NonNullable<CrossMarketEv["fairSource"]>
 ): string {
-  return source === "kalshi" ? "Kalshi" : "Polymarket";
+  if (source === "kalshi") return "Kalshi";
+  if (source === "manifold") return "Manifold";
+  if (source === "sportsbook") return "sportsbook consensus (no-vig)";
+  return "Polymarket";
+}
+
+export function fairSourceBadge(
+  source: NonNullable<CrossMarketEv["fairSource"]>
+): string {
+  if (source === "sportsbook") return "vs sportsbook consensus (no-vig)";
+  return `vs ${fairSourceLabel(source)} market`;
 }
 
 export function evColorClass(ev: number): string {

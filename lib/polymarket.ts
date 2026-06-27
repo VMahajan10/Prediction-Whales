@@ -4,6 +4,15 @@ import {
   resolveClosingLine,
   type ClosingLineResult,
 } from "./clvPriceHistory";
+import { computeCrossMarketEvStats } from "./crossMarketEvStats";
+import { fetchWithTimeout } from "./fetchWithTimeout";
+import {
+  CLOSED_POSITIONS_API_LIMIT,
+  normalizeClosedPositions,
+  normalizeOpenPositions,
+  type TraderClosedPosition,
+  type TraderOpenPosition,
+} from "./traderProfile";
 
 const GAMMA_API_BASE = "https://gamma-api.polymarket.com";
 const DATA_API_BASE = "https://data-api.polymarket.com";
@@ -148,6 +157,12 @@ export interface WhaleTrackRecordResult {
   resolved: boolean;
   categoryStats: CategoryStats[];
   clvStats: ClvStats;
+  crossMarketEvStats: Awaited<ReturnType<typeof computeCrossMarketEvStats>>;
+  closedPositions: TraderClosedPosition[];
+  openPositions: TraderOpenPosition[];
+  /** Raw count returned by Polymarket closed-positions API (capped at limit). */
+  closedPositionsFetched: number;
+  closedPositionsApiLimit: number;
 }
 
 const CATEGORY_PRIORITY = [
@@ -413,8 +428,8 @@ export async function fetchClosedPositions(
   wallet: string
 ): Promise<any[]> {
   try {
-    const res = await fetch(
-      `https://data-api.polymarket.com/closed-positions?user=${wallet}&limit=500`,
+    const res = await fetchWithTimeout(
+      `https://data-api.polymarket.com/closed-positions?user=${wallet}&limit=${CLOSED_POSITIONS_API_LIMIT}`,
       { next: { revalidate: 300 } }
     );
     if (!res.ok) return [];
@@ -429,7 +444,7 @@ export async function fetchWalletPositions(
   wallet: string
 ): Promise<any[]> {
   try {
-    const res = await fetch(
+    const res = await fetchWithTimeout(
       `https://data-api.polymarket.com/positions?user=${wallet}`,
       { next: { revalidate: 5 } }
     );
@@ -733,7 +748,10 @@ export async function buildWhaleTrackRecord(
     .filter((s): s is string => !!s);
   const slugToCategory = await fetchEventCategories(slugs);
   const categoryStats = computeCategoryStats(eligible, slugToCategory);
-  const clvStats = await computeClvStats(eligible);
+  const [clvStats, crossMarketEvStats] = await Promise.all([
+    computeClvStats(eligible),
+    computeCrossMarketEvStats(eligible, openPositions),
+  ]);
 
   return {
     wallet,
@@ -742,6 +760,11 @@ export async function buildWhaleTrackRecord(
     resolved: true,
     categoryStats,
     clvStats,
+    crossMarketEvStats,
+    closedPositions: normalizeClosedPositions(eligible, slugToCategory),
+    openPositions: normalizeOpenPositions(openPositions),
+    closedPositionsFetched: closedPositions.length,
+    closedPositionsApiLimit: CLOSED_POSITIONS_API_LIMIT,
   };
 }
 

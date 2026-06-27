@@ -4,11 +4,14 @@ export const MIN_WHALE_USD = 500;
 export const WHALE_WINDOW_MS = 90_000;
 
 export interface WhaleTrade extends TradeSummary {
+  source: "polymarket" | "kalshi";
   /** USD notional (size × price for WS trades) */
   usdNotional: number;
   /** When MarketPulse first detected this trade */
   detectedAt: number;
   isLive: boolean;
+  /** Kalshi market ticker when source is kalshi */
+  ticker?: string;
 }
 
 export function isWhaleNotional(usd: number): boolean {
@@ -43,16 +46,24 @@ export function mergeWhaleTrades(
 
 export function tradeToWhale(
   trade: TradeSummary,
-  opts: { detectedAt?: number; isLive?: boolean; usdNotional?: number }
+  opts: {
+    detectedAt?: number;
+    isLive?: boolean;
+    usdNotional?: number;
+    source?: "polymarket" | "kalshi";
+    ticker?: string;
+  }
 ): WhaleTrade {
   const usd = opts.usdNotional ?? trade.size;
 
   return {
     ...trade,
+    source: opts.source ?? "polymarket",
     usdNotional: usd,
     detectedAt: opts.detectedAt ?? trade.timestamp * 1000,
     isLive: opts.isLive ?? false,
     size: usd,
+    ticker: opts.ticker,
   };
 }
 

@@ -1,6 +1,13 @@
 import type { ClvStats, TrackRecord } from "@/lib/polymarket";
+import type { CrossMarketEvStats } from "@/lib/crossMarketEvStats";
+import type { CrossMarketFairSource } from "@/lib/crossMarketEv";
+import { fairSourceBadge, fairSourceLabel, formatEvPercent } from "@/lib/crossMarketEvDisplay";
 
-export type AverageEvMode = "clv" | "avg_return_fallback" | "unavailable";
+export type AverageEvMode =
+  | "clv"
+  | "cross_market"
+  | "avg_return_fallback"
+  | "unavailable";
 
 export interface AverageEvDisplay {
   mode: AverageEvMode;
@@ -63,16 +70,53 @@ export function isClvAverageEvComputable(
   );
 }
 
+export function isCrossMarketEvComputable(
+  crossMarketEvStats: CrossMarketEvStats | null | undefined
+): boolean {
+  return !!(
+    crossMarketEvStats &&
+    crossMarketEvStats.totalEvaluated > 0 &&
+    crossMarketEvStats.hasEnoughCoverage &&
+    crossMarketEvStats.avgEv != null
+  );
+}
+
+function crossMarketEvColor(ev: number): string {
+  if (ev >= 2) return "text-pulse-yes";
+  if (ev >= 0) return "text-amber-400";
+  return "text-red-400";
+}
+
+function crossMarketEvExplain(
+  avgEv: number,
+  coverageLabel: string,
+  fairSource: CrossMarketFairSource
+): string {
+  const edge =
+    avgEv >= 2
+      ? "Entry prices were often better than the matched venue's live quote on the same game."
+      : avgEv >= 0
+        ? "Roughly in line with the matched venue — a small cross-market edge, if any."
+        : "Often paid worse than the matched venue's quote on the same game.";
+  return `${edge} Measured on ${coverageLabel} with a live ${fairSourceLabel(fairSource)} reference (not closing-line or dollar P&L).`;
+}
+
 /**
- * Resolves the primary "Average EV" slot: CLV when coverage meets the floor,
- * otherwise avg return per bet (historical P&L fallback).
+ * Resolves the primary "Average EV" slot:
+ * 1. CLV when coverage meets the floor
+ * 2. Cross-market EV when sports matches have live venue quotes
+ * 3. Avg return per bet (honestly labeled, not EV)
  */
 export function resolveAverageEvDisplay(
   clvStats: ClvStats | null | undefined,
   trackRecord: TrackRecord | null | undefined,
-  options?: { emptyMetricBadge?: string }
+  options?: {
+    emptyMetricBadge?: string;
+    crossMarketEvStats?: CrossMarketEvStats | null;
+  }
 ): AverageEvDisplay {
   const emptyBadge = options?.emptyMetricBadge;
+  const crossMarketEvStats = options?.crossMarketEvStats;
   const closedCount = trackRecord?.closedCount ?? 0;
   const noClosedHistory = closedCount === 0;
 
@@ -104,22 +148,40 @@ export function resolveAverageEvDisplay(
     };
   }
 
+  if (isCrossMarketEvComputable(crossMarketEvStats)) {
+    const avgEv = crossMarketEvStats!.avgEv!;
+    const fairSource = crossMarketEvStats!.fairSource ?? "kalshi";
+    const coverageLabel = `${crossMarketEvStats!.coverage} of ${crossMarketEvStats!.totalEvaluated} position${
+      crossMarketEvStats!.totalEvaluated === 1 ? "" : "s"
+    }`;
+    return {
+      mode: "cross_market",
+      value: formatEvPercent(avgEv),
+      valueClassName: crossMarketEvColor(avgEv),
+      label: "Average EV",
+      explain: crossMarketEvExplain(avgEv, coverageLabel, fairSource),
+      badge: fairSourceBadge(fairSource),
+      coverageLabel,
+    };
+  }
+
   const avgReturn = trackRecord?.avgReturnPerBet ?? null;
   if (avgReturn != null) {
     return {
       mode: "avg_return_fallback",
       value: formatAvgReturnDollars(avgReturn),
       valueClassName: avgReturnColor(avgReturn),
-      label: "Average EV",
-      fallbackSublabel:
-        "Avg return per bet — EV not computable for this wallet",
+      label: "Avg Return per Bet",
+      fallbackSublabel: "Not EV — historical P&L per closed bet",
       explain:
-        "Closing-line EV needs more bets with a clean pre-settlement price. Showing average profit/loss per closed bet instead — positive means this whale historically found profitable spots.",
-      badge: "Fallback",
+        "Closing-line and cross-market EV need more matched bets with trustworthy prices. Showing average profit/loss per closed bet instead — positive means this whale historically found profitable spots, but this is not an edge estimate.",
+      badge: "Not EV",
       coverageLabel:
         clvStats && clvStats.totalClosed > 0
           ? `${clvStats.coverage} of ${clvStats.totalClosed} closed bets had a clean closing line`
-          : undefined,
+          : crossMarketEvStats && crossMarketEvStats.totalEvaluated > 0
+            ? `${crossMarketEvStats.coverage} of ${crossMarketEvStats.totalEvaluated} positions matched across venues`
+            : undefined,
     };
   }
 
@@ -144,6 +206,8 @@ export function applyLowSampleAverageEv(
   let value: string;
   if (display.mode === "clv") {
     value = `${display.value} closing-line edge on ${n}`;
+  } else if (display.mode === "cross_market") {
+    value = `${display.value} cross-market edge on ${n}`;
   } else {
     value = `${display.value} avg return on ${n}`;
   }

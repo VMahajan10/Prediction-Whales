@@ -9,9 +9,11 @@ import NewWhaleToast from "@/components/NewWhaleToast";
 import TradesFeed from "@/components/TradesFeed";
 import WelcomeBanner from "@/components/WelcomeBanner";
 import WhaleTracker from "@/components/WhaleTracker";
+import { LiveFeedPlatformProvider } from "@/lib/LiveFeedPlatformContext";
 import { getExplorerMode, setExplorerMode } from "@/lib/explorer";
 import { fetchMarketProbabilities } from "@/lib/marketPrices";
 import { getPortfolio, getPortfolioStats } from "@/lib/portfolio";
+import { useBookmarkedTraders } from "@/lib/useBookmarkedTraders";
 import type { MarketSummary } from "@/lib/polymarket";
 import {
   getWhaleSoundEnabled,
@@ -24,7 +26,11 @@ const POLYMARKET_REFRESH_MS = 10_000;
 const KALSHI_REFRESH_MS = 120_000;
 
 export default function Home() {
-  return <HomeDashboard />;
+  return (
+    <LiveFeedPlatformProvider>
+      <HomeDashboard />
+    </LiveFeedPlatformProvider>
+  );
 }
 
 function HomeDashboard() {
@@ -41,7 +47,9 @@ function HomeDashboard() {
   const [portfolioTotal, setPortfolioTotal] = useState(1000);
   const [explorerMode, setExplorerModeState] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(false);
-  const { whales, connected, newWhale, dismissNewWhale } = useWhaleFeed();
+  const { whales, connected, kalshiOk, newWhale, dismissNewWhale } =
+    useWhaleFeed();
+  const { bookmarkCount } = useBookmarkedTraders();
 
   useEffect(() => {
     setExplorerModeState(getExplorerMode());
@@ -159,6 +167,12 @@ function HomeDashboard() {
                 : "🎓 Explorer Mode"}
             </button>
             <Link
+              href="/following"
+              className="rounded-lg border border-pulse-border bg-pulse-card/60 px-4 py-2 text-sm font-medium text-white transition-colors hover:border-amber-500/40 hover:text-amber-200"
+            >
+              ⭐ Following{bookmarkCount > 0 ? ` (${bookmarkCount})` : ""}
+            </Link>
+            <Link
               href="/portfolio"
               className="rounded-lg border border-pulse-border bg-pulse-card/60 px-4 py-2 text-sm font-medium text-white transition-colors hover:border-slate-500"
             >
@@ -188,6 +202,7 @@ function HomeDashboard() {
             <WhaleTracker
               whales={whales}
               connected={connected}
+              kalshiOk={kalshiOk}
               soundEnabled={soundEnabled}
               onToggleSound={toggleSound}
             />

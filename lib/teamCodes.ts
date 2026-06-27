@@ -55,8 +55,44 @@ const PM_TO_KALSHI: Record<string, string> = Object.fromEntries(
   Object.entries(KALSHI_TO_PM).map(([k, v]) => [v, k])
 );
 
+/**
+ * Verified PM slug codes that differ from the canonical PM code but map to
+ * the same Kalshi ticker (same country — not fuzzy matching).
+ */
+const PM_SLUG_TO_KALSHI: Record<string, string> = {
+  ury: "URU", // Uruguay — PM slug uses ury, Kalshi uses URU
+  cvi: "CPV", // Cape Verde — PM slug uses cvi, Kalshi uses CPV
+};
+
+/** Canonical PM code for verified slug variants (strict same-team only). */
+const PM_CODE_CANONICAL: Record<string, string> = {
+  ury: "uru",
+  cvi: "cpv",
+};
+
 const unmatchedKalshi = new Set<string>();
 const unmatchedPm = new Set<string>();
+
+/** Normalize PM team codes for equivalence checks (verified aliases only). */
+export function normalizePmTeamCode(code: string): string {
+  const lower = code.toLowerCase();
+  return PM_CODE_CANONICAL[lower] ?? lower;
+}
+
+/** PM event-slug tokens to try when fetching Gamma (verified variants only). */
+export function pmEventSlugCodeVariants(code: string): string[] {
+  const lower = code.toLowerCase();
+  const variants = new Set<string>([lower]);
+  if (lower === "cpv" || lower === "cvi") {
+    variants.add("cpv");
+    variants.add("cvi");
+  }
+  if (lower === "uru" || lower === "ury") {
+    variants.add("uru");
+    variants.add("ury");
+  }
+  return Array.from(variants);
+}
 
 export function kalshiCodeToPm(code: string): string | null {
   const upper = code.toUpperCase();
@@ -69,6 +105,7 @@ export function kalshiCodeToPm(code: string): string | null {
 
 export function pmCodeToKalshi(code: string): string | null {
   const lower = code.toLowerCase();
+  if (PM_SLUG_TO_KALSHI[lower]) return PM_SLUG_TO_KALSHI[lower];
   if (PM_TO_KALSHI[lower]) return PM_TO_KALSHI[lower];
   const upper = lower.toUpperCase();
   if (upper.length === 3) return upper;

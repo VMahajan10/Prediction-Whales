@@ -1,6 +1,14 @@
 import { kalshiCodeToPm, pmCodeToKalshi } from "@/lib/teamCodes";
 import { mapWithConcurrency } from "@/lib/clvPriceHistory";
 import {
+  attachManifoldBooksToIndex,
+  fetchManifoldSportsMarkets,
+} from "@/lib/manifoldSports";
+import {
+  attachSportsbookOddsToIndex,
+  isSportsbookOddsEnabled,
+} from "@/lib/sportsbookOdds";
+import {
   fetchKalshiGameMarkets,
   type KalshiMarket as KalshiRawMarket,
 } from "@/lib/kalshi";
@@ -20,10 +28,16 @@ export type CrossMarketEvReason =
   | "missing_price"
   | "ok";
 
+export type CrossMarketFairSource =
+  | "kalshi"
+  | "polymarket"
+  | "manifold"
+  | "sportsbook";
+
 export interface CrossMarketEv {
   ev: number | null;
   fairProb: number | null;
-  fairSource: "kalshi" | "polymarket" | null;
+  fairSource: CrossMarketFairSource | null;
   pricePaid: number | null;
   reason?: CrossMarketEvReason;
   matchedMarket?: string;
@@ -47,7 +61,7 @@ export interface MarketBook {
   mid: number | null;
   spread: number | null;
   quoteUpdatedAt: number | null;
-  source: "kalshi" | "polymarket";
+  source: CrossMarketFairSource;
   label: string;
 }
 
@@ -56,7 +70,17 @@ export interface OutcomeBooks {
   outcome: OutcomeSide;
   kalshi: MarketBook | null;
   polymarket: MarketBook | null;
+  manifold: MarketBook | null;
+  sportsbook: MarketBook | null;
   label: string;
+}
+
+export interface BuildCrossMarketBookIndexOptions {
+  kalshiRaw?: KalshiRawMarket[];
+  /** When false, index contains Kalshi + Polymarket only (coverage baseline). */
+  includeManifold?: boolean;
+  /** When false, skip The Odds API sportsbook consensus. */
+  includeSportsbook?: boolean;
 }
 
 interface GammaMarket {
@@ -309,11 +333,18 @@ export async function fetchPmGameMoneylines(
   return out;
 }
 
-/** Build matched outcome books from Kalshi raw markets + PM fetches. */
+/** Build matched outcome books from Kalshi + PM (+ optional Manifold). */
 export async function buildCrossMarketBookIndex(
-  kalshiRaw?: KalshiRawMarket[]
+  optionsOrKalshi?: BuildCrossMarketBookIndexOptions | KalshiRawMarket[]
 ): Promise<Map<string, OutcomeBooks>> {
-  const raw = kalshiRaw ?? (await fetchKalshiGameMarkets(KALSHI_GAME_SERIES));
+  const options: BuildCrossMarketBookIndexOptions = Array.isArray(optionsOrKalshi)
+    ? { kalshiRaw: optionsOrKalshi }
+    : (optionsOrKalshi ?? {});
+  const includeManifold = options.includeManifold !== false;
+  const includeSportsbook =
+    options.includeSportsbook !== false && isSportsbookOddsEnabled();
+  const raw =
+    options.kalshiRaw ?? (await fetchKalshiGameMarkets(KALSHI_GAME_SERIES));
   const kalshiByOutcome = new Map<string, MarketBook>();
   const games = new Map<string, ParsedGameKey>();
 
@@ -357,8 +388,25 @@ export async function buildCrossMarketBookIndex(
       if (!kalshi && !polymarket) continue;
 
       const label = `${game.pmTeamA.toUpperCase()} vs ${game.pmTeamB.toUpperCase()} (${game.date}) — ${outcome}`;
-      index.set(id, { game, outcome, kalshi, polymarket, label });
+      index.set(id, {
+        game,
+        outcome,
+        kalshi,
+        polymarket,
+        manifold: null,
+        sportsbook: null,
+        label,
+      });
     }
+  }
+
+  if (includeManifold) {
+    const manifoldMarkets = await fetchManifoldSportsMarkets();
+    attachManifoldBooksToIndex(index, manifoldMarkets);
+  }
+
+  if (includeSportsbook) {
+    await attachSportsbookOddsToIndex(index);
   }
 
   return index;
@@ -457,6 +505,78 @@ export function computeEvPercent(
   return ((fairProb - pricePaid) / pricePaid) * 100;
 }
 
+function isManifoldQuotable(book: MarketBook | null): book is MarketBook {
+  return (
+    book != null &&
+    book.mid != null &&
+    book.mid > 0 &&
+    book.mid < 1 &&
+    book.bid != null &&
+    book.ask != null
+  );
+}
+
+function isSportsbookQuotable(book: MarketBook | null): book is MarketBook {
+  return isManifoldQuotable(book);
+}
+
+function isFairBookQuotable(
+  source: CrossMarketFairSource,
+  book: MarketBook | null
+): book is MarketBook {
+  if (source === "manifold" || source === "sportsbook") {
+    return isSportsbookQuotable(book);
+  }
+  return isBookQuotable(book);
+}
+
+function selectFairReference(
+  tradeSource: "polymarket" | "kalshi",
+  kalshiBook: MarketBook | null,
+  polymarketBook: MarketBook | null,
+  manifoldBook: MarketBook | null,
+  sportsbookBook: MarketBook | null,
+  ownBook: MarketBook | null,
+  game: ParsedGameKey,
+  nowSec: number
+):
+  | { fairSource: CrossMarketFairSource; fairBook: MarketBook }
+  | { reason: CrossMarketEvReason } {
+  const candidates: {
+    source: CrossMarketFairSource;
+    book: MarketBook | null;
+  }[] =
+    tradeSource === "polymarket"
+      ? [
+          { source: "kalshi", book: kalshiBook },
+          { source: "manifold", book: manifoldBook },
+          { source: "sportsbook", book: sportsbookBook },
+        ]
+      : [
+          { source: "polymarket", book: polymarketBook },
+          { source: "manifold", book: manifoldBook },
+          { source: "sportsbook", book: sportsbookBook },
+        ];
+
+  let lastReason: CrossMarketEvReason = "no_match";
+
+  for (const { source, book } of candidates) {
+    if (!book) continue;
+    if (!isFairBookQuotable(source, book)) {
+      lastReason = "fair_line_stale";
+      continue;
+    }
+    const liveness = checkLiveness(book, ownBook, game, nowSec);
+    if (!liveness.ok) {
+      lastReason = liveness.reason;
+      continue;
+    }
+    return { fairSource: source, fairBook: book };
+  }
+
+  return { reason: lastReason };
+}
+
 export interface ComputeCrossMarketEvInput {
   tradeSource: "polymarket" | "kalshi";
   /** Actual trade price, or owning market mid when pricing a book row. */
@@ -465,6 +585,8 @@ export interface ComputeCrossMarketEvInput {
   outcome: OutcomeSide;
   kalshiBook: MarketBook | null;
   polymarketBook: MarketBook | null;
+  manifoldBook?: MarketBook | null;
+  sportsbookBook?: MarketBook | null;
   nowSec?: number;
 }
 
@@ -489,13 +611,11 @@ export function computeCrossMarketEv(
     game,
     kalshiBook,
     polymarketBook,
+    manifoldBook = null,
+    sportsbookBook = null,
     nowSec = Math.floor(Date.now() / 1000),
   } = input;
 
-  const fairSource: "kalshi" | "polymarket" =
-    tradeSource === "polymarket" ? "kalshi" : "polymarket";
-  const fairBook =
-    fairSource === "kalshi" ? kalshiBook : polymarketBook;
   const ownBook =
     tradeSource === "polymarket" ? polymarketBook : kalshiBook;
 
@@ -510,12 +630,7 @@ export function computeCrossMarketEv(
     kalshiMid
   );
 
-  if (
-    pmMid == null ||
-    kalshiMid == null ||
-    effectivePricePaid == null ||
-    effectivePricePaid <= 0
-  ) {
+  if (effectivePricePaid == null || effectivePricePaid <= 0) {
     return {
       ev: null,
       fairProb: null,
@@ -526,30 +641,41 @@ export function computeCrossMarketEv(
     };
   }
 
-  if (!fairBook || !isBookQuotable(fairBook)) {
+  const fairPick = selectFairReference(
+    tradeSource,
+    kalshiBook,
+    polymarketBook,
+    manifoldBook,
+    sportsbookBook,
+    ownBook,
+    game,
+    nowSec
+  );
+
+  if ("reason" in fairPick) {
     return {
       ev: null,
       fairProb: null,
       fairSource: null,
       pricePaid: effectivePricePaid,
-      reason: "no_match",
+      reason: fairPick.reason,
       matchedMarket,
     };
   }
 
-  const liveness = checkLiveness(fairBook, ownBook, game, nowSec);
-  if (!liveness.ok) {
+  const { fairSource, fairBook } = fairPick;
+  const fairProb = fairBook.mid;
+  if (fairProb == null) {
     return {
       ev: null,
       fairProb: null,
-      fairSource,
+      fairSource: null,
       pricePaid: effectivePricePaid,
-      reason: liveness.reason,
+      reason: "missing_price",
       matchedMarket,
     };
   }
 
-  const fairProb = fairSource === "kalshi" ? kalshiMid : pmMid;
   const evRaw = computeEvPercent(effectivePricePaid, fairProb);
 
   return {
@@ -589,6 +715,8 @@ export function computeCrossMarketEvFromIndex(
     outcome,
     kalshiBook: entry.kalshi,
     polymarketBook: entry.polymarket,
+    manifoldBook: entry.manifold,
+    sportsbookBook: entry.sportsbook,
     nowSec,
   });
 }
@@ -632,6 +760,8 @@ export function snapshotGameEv(
       outcome: entry.outcome,
       kalshiBook: entry.kalshi,
       polymarketBook: entry.polymarket,
+      manifoldBook: entry.manifold,
+      sportsbookBook: entry.sportsbook,
       nowSec,
     }),
     evIfBuyOnKalshi: computeCrossMarketEv({
@@ -641,6 +771,8 @@ export function snapshotGameEv(
       outcome: entry.outcome,
       kalshiBook: entry.kalshi,
       polymarketBook: entry.polymarket,
+      manifoldBook: entry.manifold,
+      sportsbookBook: entry.sportsbook,
       nowSec,
     }),
     preKickoff: isPreKickoff(entry.game, nowSec),
