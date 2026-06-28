@@ -28,6 +28,7 @@ function adaptPolymarketTrade(t: SocketTrade): FeedTrade {
     traceable: true,
     transactionHash: t.transactionHash,
     slug: t.slug,
+    assetId: t.assetId,
   };
 }
 

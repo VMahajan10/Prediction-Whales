@@ -1,0 +1,141 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import type { FeedTrade } from "@/lib/kalshiTrades";
+import type { PipelineTradeEv } from "@/lib/evPipeline/types";
+import type { WhaleTrade } from "@/lib/whaleTrades";
+import {
+  buildWhalePipelineEvRequests,
+  fetchPipelineEvBatch,
+  subscribePipelineEvForTrades,
+} from "@/lib/pipelineEvClient";
+
+export function usePipelineEvIndex(trades: FeedTrade[]) {
+  const [index, setIndex] = useState<Map<string, PipelineTradeEv>>(new Map());
+  const [loading, setLoading] = useState(true);
+
+  useEffect(
+    () =>
+      subscribePipelineEvForTrades(trades, (nextIndex, nextLoading) => {
+        setIndex(nextIndex);
+        setLoading(nextLoading);
+      }),
+    [trades]
+  );
+
+  return { index, loading };
+}
+
+export function usePipelineTradeEv(input: {
+  source: "polymarket" | "kalshi";
+  tokenId?: string;
+  kalshiTicker?: string;
+  tradePrice?: number;
+  enabled?: boolean;
+}) {
+  const [ev, setEv] = useState<PipelineTradeEv | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (input.enabled === false) return;
+    if (input.source === "polymarket" && !input.tokenId) return;
+    if (input.source === "kalshi" && !input.kalshiTicker) return;
+
+    let cancelled = false;
+    setLoading(true);
+
+    void (async () => {
+      try {
+        const params = new URLSearchParams({ source: input.source });
+        if (input.tokenId) params.set("tokenId", input.tokenId);
+        if (input.kalshiTicker) params.set("kalshiTicker", input.kalshiTicker);
+        if (input.tradePrice != null) {
+          params.set("price", String(input.tradePrice));
+        }
+
+        const res = await fetch(`/api/ev/trades?${params.toString()}`);
+        if (!res.ok || cancelled) return;
+        const data: { entry?: PipelineTradeEv | null } = await res.json();
+        if (!cancelled) setEv(data.entry ?? null);
+      } catch {
+        if (!cancelled) setEv(null);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    input.source,
+    input.tokenId,
+    input.kalshiTicker,
+    input.tradePrice,
+    input.enabled,
+  ]);
+
+  return { ev, loading };
+}
+
+const WHALE_EV_REFRESH_MS = 45_000;
+
+export function usePipelineEvForWhales(whales: WhaleTrade[]) {
+  const [index, setIndex] = useState<Map<string, PipelineTradeEv>>(new Map());
+  const [loading, setLoading] = useState(true);
+
+  const whalesKey = whales
+    .map(
+      (w) =>
+        `${w.source}:${w.id}:${w.assetId ?? ""}:${w.ticker ?? ""}:${w.price}`
+    )
+    .join("|");
+
+  useEffect(() => {
+    const items = buildWhalePipelineEvRequests(whales);
+    if (items.length === 0) {
+      setIndex(new Map());
+      setLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    const load = async (isRefresh = false) => {
+      if (!isRefresh) {
+        setLoading(true);
+      }
+
+      try {
+        const fetched = await fetchPipelineEvBatch(items);
+        if (!cancelled) {
+          setIndex((prev) => {
+            const merged = new Map(prev);
+            Array.from(fetched.entries()).forEach(([key, value]) => {
+              merged.set(key, value);
+            });
+            return merged;
+          });
+        }
+      } catch {
+        if (!cancelled && !isRefresh) {
+          setIndex(new Map());
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    void load(false);
+    const timer = setInterval(() => {
+      void load(true);
+    }, WHALE_EV_REFRESH_MS);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [whalesKey]);
+
+  return { index, loading };
+}

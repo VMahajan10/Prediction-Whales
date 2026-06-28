@@ -17,6 +17,8 @@ export interface FeedTrade {
   transactionHash?: string;
   ticker?: string;
   slug?: string;
+  /** Polymarket CLOB token id (YES leg) for pipeline EV lookup. */
+  assetId?: string;
   isBlockTrade?: boolean;
 }
 

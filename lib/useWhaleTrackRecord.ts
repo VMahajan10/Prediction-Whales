@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { CategoryStats, ClvStats, TrackRecord } from "@/lib/polymarket";
+import type { CategoryStats, ClvStats, TrackRecord, TraderIntelligence } from "@/lib/polymarket";
 import { repairTrackRecord } from "@/lib/polymarket";
 import type { CrossMarketEvStats } from "@/lib/crossMarketEvStats";
 import {
@@ -17,6 +17,13 @@ export interface WhaleTrackRecordResponse {
   categoryStats?: CategoryStats[];
   clvStats?: ClvStats | null;
   crossMarketEvStats?: CrossMarketEvStats | null;
+  traderIntelligence?: TraderIntelligence | null;
+  pipelineEvAnalytics?: {
+    averageEv: number | null;
+    averageEvLabel: string;
+    totalPortfolioEv?: number | null;
+    tradeCount?: number;
+  } | null;
   closedPositions?: TraderClosedPosition[];
   openPositions?: TraderOpenPosition[];
   closedPositionsFetched?: number;

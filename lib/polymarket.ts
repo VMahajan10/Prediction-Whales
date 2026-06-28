@@ -5,6 +5,10 @@ import {
   type ClosingLineResult,
 } from "./clvPriceHistory";
 import { computeCrossMarketEvStats } from "./crossMarketEvStats";
+import {
+  resolveTraderIntelligence,
+  type TraderIntelligence,
+} from "./traderIntelligence";
 import { fetchWithTimeout } from "./fetchWithTimeout";
 import {
   CLOSED_POSITIONS_API_LIMIT,
@@ -18,6 +22,7 @@ const GAMMA_API_BASE = "https://gamma-api.polymarket.com";
 const DATA_API_BASE = "https://data-api.polymarket.com";
 
 export type { ClosingLineResult } from "./clvPriceHistory";
+export type { TraderIntelligence } from "./traderIntelligence";
 
 /** Raw market object from Gamma API */
 export interface GammaMarket {
@@ -158,6 +163,7 @@ export interface WhaleTrackRecordResult {
   categoryStats: CategoryStats[];
   clvStats: ClvStats;
   crossMarketEvStats: Awaited<ReturnType<typeof computeCrossMarketEvStats>>;
+  traderIntelligence: TraderIntelligence;
   closedPositions: TraderClosedPosition[];
   openPositions: TraderOpenPosition[];
   /** Raw count returned by Polymarket closed-positions API (capped at limit). */
@@ -752,15 +758,22 @@ export async function buildWhaleTrackRecord(
     computeClvStats(eligible),
     computeCrossMarketEvStats(eligible, openPositions),
   ]);
+  const trackRecord = computeTrackRecord(closedPositions);
+  const traderIntelligence = resolveTraderIntelligence(
+    clvStats,
+    crossMarketEvStats,
+    trackRecord
+  );
 
   return {
     wallet,
-    trackRecord: computeTrackRecord(closedPositions),
+    trackRecord,
     openPositionCount: openPositions.length,
     resolved: true,
     categoryStats,
     clvStats,
     crossMarketEvStats,
+    traderIntelligence,
     closedPositions: normalizeClosedPositions(eligible, slugToCategory),
     openPositions: normalizeOpenPositions(openPositions),
     closedPositionsFetched: closedPositions.length,

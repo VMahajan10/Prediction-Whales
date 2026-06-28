@@ -1,6 +1,7 @@
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 import { KALSHI_API } from "@/lib/kalshi";
 import { resolveKalshiTitle } from "@/lib/kalshiTitleResolver";
+import type { MarketSummary } from "@/lib/polymarket";
 
 const FETCH_TIMEOUT_MS = 8000;
 const LARGE_TRADE_USD = 500;
@@ -479,6 +480,35 @@ export function kalshiYesMidFromMarket(m: KalshiMarketDetail): number | null {
   }
   if (m.yesBid != null && m.yesBid > 0) return m.yesBid;
   return null;
+}
+
+/** Kalshi market tickers (e.g. KXMLBGAME-25JUN22-BOS) — not Polymarket condition IDs. */
+export function isKalshiMarketTicker(id: string): boolean {
+  return /^KX[A-Z0-9-]+$/i.test(id.trim());
+}
+
+export function kalshiMarketDetailToSummary(
+  detail: KalshiMarketDetail
+): MarketSummary {
+  const probability = kalshiYesMidFromMarket(detail) ?? 0;
+  const spread =
+    detail.yesBid != null && detail.yesAsk != null
+      ? Math.round((detail.yesAsk - detail.yesBid) * 100 * 10) / 10
+      : null;
+
+  return {
+    id: detail.ticker,
+    conditionId: detail.ticker,
+    question: detail.title,
+    probability,
+    volume: detail.volume,
+    spread,
+    active: detail.status === "active" || detail.status === "open",
+    clobTokenIds: [],
+    source: "kalshi",
+    rawContracts: [],
+    url: detail.webUrl,
+  };
 }
 
 export function feedTradeToKalshiDetail(trade: {

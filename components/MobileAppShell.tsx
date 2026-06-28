@@ -12,8 +12,8 @@ interface MobileAppShellProps {
 
 const NAV_ITEMS = [
   { href: "/", label: "Feed", icon: "📡" },
-  { href: "/following", label: "Watchlist", icon: "⭐" },
-  { href: "/portfolio", label: "Alerts", icon: "🔔" },
+  { href: "/following", label: "Watchlist", icon: "◎" },
+  { href: "/alerts", label: "Alerts", icon: "🔔" },
 ] as const;
 
 export default function MobileAppShell({

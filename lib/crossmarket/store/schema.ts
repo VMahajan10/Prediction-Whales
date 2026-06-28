@@ -272,3 +272,193 @@ export type EvSnapshotInsert = typeof evSnapshots.$inferInsert;
 
 export type SyncRun = typeof syncRuns.$inferSelect;
 export type SyncRunInsert = typeof syncRuns.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// Phase 2 — EV pipeline (PM ↔ Kalshi mappings, p_true, trader analytics)
+// Complements market_matches (multi-platform normalized graph) with direct
+// bilateral links keyed by polymarket_token_id + kalshi_ticker for hot paths.
+// ---------------------------------------------------------------------------
+
+export const MARKET_MAPPING_METHODS = [
+  "deterministic",
+  "string",
+  "vector",
+  "llm",
+  "manual",
+  "token_boost",
+  "token_heuristic",
+  "TEST_FALLBACK_PAIR",
+] as const;
+export type MarketMappingMethod = (typeof MARKET_MAPPING_METHODS)[number];
+
+export const PROBABILITY_SOURCE_TYPES = [
+  "ensemble",
+  "llm",
+  "cross_market",
+  "manual",
+] as const;
+export type ProbabilitySourceType = (typeof PROBABILITY_SOURCE_TYPES)[number];
+
+export const TRADER_EV_PLATFORMS = ["polymarket", "kalshi", "all"] as const;
+export type TraderEvPlatform = (typeof TRADER_EV_PLATFORMS)[number];
+
+export const TRADER_EV_PERIODS = ["live", "daily", "all_time"] as const;
+export type TraderEvPeriod = (typeof TRADER_EV_PERIODS)[number];
+
+/** Audit trail for ensemble / LLM contributors to p_true. */
+export interface TrueProbabilityContributor {
+  source: string;
+  weight: number;
+  p: number;
+  variance?: number;
+}
+
+export interface TraderEvBreakdown {
+  /** Mean EV per closed trade (probability space, e.g. 0.03 = +3¢ edge). */
+  meanTradeEv?: number;
+  /** Sum of per-trade EV × stake. */
+  weightedEvUsd?: number;
+  /** Positions with positive EV at entry. */
+  positiveEvCount?: number;
+  /** Positions with negative EV at entry. */
+  negativeEvCount?: number;
+}
+
+export const marketMappings = pgTable(
+  "market_mappings",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    /** Polymarket CLOB token id (primary hot-path key). */
+    polymarketTokenId: text("polymarket_token_id").notNull(),
+    /** Optional condition id for market-level joins. */
+    polymarketConditionId: text("polymarket_condition_id"),
+    kalshiTicker: text("kalshi_ticker").notNull(),
+    /** 0–1 match confidence (string, vector cosine, or LLM score). */
+    confidenceScore: real("confidence_score").notNull(),
+    matchMethod: text("match_method").notNull(),
+    /** Cosine similarity when match_method = vector. */
+    embeddingSimilarity: real("embedding_similarity"),
+    /** PM outcome label this mapping applies to. */
+    pmOutcome: text("pm_outcome"),
+    /** Kalshi outcome side (yes/no or contract label). */
+    kalshiOutcome: text("kalshi_outcome"),
+    /** same | inverted — required before EV comparison. */
+    orientation: text("orientation").notNull().default("same"),
+    /** Optional link back to normalized match graph. */
+    marketMatchId: bigint("market_match_id", { mode: "number" }).references(
+      () => marketMatches.id,
+      { onDelete: "set null" },
+    ),
+    verifiedAt: timestamp("verified_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    unique("market_mappings_pm_token_kalshi_unique").on(
+      table.polymarketTokenId,
+      table.kalshiTicker,
+    ),
+    index("market_mappings_kalshi_ticker_idx").on(table.kalshiTicker),
+    index("market_mappings_confidence_idx").on(table.confidenceScore.desc()),
+    index("market_mappings_expires_at_idx").on(table.expiresAt),
+  ],
+);
+
+export const trueProbabilities = pgTable(
+  "true_probabilities",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    mappingId: bigint("mapping_id", { mode: "number" }).references(
+      () => marketMappings.id,
+      { onDelete: "set null" },
+    ),
+    polymarketTokenId: text("polymarket_token_id").notNull(),
+    kalshiTicker: text("kalshi_ticker"),
+    /** AI / ensemble estimate of true probability p ∈ [0, 1]. */
+    pTrue: numeric("p_true").notNull(),
+    /** Model confidence or LLM self-score ∈ [0, 1]. */
+    sourceScore: numeric("source_score"),
+    /** Epistemic variance of p_true estimate. */
+    variance: numeric("variance"),
+    sourceType: text("source_type").notNull(),
+    modelVersion: text("model_version"),
+    contributors: jsonb("contributors")
+      .$type<TrueProbabilityContributor[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    calculatedAt: timestamp("calculated_at", {
+      withTimezone: true,
+      mode: "date",
+    })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("true_probabilities_pm_token_calculated_idx").on(
+      table.polymarketTokenId,
+      table.calculatedAt.desc(),
+    ),
+    index("true_probabilities_mapping_calculated_idx").on(
+      table.mappingId,
+      table.calculatedAt.desc(),
+    ),
+  ],
+);
+
+export const traderEvAnalytics = pgTable(
+  "trader_ev_analytics",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    /** Lowercase proxy wallet (Polymarket) or account id. */
+    wallet: text("wallet").notNull(),
+    platform: text("platform").notNull(),
+    period: text("period").notNull(),
+    /** Mean EV per trade (edge in probability units). */
+    averageEv: numeric("average_ev"),
+    /** Cumulative portfolio EV (USD-weighted). */
+    totalPortfolioEv: numeric("total_portfolio_ev"),
+    tradeCount: bigint("trade_count", { mode: "number" }).notNull().default(0),
+    closedTradeCount: bigint("closed_trade_count", { mode: "number" })
+      .notNull()
+      .default(0),
+    breakdown: jsonb("breakdown").$type<TraderEvBreakdown>(),
+    calculatedAt: timestamp("calculated_at", {
+      withTimezone: true,
+      mode: "date",
+    })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    unique("trader_ev_analytics_wallet_platform_period_unique").on(
+      table.wallet,
+      table.platform,
+      table.period,
+    ),
+    index("trader_ev_analytics_wallet_updated_idx").on(
+      table.wallet,
+      table.updatedAt.desc(),
+    ),
+    index("trader_ev_analytics_average_ev_idx").on(table.averageEv.desc()),
+  ],
+);
+
+export type MarketMapping = typeof marketMappings.$inferSelect;
+export type MarketMappingInsert = typeof marketMappings.$inferInsert;
+
+export type TrueProbability = typeof trueProbabilities.$inferSelect;
+export type TrueProbabilityInsert = typeof trueProbabilities.$inferInsert;
+
+export type TraderEvAnalytic = typeof traderEvAnalytics.$inferSelect;
+export type TraderEvAnalyticInsert = typeof traderEvAnalytics.$inferInsert;

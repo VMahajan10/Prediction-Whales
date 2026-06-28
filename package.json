@@ -15,17 +15,20 @@
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^3.0.77",
     "@capacitor/android": "^8.4.1",
     "@capacitor/cli": "^8.4.1",
     "@capacitor/core": "^8.4.1",
     "@capacitor/ios": "^8.4.1",
     "@neondatabase/serverless": "^1.0.0",
     "@upstash/redis": "^1.38.0",
+    "ai": "^6.0.214",
     "drizzle-orm": "^0.44.0",
     "kalshi-typescript": "^3.20.0",
     "next": "14.2.35",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^20",

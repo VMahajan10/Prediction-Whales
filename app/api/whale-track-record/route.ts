@@ -5,6 +5,8 @@ import {
   repairTrackRecord,
   resolveWalletByTradeHash,
 } from "@/lib/polymarket";
+import { resolveTraderIntelligence } from "@/lib/traderIntelligence";
+import { loadPipelineTraderEvAnalytics } from "@/lib/evPipeline/traderEvLookup";
 import { CLOSED_POSITIONS_API_LIMIT } from "@/lib/traderProfile";
 import {
   getCachedTrackRecord,
@@ -49,14 +51,25 @@ export async function GET(request: Request) {
         categoryStats: [],
         clvStats: null,
         crossMarketEvStats: null,
+        traderIntelligence: null,
+        pipelineEvAnalytics: null,
         resolved: false,
         ...EMPTY_POSITIONS,
       });
     }
 
+    const pipelineEvAnalytics = await loadPipelineTraderEvAnalytics(wallet);
+
     const cached = await getCachedTrackRecord(wallet);
     if (cached && !needsTrackRecordRecompute(cached.trackRecord)) {
       const trackRecord = repairTrackRecord(cached.trackRecord);
+      const traderIntelligence =
+        resolveTraderIntelligence(
+          cached.clvStats ?? null,
+          cached.crossMarketEvStats ?? null,
+          trackRecord,
+          pipelineEvAnalytics
+        );
       return NextResponse.json({
         wallet,
         trackRecord,
@@ -64,6 +77,8 @@ export async function GET(request: Request) {
         categoryStats: cached.categoryStats ?? [],
         clvStats: cached.clvStats ?? null,
         crossMarketEvStats: cached.crossMarketEvStats ?? null,
+        traderIntelligence,
+        pipelineEvAnalytics,
         closedPositions: cached.closedPositions ?? [],
         openPositions: cached.openPositions ?? [],
         closedPositionsFetched:
@@ -99,6 +114,13 @@ export async function GET(request: Request) {
     return NextResponse.json({
       ...result,
       trackRecord,
+      traderIntelligence: resolveTraderIntelligence(
+        result.clvStats ?? null,
+        result.crossMarketEvStats ?? null,
+        trackRecord,
+        pipelineEvAnalytics
+      ),
+      pipelineEvAnalytics,
       cached: false,
       cacheEnabled: isTrackRecordCacheEnabled(),
     });
@@ -114,6 +136,7 @@ export async function GET(request: Request) {
         categoryStats: [],
         clvStats: null,
         crossMarketEvStats: null,
+        traderIntelligence: null,
         resolved: false,
         error: message,
         ...EMPTY_POSITIONS,

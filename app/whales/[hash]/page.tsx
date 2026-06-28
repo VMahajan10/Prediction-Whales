@@ -31,6 +31,7 @@ import {
 } from "@/lib/polymarket";
 import { useResolvedWallet } from "@/lib/useResolvedWallet";
 import { useCrossMarketEvIndex } from "@/lib/useCrossMarketEvIndex";
+import { resolveCrossMarketEvForTrade } from "@/lib/resolveTradeCrossMarketEv";
 import { isPolymarketTrade } from "@/lib/tradeSource";
 import { getFullDate, getTimeAgo, getUtcString } from "@/lib/time";
 import { formatImpliedProbabilitySummary } from "@/lib/tradeDetail";
@@ -466,6 +467,12 @@ export default function WhaleProfilePage() {
     };
   }, [trade]);
 
+  const tradeEvPercent = useMemo(() => {
+    if (!tradeEvInput || evIndex.size === 0) return null;
+    const result = resolveCrossMarketEvForTrade(tradeEvInput, evIndex);
+    return result.reason === "ok" ? result.ev : null;
+  }, [tradeEvInput, evIndex]);
+
   useEffect(() => {
     if (!matchedMarket) return;
 
@@ -615,6 +622,9 @@ export default function WhaleProfilePage() {
         matchedMarket={matchedMarket}
         proxyWallet={displayWallet}
         walletUnavailable={walletResolutionFailed}
+        tradeEvPercent={tradeEvPercent}
+        tradeEvTokenId={trade.assetId}
+        tradeEvSource="polymarket"
       />
 
       {tradeEvInput && (

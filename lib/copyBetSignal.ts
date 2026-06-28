@@ -1,5 +1,6 @@
 import type { MarketSummary, TradeSummary } from "@/lib/polymarket";
 import { TRACK_RECORD_RELIABILITY_FLOOR } from "@/lib/polymarket";
+import { formatEvPercent } from "@/lib/crossMarketEvDisplay";
 import {
   calculateCopyVerdict,
   getDirectionSignal,
@@ -10,6 +11,25 @@ import {
   type CopyVerdict,
   type WhaleSignal,
 } from "@/lib/whaleSignals";
+
+/** Minimum trade-level edge in probability units (2¢) for a strong copy signal. */
+export const STRONG_COPY_MIN_TRADE_EV = 0.02;
+
+export function tradeEvPercentToProbability(evPercent: number | null | undefined): number | null {
+  if (evPercent == null || !Number.isFinite(evPercent)) return null;
+  return evPercent / 100;
+}
+
+export function meetsStrongCopyEvThreshold(
+  tradeEvPercent: number | null | undefined,
+  tradeNetEv?: number | null
+): boolean {
+  if (tradeNetEv != null && Number.isFinite(tradeNetEv)) {
+    return tradeNetEv > STRONG_COPY_MIN_TRADE_EV;
+  }
+  const prob = tradeEvPercentToProbability(tradeEvPercent);
+  return prob != null && prob > STRONG_COPY_MIN_TRADE_EV;
+}
 
 export interface TrackRecordCopyContext {
   proxyWallet?: string;
@@ -150,7 +170,7 @@ export function getTrackRecordSignal(
     return {
       emoji: "✅",
       label: "Proven track record",
-      plain: `${closedCount} closed bets · ${Math.round(winRate)}% win rate · ${formatRoiPct(roi)} ROI. Strong copy signals require both a good trade and a proven trader.`,
+      plain: `${closedCount} closed bets · ${Math.round(winRate)}% win rate · ${formatRoiPct(roi)} ROI. Strong copy signals require ≥${TRACK_RECORD_RELIABILITY_FLOOR} bets, ≥50% win rate, and trade EV above +2%.`,
       positive: true,
     };
   }
@@ -171,21 +191,70 @@ function isTrackRecordInsufficient(ctx: TrackRecordCopyContext): boolean {
 
 function isProvenPositiveTrack(ctx: TrackRecordCopyContext): boolean {
   if (isTrackRecordInsufficient(ctx)) return false;
+  const closedCount = ctx.closedCount ?? 0;
   const winRate = ctx.winRate;
   const roi = ctx.roi;
-  return winRate != null && winRate >= 50 && roi != null && roi >= 0;
+  return (
+    closedCount >= TRACK_RECORD_RELIABILITY_FLOOR &&
+    winRate != null &&
+    winRate >= 50 &&
+    roi != null &&
+    roi >= 0
+  );
 }
 
-/** Caps trade-only verdict using trader track-record quality. */
+export function getTradeEvSignal(
+  tradeEvPercent: number | null | undefined,
+  tradeNetEv?: number | null
+): WhaleSignal {
+  if (tradeEvPercent == null && tradeNetEv == null) {
+    return {
+      emoji: "📊",
+      label: "Trade EV unavailable",
+      plain:
+        "No cross-market or AI true-EV reference for this contract yet — strong copy requires EV > +2%.",
+      positive: null,
+    };
+  }
+
+  const meets = meetsStrongCopyEvThreshold(tradeEvPercent, tradeNetEv);
+  const label =
+    tradeEvPercent != null
+      ? formatEvPercent(tradeEvPercent)
+      : tradeNetEv != null
+        ? `${tradeNetEv >= 0 ? "+" : ""}${(tradeNetEv * 100).toFixed(1)}%`
+        : "—";
+
+  if (meets) {
+    return {
+      emoji: "✅",
+      label: "Positive trade EV",
+      plain: `${label} expected value vs fair reference — above our +2% floor for strong copy signals.`,
+      positive: true,
+    };
+  }
+
+  return {
+    emoji: "⚠️",
+    label: "Insufficient trade EV",
+    plain: `${label} expected value — strong copy requires EV above +2% after fees.`,
+    positive: false,
+  };
+}
+
+/** Caps trade-only verdict using trader track-record quality and trade EV. */
 export function applyTrackRecordCap(
   tradeVerdict: CopyVerdict,
   ctx: TrackRecordCopyContext,
-  tradeSignals: WhaleSignal[]
+  tradeSignals: WhaleSignal[],
+  tradeEvPercent?: number | null,
+  tradeNetEv?: number | null
 ): CopyVerdict {
   const positiveCount = tradeSignals.filter((s) => s.positive === true).length;
   const tradeWasStrong = tradeVerdict.verdict === "Strong Copy Signal";
   const tradeWasWorth = tradeVerdict.verdict === "Worth Considering";
   const tradeLooksGood = tradeWasStrong || positiveCount >= 3;
+  const hasStrongEv = meetsStrongCopyEvThreshold(tradeEvPercent, tradeNetEv);
 
   if (isTrackRecordInsufficient(ctx)) {
     if (tradeLooksGood) {
@@ -213,7 +282,15 @@ export function applyTrackRecordCap(
     };
   }
 
-  if (tradeWasStrong && isProvenPositiveTrack(ctx)) {
+  if (tradeWasStrong && isProvenPositiveTrack(ctx) && !hasStrongEv) {
+    return {
+      verdict: "Worth Considering",
+      verdictColor: "yellow",
+      verdictEmoji: "🟡",
+    };
+  }
+
+  if (tradeWasStrong && isProvenPositiveTrack(ctx) && hasStrongEv) {
     return tradeVerdict;
   }
 
@@ -224,7 +301,9 @@ export function getCopyVerdict(
   trade: TradeSummary,
   currentProbability: number | null,
   matchedMarket?: MarketSummary | null,
-  trackContext?: TrackRecordCopyContext
+  trackContext?: TrackRecordCopyContext,
+  tradeEvPercent?: number | null,
+  tradeNetEv?: number | null
 ) {
   const tradeSignals = buildCopySignals(
     trade,
@@ -237,30 +316,41 @@ export function getCopyVerdict(
     return tradeVerdict;
   }
 
-  return applyTrackRecordCap(tradeVerdict, trackContext, tradeSignals);
+  return applyTrackRecordCap(
+    tradeVerdict,
+    trackContext,
+    tradeSignals,
+    tradeEvPercent,
+    tradeNetEv
+  );
 }
 
 export function getCopySignalsAndVerdict(
   trade: TradeSummary,
   currentProbability: number | null,
   matchedMarket: MarketSummary | null | undefined,
-  trackContext: TrackRecordCopyContext
+  trackContext: TrackRecordCopyContext,
+  tradeEvPercent?: number | null,
+  tradeNetEv?: number | null
 ): { signals: WhaleSignal[]; verdict: CopyVerdict } {
   const tradeSignals = buildCopySignals(
     trade,
     currentProbability,
     matchedMarket
   );
+  const evSignal = getTradeEvSignal(tradeEvPercent, tradeNetEv);
   const trackSignal = getTrackRecordSignal(trackContext);
   const tradeVerdict = calculateCopyVerdict(tradeSignals);
   const verdict = applyTrackRecordCap(
     tradeVerdict,
     trackContext,
-    tradeSignals
+    tradeSignals,
+    tradeEvPercent,
+    tradeNetEv
   );
 
   return {
-    signals: [...tradeSignals, trackSignal],
+    signals: [...tradeSignals, evSignal, trackSignal],
     verdict,
   };
 }

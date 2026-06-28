@@ -9,6 +9,8 @@ export interface BookmarkedTrader {
   bookmarkedAt: number;
   /** Latest Polymarket trade hash used to open this trader */
   lastSeenTxHash?: string;
+  /** Whether whale-trade alerts are enabled for this trader */
+  alertsEnabled?: boolean;
 }
 
 function readAll(): BookmarkedTrader[] {

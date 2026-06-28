@@ -8,6 +8,13 @@
       "when": 1718678400000,
       "tag": "0001_crossmarket_init",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1740700800000,
+      "tag": "0003_match_method_test_fallback",
+      "breakpoints": true
     }
   ]
 }

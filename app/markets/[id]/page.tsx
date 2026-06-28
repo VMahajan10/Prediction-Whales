@@ -16,6 +16,7 @@ import { generateAnalysis } from "@/lib/marketAnalysis";
 import { formatImpliedProbabilitySummary } from "@/lib/tradeDetail";
 import type { Market, TradeSummary } from "@/lib/polymarket";
 import { formatVolumeUsd } from "@/lib/polymarket";
+import { isKalshiMarketTicker } from "@/lib/kalshiDetail";
 import {
   buyPosition,
   closePosition,
@@ -151,10 +152,20 @@ export default function MarketDetailPage() {
       const pmData: { markets?: Market[] } = await pmRes.json();
       const kalshiData: { markets?: Market[] } = await kalshiRes.json();
 
-      const found =
+      let found =
         [...(pmData.markets ?? []), ...(kalshiData.markets ?? [])].find(
           (m) => m.id === id
         ) ?? null;
+
+      if (!found && isKalshiMarketTicker(id)) {
+        const kalshiRes = await fetch(
+          `/api/kalshi/market?ticker=${encodeURIComponent(id)}`
+        );
+        if (kalshiRes.ok) {
+          const data: { market?: Market } = await kalshiRes.json();
+          found = data.market ?? null;
+        }
+      }
 
       if (!found) {
         setNotFound(true);
@@ -194,9 +205,22 @@ export default function MarketDetailPage() {
 
     const refresh = async () => {
       try {
-        const endpoint =
-          market.source === "kalshi" ? "/api/kalshi" : "/api/markets";
-        const res = await fetch(endpoint);
+        if (market.source === "kalshi") {
+          const res = await fetch(
+            `/api/kalshi/market?ticker=${encodeURIComponent(market.id)}`
+          );
+          if (!res.ok) return;
+          const data: { market?: Market } = await res.json();
+          if (
+            data.market?.probability != null &&
+            Number.isFinite(data.market.probability)
+          ) {
+            setLiveProbability(data.market.probability);
+          }
+          return;
+        }
+
+        const res = await fetch("/api/markets");
         const data: { markets?: Market[] } = await res.json();
         const updated = data.markets?.find((m) => m.id === market.id);
         if (updated?.probability != null && Number.isFinite(updated.probability)) {

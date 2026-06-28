@@ -8,6 +8,7 @@ import MarketFeed from "@/components/MarketFeed";
 import MarketMovers from "@/components/MarketMovers";
 import MobileAppShell from "@/components/MobileAppShell";
 import NewWhaleToast from "@/components/NewWhaleToast";
+import TraderAlertSync from "@/components/TraderAlertSync";
 import TradesFeed from "@/components/TradesFeed";
 import WelcomeBanner from "@/components/WelcomeBanner";
 import WhaleTracker from "@/components/WhaleTracker";
@@ -142,6 +143,7 @@ function HomeDashboard() {
 
   return (
     <MobileAppShell showNav={!explorerMode}>
+      <TraderAlertSync />
       <main className="min-h-screen px-4 py-5">
         <header className="mb-6 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">

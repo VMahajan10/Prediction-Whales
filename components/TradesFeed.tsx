@@ -3,10 +3,13 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import CrossMarketEvBadge from "@/components/CrossMarketEvBadge";
+import AiArbitrageBadge from "@/components/AiArbitrageBadge";
+import PipelineEvBadge from "@/components/PipelineEvBadge";
 import PlatformFilterToggle from "@/components/PlatformFilterToggle";
 import { getTimeAgo } from "@/lib/time";
 import type { FeedTrade } from "@/lib/kalshiTrades";
 import type { OutcomeBooks } from "@/lib/crossMarketEv";
+import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import { useLiveFeedPlatform } from "@/lib/LiveFeedPlatformContext";
 import { liveFeedPlatformLabel } from "@/lib/liveFeedMerge";
 import { useLiveFeed } from "@/lib/useLiveFeed";
@@ -16,6 +19,8 @@ import {
   stashTradeForNavigation,
 } from "@/lib/tradeNavigationStore";
 import { useCrossMarketEvIndex } from "@/lib/useCrossMarketEvIndex";
+import { pipelineEvKeyForTrade } from "@/lib/pipelineEvClient";
+import { usePipelineEvIndex } from "@/lib/usePipelineEvIndex";
 import { isWhaleNotional } from "@/lib/whaleTrades";
 
 function tradeKey(trade: FeedTrade): string {
@@ -42,10 +47,12 @@ function TradeRowContent({
   trade,
   isNew,
   evIndex,
+  pipelineEv,
 }: {
   trade: FeedTrade;
   isNew: boolean;
   evIndex: Map<string, OutcomeBooks>;
+  pipelineEv: PipelineTradeEv | null;
 }) {
   const whale = isWhaleNotional(trade.usdNotional);
   const rowClass = `rounded-lg border border-transparent p-2 transition-colors ${
@@ -55,8 +62,18 @@ function TradeRowContent({
   const inner = (
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <div className="mb-1 flex items-center gap-2">
+          <div className="mb-1 flex flex-wrap items-center gap-2">
             <SourceBadge source={trade.source} />
+            <PipelineEvBadge ev={pipelineEv} />
+            <AiArbitrageBadge
+              trade={{
+                source: trade.source,
+                price: trade.price,
+                slug: trade.slug,
+                ticker: trade.ticker,
+              }}
+              index={evIndex}
+            />
             <p className="truncate text-sm text-slate-200">{trade.title}</p>
           </div>
           <p className="text-xs text-slate-400">
@@ -154,6 +171,7 @@ export default function TradesFeed() {
   const { platform, setPlatform } = useLiveFeedPlatform();
   const { trades, polymarketConnected, kalshiOk } = useLiveFeed(platform);
   const { index: evIndex } = useCrossMarketEvIndex();
+  const { index: pipelineEvIndex } = usePipelineEvIndex(trades);
   const [newTradeKeys, setNewTradeKeys] = useState<Set<string>>(new Set());
   const prevLatestKey = useRef<string | null>(null);
 
@@ -237,6 +255,11 @@ export default function TradesFeed() {
               trade={trade}
               isNew={newTradeKeys.has(tradeKey(trade))}
               evIndex={evIndex}
+              pipelineEv={
+                pipelineEvKeyForTrade(trade)
+                  ? pipelineEvIndex.get(pipelineEvKeyForTrade(trade)!) ?? null
+                  : null
+              }
             />
           ))
         )}
