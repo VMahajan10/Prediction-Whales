@@ -19,8 +19,8 @@ import {
   validateMatchMarketsPreflight,
 } from "@/lib/evPipeline/matchMarketsPreflight";
 import {
-  cacheOrderBookMid,
-  cacheMappingBothWays,
+  cacheOrderBookMidBatch,
+  cacheMappingBothWaysBatch,
   cachePTrue,
   cacheTraderEv,
   evRedisKeys,
@@ -318,8 +318,8 @@ export async function runEvPipeline(runId: string): Promise<EvPipelineResult> {
 
 /** Helpers exported for unit tests / future stages. */
 export const evPipelineTestExports = {
-  cacheOrderBookMid,
-  cacheMappingBothWays,
+  cacheOrderBookMidBatch,
+  cacheMappingBothWaysBatch,
   cachePTrue,
   cacheTraderEv,
   evRedisKeys,

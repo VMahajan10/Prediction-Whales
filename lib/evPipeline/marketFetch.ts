@@ -25,13 +25,37 @@ const KALSHI_FALLBACK_SERIES = [
   "KXNBA",
   "KXMLB",
   "KXNHL",
+  "KXNFLTOTAL",
+  "KXNBATOTAL",
+  "KXMLBTOTAL",
+  "KXNHLTOTAL",
   "KXFED",
   "KXBTC",
   "KXBTCD",
   "KXETH",
   "KXSOL",
   "KXWCGAME",
+  "KXWCTOTAL",
+  "KXWCSPREAD",
+  "KXWCSCORE",
   "KXWC",
+] as const;
+
+/** Supplementary Gamma pass — sports derivatives + advance/moneyline props. */
+const GAMMA_SPORTS_TYPES_QUERY = [
+  "sports_market_types=SPORTS_MARKET_TYPE_MONEYLINE",
+  "sports_market_types=SPORTS_MARKET_TYPE_TOTAL",
+  "sports_market_types=SPORTS_MARKET_TYPE_SPREAD",
+  "sports_market_types=SPORTS_MARKET_TYPE_PROP",
+].join("&");
+const GAMMA_SPORTS_SUPPLEMENT_LIMIT = 400;
+
+/** Always merge active World Cup / cricket derivative series from Kalshi. */
+const KALSHI_WC_SERIES = [
+  "KXWCGAME",
+  "KXWCTOTAL",
+  "KXWCSPREAD",
+  "KXWCSCORE",
 ] as const;
 
 export interface FetchMarketsOptions {
@@ -83,6 +107,11 @@ function kalshiTickerEmbeddingHints(ticker: string): string {
   if (upper.startsWith("KXFED") || upper.startsWith("KXFOMC")) {
     hints.push("fed fomc interest rate");
   }
+  if (upper.startsWith("KXWC")) {
+    hints.push(
+      "world cup cricket rsa can south africa canada advance total spread over under"
+    );
+  }
 
   return hints.join(" ");
 }
@@ -93,6 +122,36 @@ function gammaDescription(raw: Record<string, unknown>): string {
   const rules = raw.rules;
   if (typeof rules === "string" && rules.trim()) return rules.trim();
   return "";
+}
+
+function logPipelineSkipIfMissingIdentifier(market: {
+  tokenId?: string | null;
+  ticker?: string | null;
+  title?: string | null;
+  name?: string | null;
+  question?: string | null;
+}): void {
+  const tokenId = market.tokenId?.trim() || null;
+  const ticker = market.ticker?.trim() || null;
+  if (!tokenId && !ticker) {
+    console.log(
+      `[Pipeline Skip] Missing identifier for: ${market.title || market.name || market.question || "unknown"}`
+    );
+  }
+}
+
+function gammaMarketLabel(raw: GammaMarket): string {
+  const record = raw as unknown as Record<string, unknown>;
+  const name = typeof record.name === "string" ? record.name : undefined;
+  return raw.question ?? name ?? raw.slug ?? raw.id ?? "unknown";
+}
+
+function mergeGammaMarketsById(markets: GammaMarket[]): GammaMarket[] {
+  const byId = new Map<string, GammaMarket>();
+  for (const market of markets) {
+    byId.set(market.id, market);
+  }
+  return Array.from(byId.values());
 }
 
 function parseClobTokenIds(raw: GammaMarket): string[] {
@@ -122,18 +181,23 @@ export function normalizePolymarketGamma(
   const spread =
     yesBid != null && yesAsk != null ? Math.max(0, yesAsk - yesBid) : null;
 
+  const slugText = [summary.slug, summary.eventSlug].filter(Boolean).join(" ");
+  const embeddingTitle = [summary.question, slugText].filter(Boolean).join(" ");
+
   return {
     platform: "polymarket",
     externalId: summary.conditionId,
     tokenOrTicker: yesTokenId,
     title: summary.question,
+    slug: summary.slug ?? null,
+    eventSlug: summary.eventSlug ?? null,
     description,
     expiration: typeof raw.endDate === "string" ? raw.endDate : null,
     yesBid,
     yesAsk,
     spread,
     impliedProbability: getPrimaryProbability(raw.outcomePrices),
-    embeddingText: buildEmbeddingText(summary.question, description, "polymarket"),
+    embeddingText: buildEmbeddingText(embeddingTitle, description, "polymarket"),
   };
 }
 
@@ -174,6 +238,37 @@ export function normalizeKalshiMarket(raw: KalshiMarket): NormalizedMarketContra
   };
 }
 
+function mergeKalshiMarketsByTicker(markets: KalshiMarket[]): KalshiMarket[] {
+  const byTicker = new Map<string, KalshiMarket>();
+  for (const market of markets) {
+    const ticker = market.ticker?.trim();
+    if (ticker) byTicker.set(ticker.toUpperCase(), market);
+  }
+  return Array.from(byTicker.values());
+}
+
+async function fetchKalshiSeriesMarkets(
+  series: readonly string[],
+  signal?: AbortSignal
+): Promise<KalshiMarket[]> {
+  const merged: KalshiMarket[] = [];
+  for (const seriesTicker of series) {
+    try {
+      const batch = await fetchKalshiOpenMarketsWithRetry(
+        { seriesTicker, maxPages: 4, limit: 200, signal },
+        2
+      );
+      merged.push(...batch);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `[ev/map-markets] Kalshi series ${seriesTicker} fetch failed: ${message}`
+      );
+    }
+  }
+  return merged;
+}
+
 function isKalshiStructurallyExcluded(m: KalshiMarket): boolean {
   const ticker = m.ticker ?? "";
   if (ticker.includes("KXMVE")) return true;
@@ -188,6 +283,26 @@ function isKalshiCandidate(m: KalshiMarket): boolean {
   if (isKalshiStructurallyExcluded(m)) return false;
   const volume = parseNum(m.volume_fp) ?? 0;
   return volume >= KALSHI_MIN_VOLUME;
+}
+
+function normalizeKalshiBatch(
+  rawMarkets: KalshiMarket[]
+): NormalizedMarketContract[] {
+  const markets: NormalizedMarketContract[] = [];
+
+  for (const raw of rawMarkets) {
+    logPipelineSkipIfMissingIdentifier({
+      ticker: raw.ticker,
+      title: raw.title,
+      name: raw.title,
+    });
+
+    const normalized = normalizeKalshiMarket(raw);
+    if (!normalized) continue;
+    markets.push(normalized);
+  }
+
+  return markets;
 }
 
 async function fetchWithRateLimitRetry(
@@ -233,70 +348,131 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function fetchGammaMarketsPaginated(
+  querySuffix: string,
+  targetLimit: number,
+  label: string
+): Promise<{ markets: GammaMarket[]; fetched: number; failed?: MappingFailure }> {
+  const rawMarkets: GammaMarket[] = [];
+  let offset = 0;
+
+  while (rawMarkets.length < targetLimit) {
+    const pageLimit = Math.min(GAMMA_PAGE_SIZE, targetLimit - rawMarkets.length);
+    const url = `${GAMMA_API_BASE}/markets?limit=${pageLimit}&offset=${offset}&${querySuffix}`;
+    const res = await fetchWithRateLimitRetry(
+      url,
+      { headers: { Accept: "application/json" }, cache: "no-store" },
+      label
+    );
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      console.error(
+        `[ev/map-markets] ${label} HTTP ${res.status} from ${url}:`,
+        body.slice(0, 300)
+      );
+      if (rawMarkets.length === 0) {
+        return {
+          markets: [],
+          fetched: 0,
+          failed: {
+            stage: "fetch_polymarket",
+            message: `${label} HTTP ${res.status} (${GAMMA_API_BASE}/markets)`,
+          },
+        };
+      }
+      break;
+    }
+
+    const data: unknown = await res.json();
+    if (!Array.isArray(data)) {
+      if (rawMarkets.length === 0) {
+        return {
+          markets: [],
+          fetched: 0,
+          failed: {
+            stage: "fetch_polymarket",
+            message: `${label} returned non-array payload`,
+          },
+        };
+      }
+      break;
+    }
+
+    const page = data as GammaMarket[];
+    if (page.length === 0) break;
+
+    rawMarkets.push(...page);
+    offset += page.length;
+    if (page.length < pageLimit) break;
+  }
+
+  return { markets: rawMarkets, fetched: offset };
+}
+
+function normalizePolymarketBatch(
+  rawMarkets: GammaMarket[]
+): NormalizedMarketContract[] {
+  const markets: NormalizedMarketContract[] = [];
+
+  for (const raw of rawMarkets) {
+    const tokenIds = parseClobTokenIds(raw);
+    logPipelineSkipIfMissingIdentifier({
+      tokenId: tokenIds[0],
+      title: gammaMarketLabel(raw),
+      question: raw.question,
+    });
+
+    const normalized = normalizePolymarketGamma(raw);
+    if (!normalized) {
+      if (tokenIds[0]) {
+        console.log(
+          `[Pipeline Skip] Failed normalization for: ${gammaMarketLabel(raw)} (tokenId=${tokenIds[0]})`
+        );
+      }
+      continue;
+    }
+
+    markets.push(normalized);
+  }
+
+  return markets;
+}
+
 export async function fetchActivePolymarketMarkets(
   options: FetchMarketsOptions = {}
 ): Promise<{ markets: NormalizedMarketContract[]; failure?: MappingFailure }> {
   const targetLimit = options.polymarketLimit ?? DEFAULT_PM_LIMIT;
+  const gammaBaseQuery =
+    "active=true&closed=false&order=volume24hr&ascending=false";
 
   try {
-    const rawMarkets: GammaMarket[] = [];
-    let offset = 0;
+    const [volumePass, sportsPass] = await Promise.all([
+      fetchGammaMarketsPaginated(
+        gammaBaseQuery,
+        targetLimit,
+        "Polymarket Gamma (volume)"
+      ),
+      fetchGammaMarketsPaginated(
+        `${gammaBaseQuery}&${GAMMA_SPORTS_TYPES_QUERY}`,
+        GAMMA_SPORTS_SUPPLEMENT_LIMIT,
+        "Polymarket Gamma (sports moneyline/total/spread/prop)"
+      ),
+    ]);
 
-    while (rawMarkets.length < targetLimit) {
-      const pageLimit = Math.min(GAMMA_PAGE_SIZE, targetLimit - rawMarkets.length);
-      const url = `${GAMMA_API_BASE}/markets?limit=${pageLimit}&offset=${offset}&active=true&closed=false&order=volume24hr&ascending=false`;
-      const res = await fetchWithRateLimitRetry(
-        url,
-        { headers: { Accept: "application/json" }, cache: "no-store" },
-        "Polymarket Gamma"
-      );
-
-      if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        console.error(
-          `[ev/map-markets] Polymarket Gamma HTTP ${res.status} from ${url}:`,
-          body.slice(0, 300)
-        );
-        if (rawMarkets.length === 0) {
-          return {
-            markets: [],
-            failure: {
-              stage: "fetch_polymarket",
-              message: `Gamma API HTTP ${res.status} (${GAMMA_API_BASE}/markets)`,
-            },
-          };
-        }
-        break;
-      }
-
-      const data: unknown = await res.json();
-      if (!Array.isArray(data)) {
-        if (rawMarkets.length === 0) {
-          return {
-            markets: [],
-            failure: {
-              stage: "fetch_polymarket",
-              message: "Gamma API returned non-array payload",
-            },
-          };
-        }
-        break;
-      }
-
-      const page = data as GammaMarket[];
-      if (page.length === 0) break;
-
-      rawMarkets.push(...page);
-      offset += page.length;
-      if (page.length < pageLimit) break;
+    if (volumePass.failed && volumePass.markets.length === 0) {
+      return { markets: [], failure: volumePass.failed };
     }
 
-    const markets = rawMarkets
-      .map(normalizePolymarketGamma)
-      .filter((m): m is NormalizedMarketContract => m != null);
+    const rawMarkets = mergeGammaMarketsById([
+      ...volumePass.markets,
+      ...sportsPass.markets,
+    ]);
+
+    const markets = normalizePolymarketBatch(rawMarkets);
 
     console.info(
-      `[ev/map-markets] Polymarket normalized ${markets.length} contracts from Gamma (${offset} raw fetched)`
+      `[ev/map-markets] Polymarket normalized ${markets.length} contracts from Gamma (${rawMarkets.length} raw merged: volume=${volumePass.fetched}, sports=${sportsPass.fetched})`
     );
     return { markets };
   } catch (err) {
@@ -325,6 +501,13 @@ export async function fetchActiveKalshiMarkets(
         limit: 200,
         signal: options.signal,
       });
+      const wcMarkets = await fetchKalshiSeriesMarkets(
+        KALSHI_WC_SERIES,
+        options.signal
+      );
+      if (wcMarkets.length > 0) {
+        raw = mergeKalshiMarketsByTicker([...raw, ...wcMarkets]);
+      }
     } catch (primaryErr) {
       const primaryMessage =
         primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
@@ -341,19 +524,17 @@ export async function fetchActiveKalshiMarkets(
       }
     }
 
-    let markets = raw
-      .filter(isKalshiCandidate)
-      .map(normalizeKalshiMarket)
-      .filter((m): m is NormalizedMarketContract => m != null);
+    let markets = normalizeKalshiBatch(
+      raw.filter(isKalshiCandidate)
+    );
 
     if (markets.length === 0 && raw.length > 0) {
       console.warn(
         `[ev/map-markets] Kalshi returned ${raw.length} raw markets but 0 passed volume/filter rules — relaxing volume floor (keeping structural filters)`
       );
-      markets = raw
-        .filter((m) => !isKalshiStructurallyExcluded(m))
-        .map(normalizeKalshiMarket)
-        .filter((m): m is NormalizedMarketContract => m != null);
+      markets = normalizeKalshiBatch(
+        raw.filter((m) => !isKalshiStructurallyExcluded(m))
+      );
     }
 
     if (markets.length === 0) {
@@ -361,10 +542,9 @@ export async function fetchActiveKalshiMarkets(
         "[ev/map-markets] Kalshi still empty — trying fallback series"
       );
       const fallbackRaw = await fetchKalshiFallbackSeries(options.signal);
-      markets = fallbackRaw
-        .filter(isKalshiCandidate)
-        .map(normalizeKalshiMarket)
-        .filter((m): m is NormalizedMarketContract => m != null);
+      markets = normalizeKalshiBatch(
+        fallbackRaw.filter(isKalshiCandidate)
+      );
     }
 
     if (markets.length === 0) {

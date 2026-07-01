@@ -1,10 +1,11 @@
 import type { NormalizedMarketContract } from "@/lib/evPipeline/types";
+import { countryNameToPm } from "@/lib/sportsTeamMatch";
 
 /** Added to raw cosine similarity when token overlap is strong. */
 export const TOKEN_SIMILARITY_BOOST = 0.25;
 
 const CRYPTO_ASSET_KEYWORDS = new Set(["btc", "eth"]);
-const SPORTS_LEAGUE_KEYWORDS = new Set(["nfl", "nba", "mlb", "nhl"]);
+const SPORTS_LEAGUE_KEYWORDS = new Set(["nfl", "nba", "mlb", "nhl", "world_cup"]);
 const MACRO_ENTITY_KEYWORDS = new Set([
   "fed",
   "cpi",
@@ -25,6 +26,7 @@ export type MatchScoreMethod =
   | "vector"
   | "token_boost"
   | "token_heuristic"
+  | "sports_structure"
   | "TEST_FALLBACK_PAIR";
 
 export interface ContractTokens {
@@ -84,6 +86,7 @@ const ENTITY_PATTERNS: Array<{ pattern: RegExp; canonical: string }> = [
   { pattern: /\bnba\b|\bpro basketball\b/gi, canonical: "nba" },
   { pattern: /\bmlb\b|\bpro baseball\b/gi, canonical: "mlb" },
   { pattern: /\bnhl\b|\bpro hockey\b/gi, canonical: "nhl" },
+  { pattern: /\bworld cup\b|\bcricket\b|\bt20\b|\bicc\b/gi, canonical: "world_cup" },
   { pattern: /\btrump\b/gi, canonical: "trump" },
   { pattern: /\bbiden\b/gi, canonical: "biden" },
   { pattern: /\brecession\b/gi, canonical: "recession" },
@@ -148,9 +151,28 @@ function extractNumbers(text: string): string[] {
   return Array.from(found);
 }
 
+const VS_TITLE =
+  /\b([a-z][a-z\s'’.\-]{1,40}?)\s+(?:vs\.?|versus|v\.?)\s+([a-z][a-z\s'’.\-]{1,40}?)\b/i;
+
+function extractTeamKeywords(text: string): string[] {
+  const teams: string[] = [];
+  const vs = text.match(VS_TITLE);
+  if (vs) {
+    const a = countryNameToPm(vs[1]);
+    const b = countryNameToPm(vs[2]);
+    if (a) teams.push(`team:${a}`);
+    if (b) teams.push(`team:${b}`);
+  }
+  return teams;
+}
+
 function extractKeywords(text: string): string[] {
   const keywords = new Set<string>();
   const lower = text.toLowerCase();
+
+  for (const team of extractTeamKeywords(lower)) {
+    keywords.add(team);
+  }
 
   for (const { pattern, canonical } of ENTITY_PATTERNS) {
     pattern.lastIndex = 0;
@@ -235,12 +257,45 @@ export function sameExpirationPeriod(
   return true;
 }
 
+function sharedTeamKeywords(
+  pm: ContractTokens,
+  kalshi: ContractTokens
+): string[] {
+  const pmTeams = pm.keywords.filter((k) => k.startsWith("team:"));
+  const kalshiTeams = kalshi.keywords.filter((k) => k.startsWith("team:"));
+  return intersect(pmTeams, kalshiTeams);
+}
+
+function matchesSportsTokenHeuristic(
+  pm: ContractTokens,
+  kalshi: ContractTokens,
+  sharedNumbers: string[],
+  sharedKeywords: string[]
+): boolean {
+  const sharedTeams = sharedTeamKeywords(pm, kalshi);
+  if (sharedTeams.length >= 2 && sharedNumbers.length >= 1) return true;
+  if (sharedTeams.length >= 2 && sharedKeywords.includes("world_cup")) {
+    return true;
+  }
+
+  const sharedSports = sharedKeywords.filter(
+    (k) => SPORTS_LEAGUE_KEYWORDS.has(k) || k.startsWith("team:")
+  );
+  if (sharedSports.length >= 2 && sharedNumbers.length >= 1) return true;
+
+  return false;
+}
+
 function matchesTokenHeuristic(
   pm: ContractTokens,
   kalshi: ContractTokens,
   sharedNumbers: string[],
   sharedKeywords: string[]
 ): boolean {
+  if (matchesSportsTokenHeuristic(pm, kalshi, sharedNumbers, sharedKeywords)) {
+    return true;
+  }
+
   if (!sameExpirationPeriod(pm, kalshi)) return false;
   if (sharedNumbers.length >= 1 && sharedKeywords.length >= 1) return true;
   if (sharedKeywords.length >= 2 && sharedNumbers.length >= 1) return true;
@@ -255,6 +310,23 @@ export function adjustSimilarityWithTokens(
   const sharedNumbers = intersect(pmTokens.numbers, kalshiTokens.numbers);
   const sharedKeywords = intersect(pmTokens.keywords, kalshiTokens.keywords);
   const samePeriod = sameExpirationPeriod(pmTokens, kalshiTokens);
+
+  if (matchesSportsTokenHeuristic(pmTokens, kalshiTokens, sharedNumbers, sharedKeywords)) {
+    return {
+      raw: rawSimilarity,
+      adjusted: Math.min(
+        1,
+        Math.max(
+          rawSimilarity + TOKEN_SIMILARITY_BOOST,
+          TOKEN_HEURISTIC_OVERRIDE_SCORE
+        )
+      ),
+      method: "token_heuristic",
+      sharedNumbers,
+      sharedKeywords,
+      sameExpirationPeriod: samePeriod,
+    };
+  }
 
   if (
     matchesTokenHeuristic(pmTokens, kalshiTokens, sharedNumbers, sharedKeywords)
@@ -315,7 +387,11 @@ export function adjustSimilarityWithTokens(
   const sharedSports = sharedKeywords.filter((k) =>
     SPORTS_LEAGUE_KEYWORDS.has(k)
   );
-  if (sharedSports.length >= 1 && rawSimilarity >= 0.6) {
+  const sharedTeams = sharedTeamKeywords(pmTokens, kalshiTokens);
+  if (
+    (sharedSports.length >= 1 || sharedTeams.length >= 2) &&
+    rawSimilarity >= 0.52
+  ) {
     return {
       raw: rawSimilarity,
       adjusted: Math.min(1, rawSimilarity + TOKEN_SIMILARITY_BOOST * 0.75),
@@ -361,6 +437,8 @@ export function hasCrossMarketTokenEvidence(
   const sharedKeywords = intersect(pmTokens.keywords, kalshiTokens.keywords);
   const sharedNumbers = intersect(pmTokens.numbers, kalshiTokens.numbers);
 
+  if (sharedTeamKeywords(pmTokens, kalshiTokens).length >= 2) return true;
+  if (sharedKeywords.includes("world_cup")) return true;
   if (sharedKeywords.length >= 1) return true;
   if (sharedNumbers.length >= 1 && sharedKeywords.length >= 1) return true;
 

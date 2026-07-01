@@ -8,15 +8,23 @@ import type { EvPlatform } from "@/lib/finance/evEngine";
 import {
   buildOkPipelineTradeEv,
   DEFAULT_P_MARKET_FALLBACK,
+  DYNAMIC_BASELINE_NET_EV_DRAG,
+  normalizeIncomingTradePrice,
   normalizePipelineTradeEv,
 } from "@/lib/evPipeline/tradeEvRecord";
+import {
+  enrichPipelineEvInputFromMapping,
+  normalizeKalshiTicker,
+  normalizePmTokenId,
+} from "@/lib/evPipeline/crossAssetLookup";
 import {
   cacheTradeEvLookup,
   evRedisKeys,
   getMappingByKalshi,
+  getMappingByPm,
   getOrderBookMid,
   getPTrue,
-  getTradeEvLookup,
+  getTradeEvLookupRedisOnly,
 } from "@/lib/evPipeline/redisCache";
 import type {
   PipelineTradeEv,
@@ -44,8 +52,9 @@ export function createUnmappedPipelineTradeEv(
   return {
     key,
     status: "unmapped",
-    tokenId: input?.tokenId?.toLowerCase() ?? null,
-    kalshiTicker: input?.kalshiTicker?.toUpperCase() ?? null,
+    tokenId: normalizePmTokenId(input?.tokenId) ?? null,
+    kalshiTicker: normalizeKalshiTicker(input?.kalshiTicker) ?? null,
+    mappingPairKey: null,
     netEvPercent: null,
     netEv: 0,
     grossEv: 0,
@@ -53,6 +62,49 @@ export function createUnmappedPipelineTradeEv(
     pTrue: null,
     pMarket: null,
   };
+}
+
+/** On-the-fly 0% edge baseline when a trade token is not yet in localEvCache. */
+export function buildDynamicBaselineTradeEv(
+  searchKey: string,
+  item?: PipelineTradeEvInput
+): PipelineTradeEv {
+  const lower = searchKey.toLowerCase();
+  const realMarketPrice =
+    normalizeIncomingTradePrice(item?.tradePrice) ?? DEFAULT_P_MARKET_FALLBACK;
+
+  let tokenId: string | null = normalizePmTokenId(item?.tokenId);
+  let kalshiTicker: string | null = normalizeKalshiTicker(item?.kalshiTicker);
+
+  if (lower.startsWith("pm:")) {
+    tokenId = normalizePmTokenId(searchKey.slice(3));
+  } else if (lower.startsWith("kalshi:")) {
+    kalshiTicker = normalizeKalshiTicker(searchKey.slice(7));
+  }
+
+  const baseline: PipelineTradeEv = {
+    key: searchKey,
+    status: "ok",
+    tokenId,
+    kalshiTicker,
+    mappingPairKey: null,
+    pMarket: realMarketPrice,
+    pTrue: realMarketPrice,
+    grossEv: 0,
+    netEv: DYNAMIC_BASELINE_NET_EV_DRAG,
+    grossEvPercent: 0,
+    netEvPercent: 0,
+  };
+
+  console.log("⚠️ [Backend Zero EV]", {
+    lookupKey: searchKey,
+    pmMid: realMarketPrice,
+    kalshiMid: undefined,
+    pTrue: realMarketPrice,
+    netEvPercent: 0,
+  });
+
+  return baseline;
 }
 
 async function latestPTrueFromDb(tokenId: string): Promise<number | null> {
@@ -140,14 +192,34 @@ async function resolvePMarket(
   }
 }
 
+async function enrichInputFromMappingCache(
+  input: PipelineTradeEvInput
+): Promise<PipelineTradeEvInput> {
+  const tokenId = normalizePmTokenId(input.tokenId);
+  const kalshiTicker = normalizeKalshiTicker(input.kalshiTicker);
+
+  if (input.source === "polymarket" && tokenId && !kalshiTicker) {
+    const mapping = await getMappingByPm(tokenId);
+    return enrichPipelineEvInputFromMapping(input, mapping);
+  }
+
+  if (input.source === "kalshi" && kalshiTicker && !tokenId) {
+    const mapping = await getMappingByKalshi(kalshiTicker);
+    return enrichPipelineEvInputFromMapping(input, mapping);
+  }
+
+  return input;
+}
+
 export async function resolvePipelineTradeEv(
   input: PipelineTradeEvInput
 ): Promise<PipelineTradeEv | null> {
-  const key = tradeEvKey(input);
+  const enriched = await enrichInputFromMappingCache(input);
+  const key = tradeEvKey(enriched);
   if (!key) return null;
 
   try {
-    const cachedEv = await getTradeEvLookup(key);
+    const cachedEv = await getTradeEvLookupRedisOnly(key);
     if (cachedEv?.status === "ok") {
       const normalized = finalizePipelineTradeEv({ ...cachedEv, key }, key);
       if (normalized.netEvPercent !== null && normalized.netEvPercent !== undefined) {
@@ -158,34 +230,34 @@ export async function resolvePipelineTradeEv(
     // Fall through to live resolution.
   }
 
-  let tokenId = input.tokenId?.toLowerCase() ?? null;
-  const kalshiTicker = input.kalshiTicker?.toUpperCase() ?? null;
+  let tokenId = normalizePmTokenId(enriched.tokenId);
+  const kalshiTicker = normalizeKalshiTicker(enriched.kalshiTicker);
 
-  if (input.source === "kalshi" && kalshiTicker && !tokenId) {
-    tokenId = await resolvePmTokenForKalshi(kalshiTicker);
+  if (enriched.source === "kalshi" && kalshiTicker && !tokenId) {
+    tokenId = normalizePmTokenId(await resolvePmTokenForKalshi(kalshiTicker));
   }
 
   if (!tokenId) {
-    return createUnmappedPipelineTradeEv(key, input);
+    return createUnmappedPipelineTradeEv(key, enriched);
   }
 
   const pTrue = await resolvePTrue(tokenId);
   if (pTrue == null) {
-    return createUnmappedPipelineTradeEv(key, input);
+    return createUnmappedPipelineTradeEv(key, enriched);
   }
 
   const resolvedPMarket =
     (await resolvePMarket(
-      input.source,
+      enriched.source,
       tokenId,
       kalshiTicker,
-      input.tradePrice
+      enriched.tradePrice
     )) ?? DEFAULT_P_MARKET_FALLBACK;
 
   const result = finalizePipelineTradeEv(
     buildOkPipelineTradeEv({
       lookupKey: key,
-      platform: input.source,
+      platform: enriched.source,
       tokenId,
       kalshiTicker: kalshiTicker ?? "",
       pTrue,

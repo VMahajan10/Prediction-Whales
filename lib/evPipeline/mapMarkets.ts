@@ -18,11 +18,14 @@ import {
   type MatchScoreMethod,
 } from "@/lib/evPipeline/matchTokens";
 import {
-  cacheMappingBothWays,
-  cacheOrderBookMid,
+  EvPipelineRedisWriteBatch,
   evRedisKeys,
   type CachedMapping,
 } from "@/lib/evPipeline/redisCache";
+import {
+  matchSportsStructurePairs,
+  mergeMatchedPairs,
+} from "@/lib/evPipeline/sportsStructureMatch";
 import {
   DEFAULT_SIMILARITY_THRESHOLD,
   FALLBACK_SIMILARITY_THRESHOLD,
@@ -83,6 +86,7 @@ async function persistMatches(
 
   const db = getDb();
   let persisted = 0;
+  const redisBatch = new EvPipelineRedisWriteBatch();
 
   const pmByToken = new Map(
     polymarket.map((m) => [m.tokenOrTicker.toLowerCase(), m])
@@ -92,13 +96,16 @@ async function persistMatches(
   );
 
   for (const match of matches) {
-    const matchMethod = match.matchMethod ?? "vector";
+    const matchMethod =
+      match.matchMethod === "sports_structure"
+        ? "deterministic"
+        : (match.matchMethod ?? "vector");
     try {
       await db
         .insert(marketMappings)
         .values({
           polymarketTokenId: match.polymarketTokenId.toLowerCase(),
-          polymarketConditionId: match.polymarketConditionId,
+          polymarketConditionId: match.polymarketConditionId ?? null,
           kalshiTicker: match.kalshiTicker.toUpperCase(),
           confidenceScore: match.similarity,
           matchMethod,
@@ -117,7 +124,7 @@ async function persistMatches(
             confidenceScore: match.similarity,
             embeddingSimilarity: match.rawSimilarity ?? match.similarity,
             matchMethod,
-            polymarketConditionId: match.polymarketConditionId,
+            polymarketConditionId: match.polymarketConditionId ?? null,
             updatedAt: new Date(),
           },
         });
@@ -129,7 +136,7 @@ async function persistMatches(
         orientation: "same",
         matchMethod,
       };
-      await cacheMappingBothWays(cached);
+      redisBatch.queueMappingBothWays(cached);
 
       const pmContract = pmByToken.get(match.polymarketTokenId.toLowerCase());
       const kalshiContract = kalshiByTicker.get(match.kalshiTicker.toUpperCase());
@@ -137,7 +144,7 @@ async function persistMatches(
       const kalshiMid = midFromContract(kalshiContract);
 
       if (pmMid != null) {
-        await cacheOrderBookMid(
+        redisBatch.queueOrderBookMid(
           evRedisKeys.orderBookPm(match.polymarketTokenId.toLowerCase()),
           {
             bid: pmContract?.yesBid ?? pmMid,
@@ -149,7 +156,7 @@ async function persistMatches(
       }
 
       if (kalshiMid != null) {
-        await cacheOrderBookMid(
+        redisBatch.queueOrderBookMid(
           evRedisKeys.orderBookKalshi(match.kalshiTicker.toUpperCase()),
           {
             bid: kalshiContract?.yesBid ?? kalshiMid,
@@ -174,6 +181,15 @@ async function persistMatches(
         message
       );
     }
+  }
+
+  try {
+    await redisBatch.flush();
+  } catch (flushErr) {
+    console.warn(
+      "[ev/map-markets] Redis cache flush failed:",
+      flushErr instanceof Error ? flushErr.message : flushErr
+    );
   }
 
   return persisted;
@@ -256,6 +272,14 @@ export async function runMarketMapping(
 
     console.info(
       `[ev/map-markets] Evaluating full market set: PM ${polymarketMarkets.length}, Kalshi ${kalshiMarkets.length} (${polymarketMarkets.length * kalshiMarkets.length} pair matrix)`
+    );
+
+    const sportsStructureMatches = matchSportsStructurePairs(
+      polymarketMarkets,
+      kalshiMarkets
+    );
+    console.info(
+      `[ev/map-markets] Sports structure pass (pre-embedding): ${sportsStructureMatches.length} pairs`
     );
 
     if (polymarketMarkets.length === 0 || kalshiMarkets.length === 0) {
@@ -420,6 +444,11 @@ export async function runMarketMapping(
         `[ev/map-markets] Broad pass (threshold=${appliedThreshold}): ${matches.length} pairs`
       );
     }
+
+    matches = mergeMatchedPairs(sportsStructureMatches, matches);
+    console.info(
+      `[ev/map-markets] Combined sports + vector matches: ${matches.length} pairs`
+    );
 
     logTopMatchCandidates(
       polymarketMarkets,

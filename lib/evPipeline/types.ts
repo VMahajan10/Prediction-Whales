@@ -20,6 +20,10 @@ export interface NormalizedMarketContract {
   impliedProbability: number | null;
   /** Text sent to the embedding model. */
   embeddingText: string;
+  /** Polymarket market slug (fifwc-rsa-can-…). */
+  slug?: string | null;
+  /** Parent event slug when available. */
+  eventSlug?: string | null;
 }
 
 export interface MappingFailure {
@@ -39,7 +43,7 @@ export interface MatchedPair {
   rawSimilarity?: number;
   polymarketTitle: string;
   kalshiTitle: string;
-  /** vector | token_boost | token_heuristic | TEST_FALLBACK_PAIR */
+  /** vector | token_boost | token_heuristic | sports_structure | TEST_FALLBACK_PAIR */
   matchMethod?: string;
 }
 
@@ -81,6 +85,8 @@ export interface PipelineTradeEv {
   status: PipelineTradeEvStatus;
   tokenId: string | null;
   kalshiTicker: string | null;
+  /** Cross-venue pair key: pair:{pmToken}:{kalshiTicker} */
+  mappingPairKey?: string | null;
   netEvPercent: number | null;
   netEv: number;
   grossEv?: number;

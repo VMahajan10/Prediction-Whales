@@ -4,10 +4,10 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import BookmarkTraderButton from "@/components/BookmarkTraderButton";
 import PlatformFilterToggle from "@/components/PlatformFilterToggle";
-import { formatEvPercent } from "@/lib/crossMarketEvDisplay";
 import { useLiveFeedPlatform } from "@/lib/LiveFeedPlatformContext";
 import { liveFeedPlatformLabel } from "@/lib/liveFeedMerge";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
+import { normalizeIncomingTradePrice } from "@/lib/evPipeline/tradeEvRecord";
 import { pipelineEvKeyForWhale } from "@/lib/pipelineEvClient";
 import { usePipelineEvForWhales } from "@/lib/usePipelineEvIndex";
 import {
@@ -49,10 +49,65 @@ function formatStake(size: number): string {
   return `$${Math.round(size).toLocaleString("en-US")}`;
 }
 
+function parseExecutionPrice(raw: unknown): number | null {
+  if (raw == null) return null;
+
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    const centsMatch = trimmed.match(/^(\d+(?:\.\d+)?)\s*¢$/);
+    if (centsMatch) {
+      const cents = parseFloat(centsMatch[1]);
+      if (Number.isFinite(cents) && cents > 0) return cents / 100;
+    }
+  }
+
+  return normalizeIncomingTradePrice(raw) ?? null;
+}
+
+function whaleExecutionPrice(trade: WhaleTrade): number | null {
+  return parseExecutionPrice(trade.price);
+}
+
+function pipelineMidsMissing(
+  pipelineData: PipelineTradeEv
+): boolean {
+  const ext = pipelineData as PipelineTradeEv & {
+    pmMid?: unknown;
+    kalshiMid?: unknown;
+  };
+  return ext.pmMid === undefined || ext.kalshiMid === undefined;
+}
+
+function shouldUseLocalEvFallback(pipelineData: PipelineTradeEv): boolean {
+  return (
+    pipelineData.netEvPercent === 0 ||
+    pipelineData.netEvPercent == null ||
+    pipelineMidsMissing(pipelineData)
+  );
+}
+
+function formatEvPercentDisplay(netEvPercent: number): {
+  value: string;
+  valueClass: string;
+  loading: false;
+} {
+  const normalized = Object.is(netEvPercent, -0) ? 0 : netEvPercent;
+  const isPositive = normalized > 0;
+  const formatted = `${isPositive ? "+" : ""}${normalized.toFixed(1)}%`;
+  const valueClass = isPositive
+    ? "text-emerald-500 font-semibold"
+    : normalized < 0
+      ? "text-rose-500 font-semibold"
+      : "text-pulse-label";
+
+  return { value: formatted, valueClass, loading: false };
+}
+
 function resolveAvgEvDisplay(
   pipelineData: PipelineTradeEv | null | undefined,
   pipelineLoading: boolean,
-  hasLookupKey: boolean
+  hasLookupKey: boolean,
+  executionPrice: number | null
 ): { value: string; valueClass: string; loading: boolean } {
   if (!hasLookupKey) {
     return { value: "N/A", valueClass: "text-pulse-label", loading: false };
@@ -71,27 +126,34 @@ function resolveAvgEvDisplay(
     return { value: "—", valueClass: "text-pulse-label", loading: false };
   }
 
-  const netEvPercent = pipelineData.netEvPercent;
-  if (
-    pipelineData.status === "ok" &&
-    netEvPercent !== null &&
-    netEvPercent !== undefined
-  ) {
-    const displayPercent = Object.is(netEvPercent, -0) ? 0 : netEvPercent;
-    return {
-      value: formatEvPercent(displayPercent),
-      valueClass:
-        displayPercent > 0
-          ? "text-pulse-yes"
-          : displayPercent < -0.05
-            ? "text-pulse-no"
-            : "text-pulse-label",
-      loading: false,
-    };
-  }
-
   if (pipelineData.status === "unmapped") {
     return { value: "—", valueClass: "text-pulse-label", loading: false };
+  }
+
+  if (pipelineData.status === "ok") {
+    const pTrue = pipelineData.pTrue;
+    const hasValidPTrue =
+      typeof pTrue === "number" && Number.isFinite(pTrue);
+    const hasValidExecutionPrice =
+      executionPrice != null && Number.isFinite(executionPrice);
+
+    if (
+      shouldUseLocalEvFallback(pipelineData) &&
+      hasValidPTrue &&
+      hasValidExecutionPrice
+    ) {
+      const localEvPercent = (pTrue - executionPrice) * 100;
+      return formatEvPercentDisplay(localEvPercent);
+    }
+
+    if (typeof pipelineData.netEvPercent === "number") {
+      return formatEvPercentDisplay(pipelineData.netEvPercent);
+    }
+
+    if (hasValidPTrue && hasValidExecutionPrice) {
+      const localEvPercent = (pTrue - executionPrice) * 100;
+      return formatEvPercentDisplay(localEvPercent);
+    }
   }
 
   return { value: "—", valueClass: "text-pulse-label", loading: false };
@@ -160,10 +222,13 @@ function WhaleFeedCard({
     console.log("Card Market Data:", marketId, pipelineData);
   }, [marketId, pipelineData]);
 
+  const executionPrice = whaleExecutionPrice(trade);
+
   const avgEv = resolveAvgEvDisplay(
     pipelineData,
     pipelineLoading,
-    lookupKey != null
+    lookupKey != null,
+    executionPrice
   );
 
   const cardInner = (

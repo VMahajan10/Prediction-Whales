@@ -3,6 +3,11 @@ import {
   type EvPlatform,
 } from "@/lib/finance/evEngine";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
+import {
+  normalizeKalshiTicker,
+  normalizePmTokenId,
+  pipelineMappingPairKey,
+} from "@/lib/evPipeline/crossAssetLookup";
 
 /** Display percent from probability units (0.13 → 13.0). */
 export function toEvDisplayPercent(probabilityUnits: number): number {
@@ -11,6 +16,26 @@ export function toEvDisplayPercent(probabilityUnits: number): number {
 
 /** Default market mid when order book data is unavailable. */
 export const DEFAULT_P_MARKET_FALLBACK = 0.5;
+
+/** Minor net drag applied to on-the-fly baseline payloads (gas/fees). */
+export const DYNAMIC_BASELINE_NET_EV_DRAG = -0.0005;
+
+/**
+ * Normalize whale/API trade prices to probability units (0–1).
+ * Accepts 0.33 or cent-style values like 33 → 0.33.
+ */
+export function normalizeIncomingTradePrice(raw: unknown): number | undefined {
+  if (raw == null) return undefined;
+  const parsed = typeof raw === "number" ? raw : parseFloat(String(raw));
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+
+  if (parsed > 1) {
+    if (parsed <= 100) return parsed / 100;
+    return undefined;
+  }
+
+  return parsed;
+}
 
 /** Simple gross-edge fallback: (pTrue - pMarket) × 100. */
 export function fallbackNetEvPercent(pTrue: number, pMarket: number): number {
@@ -85,12 +110,16 @@ export function normalizePipelineTradeEv(
   if (!key) return null;
 
   const status = raw.status ?? "unmapped";
-  const tokenId =
-    typeof raw.tokenId === "string" ? raw.tokenId.toLowerCase() : null;
-  const kalshiTicker =
-    typeof raw.kalshiTicker === "string"
-      ? raw.kalshiTicker.toUpperCase()
-      : null;
+  const tokenId = normalizePmTokenId(
+    typeof raw.tokenId === "string" ? raw.tokenId : null
+  );
+  const kalshiTicker = normalizeKalshiTicker(
+    typeof raw.kalshiTicker === "string" ? raw.kalshiTicker : null
+  );
+  const mappingPairKey =
+    tokenId && kalshiTicker
+      ? pipelineMappingPairKey(tokenId, kalshiTicker)
+      : raw.mappingPairKey ?? null;
 
   const pTrue =
     readOptionalNumber(raw.pTrue) ??
@@ -121,6 +150,7 @@ export function normalizePipelineTradeEv(
       status,
       tokenId,
       kalshiTicker,
+      mappingPairKey,
       netEvPercent: null,
       netEv: 0,
       grossEv: 0,
@@ -141,6 +171,7 @@ export function normalizePipelineTradeEv(
         status: "ok",
         tokenId,
         kalshiTicker,
+        mappingPairKey,
         pTrue,
         pMarket: resolvedPMarket,
         grossEv: grossEv || calculatedNetEv,
@@ -157,6 +188,7 @@ export function normalizePipelineTradeEv(
     status: "ok",
     tokenId,
     kalshiTicker,
+    mappingPairKey,
     pTrue,
     pMarket,
     grossEv,
@@ -176,6 +208,12 @@ export function buildOkPipelineTradeEv(params: {
 }): PipelineTradeEv {
   const { lookupKey, platform, tokenId, kalshiTicker, pTrue, pMarket } =
     params;
+  const normalizedTokenId = normalizePmTokenId(tokenId);
+  const normalizedKalshiTicker = normalizeKalshiTicker(kalshiTicker);
+  const mappingPairKey =
+    normalizedTokenId && normalizedKalshiTicker
+      ? pipelineMappingPairKey(normalizedTokenId, normalizedKalshiTicker)
+      : null;
 
   let grossEv = pTrue - pMarket;
   let netEv = grossEv;
@@ -199,11 +237,21 @@ export function buildOkPipelineTradeEv(params: {
     grossEvPercent = sanitizeEvPercent(fallbackNetEvPercent(pTrue, pMarket));
   }
 
+  if (netEvPercent === 0) {
+    console.log("⚠️ [Backend Zero EV]", {
+      pmMid: pMarket,
+      kalshiMid: undefined,
+      pTrue,
+      netEvPercent,
+    });
+  }
+
   return {
     key: lookupKey,
     status: "ok",
-    tokenId: tokenId.toLowerCase(),
-    kalshiTicker: kalshiTicker.toUpperCase(),
+    tokenId: normalizedTokenId,
+    kalshiTicker: normalizedKalshiTicker,
+    mappingPairKey,
     pTrue,
     pMarket,
     grossEv: sanitizeEvPercent(grossEv),

@@ -424,6 +424,7 @@ export function normalizeTrade(raw: DataTrade, index: number): TradeSummary {
     timestamp: raw.timestamp,
     transactionHash: raw.transactionHash,
     proxyWallet: raw.proxyWallet ?? undefined,
+    assetId: raw.asset?.trim() || undefined,
     eventSlug: raw.eventSlug || undefined,
     slug: raw.slug || undefined,
     conditionId: raw.conditionId || undefined,

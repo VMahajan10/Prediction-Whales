@@ -6,6 +6,14 @@ import {
   pipelineEvLookupKeyPm,
 } from "@/lib/evPipeline/types";
 import { normalizePipelineTradeEv } from "@/lib/evPipeline/tradeEvRecord";
+import {
+  enrichPipelineTradeEvCrossIds,
+  indexPipelineTradeEvAliases,
+  normalizeKalshiTicker,
+  normalizePmTokenId,
+  pipelineEvLookupAliases,
+  pipelineMappingPairKey,
+} from "@/lib/evPipeline/crossAssetLookup";
 
 type GlobalWithLocalEvCache = typeof globalThis & {
   localEvCache?: Map<string, PipelineTradeEv>;
@@ -30,13 +38,12 @@ export function seedPipelineLocalEvCache(
   lookupKey: string,
   record: PipelineTradeEv
 ): PipelineTradeEv | null {
-  const normalized = normalizePipelineTradeEv(
-    { ...record, key: record.key ?? lookupKey },
-    lookupKey
-  );
+  const enriched = enrichPipelineTradeEvCrossIds(record, lookupKey);
+  const normalized = normalizePipelineTradeEv(enriched, lookupKey);
   if (!normalized || normalized.status !== "ok") return null;
 
-  initGlobalLocalEvCache().set(lookupKey, normalized);
+  const cache = initGlobalLocalEvCache();
+  indexPipelineTradeEvAliases(cache, normalized, lookupKey);
 
   const evPercent = normalized.netEvPercent ?? 0;
   console.log(
@@ -78,6 +85,19 @@ function readLocalTradeEvLookup(
     );
   }
 
+  const cache = getLocalEvCache();
+  for (const key of Array.from(candidates)) {
+    if (!key) continue;
+    for (const alias of pipelineEvLookupAliases({ key })) {
+      const cached = cache.get(alias);
+      if (!cached) continue;
+      return (
+        normalizePipelineTradeEv({ ...cached, key: cached.key ?? key }, key) ??
+        cached
+      );
+    }
+  }
+
   return null;
 }
 
@@ -97,7 +117,7 @@ export function mergeLocalEvCache(
       lookupKey
     );
     if (normalized) {
-      cache.set(lookupKey, normalized);
+      indexPipelineTradeEvAliases(cache, normalized, lookupKey);
     }
   }
 }
@@ -206,20 +226,274 @@ function getRedis(): Redis | null {
   return redis;
 }
 
+/** Max commands per Upstash pipeline HTTP request. */
+const REDIS_PIPELINE_CHUNK_SIZE = 200;
+
+type RedisSetCommand = {
+  key: string;
+  value: unknown;
+  ex: number;
+};
+
+function logRedisBatchError(label: string, err: unknown): void {
+  const message = err instanceof Error ? err.message : String(err);
+  if (isRedisQuotaOrLimitError(err)) {
+    console.log(
+      `[Pipeline Redis Bypass] ${label} quota/limit hit — local cache remains authoritative`
+    );
+    return;
+  }
+  console.warn(`[ev/redis] ${label} failed:`, message);
+}
+
+/**
+ * Batch GET keys via Redis pipeline — one HTTP round-trip per chunk.
+ */
+export async function execRedisReadPipeline(
+  keys: string[]
+): Promise<Map<string, unknown>> {
+  const client = getRedis();
+  const result = new Map<string, unknown>();
+  if (!client || keys.length === 0) return result;
+
+  const uniqueKeys = Array.from(new Set(keys));
+
+  try {
+    for (let i = 0; i < uniqueKeys.length; i += REDIS_PIPELINE_CHUNK_SIZE) {
+      const chunk = uniqueKeys.slice(i, i + REDIS_PIPELINE_CHUNK_SIZE);
+      const pipeline = client.pipeline();
+      for (const key of chunk) {
+        pipeline.get(key);
+      }
+      const execResult = (await pipeline.exec()) as unknown[] | null;
+      chunk.forEach((key, idx) => {
+        result.set(key, execResult?.[idx] ?? null);
+      });
+    }
+  } catch (err) {
+    logRedisBatchError("execRedisReadPipeline", err);
+  }
+
+  return result;
+}
+
+/** Batch SET keys via Redis pipeline — one HTTP round-trip per chunk. */
+export async function execRedisWritePipeline(
+  commands: RedisSetCommand[]
+): Promise<void> {
+  const client = getRedis();
+  if (!client || commands.length === 0) return;
+
+  try {
+    for (let i = 0; i < commands.length; i += REDIS_PIPELINE_CHUNK_SIZE) {
+      const chunk = commands.slice(i, i + REDIS_PIPELINE_CHUNK_SIZE);
+      const pipeline = client.pipeline();
+      for (const cmd of chunk) {
+        pipeline.set(cmd.key, cmd.value, { ex: cmd.ex });
+      }
+      await pipeline.exec();
+    }
+  } catch (err) {
+    logRedisBatchError("execRedisWritePipeline", err);
+  }
+}
+
+export interface MappingRedisPrefetch {
+  pmOb: CachedOrderBookMid | null;
+  kalshiOb: CachedOrderBookMid | null;
+  pTrue: CachedPTrue | null;
+}
+
+export function mappingRedisPairKey(
+  polymarketTokenId: string,
+  kalshiTicker: string
+): string {
+  return `${polymarketTokenId.toLowerCase()}:${kalshiTicker.toUpperCase()}`;
+}
+
+/** Prefetch order-book mids (and optional p_true) for a mapping batch. */
+export async function prefetchMappingRedisBatch(
+  mappings: Array<{ polymarketTokenId: string; kalshiTicker: string }>,
+  options: { includePTrue?: boolean } = {}
+): Promise<Map<string, MappingRedisPrefetch>> {
+  const byPair = new Map<string, MappingRedisPrefetch>();
+  if (mappings.length === 0) return byPair;
+
+  const keysToFetch: string[] = [];
+  const pairMeta: Array<{
+    pairKey: string;
+    pmKey: string;
+    kalshiKey: string;
+    pTrueKey: string | null;
+  }> = [];
+
+  for (const mapping of mappings) {
+    const tokenId = mapping.polymarketTokenId.toLowerCase();
+    const kalshiTicker = mapping.kalshiTicker.toUpperCase();
+    const pairKey = mappingRedisPairKey(tokenId, kalshiTicker);
+    const pmKey = evRedisKeys.orderBookPm(tokenId);
+    const kalshiKey = evRedisKeys.orderBookKalshi(kalshiTicker);
+    const pTrueKey = options.includePTrue ? evRedisKeys.pTrue(tokenId) : null;
+
+    keysToFetch.push(pmKey, kalshiKey);
+    if (pTrueKey) keysToFetch.push(pTrueKey);
+
+    pairMeta.push({ pairKey, pmKey, kalshiKey, pTrueKey });
+  }
+
+  const raw = await execRedisReadPipeline(keysToFetch);
+
+  for (const meta of pairMeta) {
+    byPair.set(meta.pairKey, {
+      pmOb: (raw.get(meta.pmKey) as CachedOrderBookMid | null) ?? null,
+      kalshiOb: (raw.get(meta.kalshiKey) as CachedOrderBookMid | null) ?? null,
+      pTrue:
+        meta.pTrueKey != null
+          ? ((raw.get(meta.pTrueKey) as CachedPTrue | null) ?? null)
+          : null,
+    });
+  }
+
+  return byPair;
+}
+
+/** Deferred Redis writes — local cache seeded immediately, Redis flushed in one batch. */
+export class EvPipelineRedisWriteBatch {
+  private pTrueWrites: Array<{ tokenId: string; value: CachedPTrue }> = [];
+  private lookupWrites: Array<{ lookupKey: string; value: PipelineTradeEv }> =
+    [];
+  private orderBookWrites: Array<{ key: string; value: CachedOrderBookMid }> =
+    [];
+  private mappingWrites: CachedMapping[] = [];
+
+  queuePTrue(tokenId: string, value: CachedPTrue): void {
+    this.pTrueWrites.push({ tokenId: tokenId.toLowerCase(), value });
+  }
+
+  queueOrderBookMid(key: string, value: CachedOrderBookMid): void {
+    this.orderBookWrites.push({ key, value });
+  }
+
+  queueMappingBothWays(mapping: CachedMapping): void {
+    this.mappingWrites.push({
+      ...mapping,
+      polymarketTokenId: mapping.polymarketTokenId.toLowerCase(),
+      kalshiTicker: mapping.kalshiTicker.toUpperCase(),
+    });
+  }
+
+  queueTradeEvLookups(
+    pmKey: string,
+    kalshiKey: string,
+    pmRecord: PipelineTradeEv,
+    kalshiRecord: PipelineTradeEv
+  ): void {
+    seedPipelineLocalEvCache(pmKey, pmRecord);
+    seedPipelineLocalEvCache(kalshiKey, kalshiRecord);
+
+    const pmNormalized =
+      normalizePipelineTradeEv(
+        enrichPipelineTradeEvCrossIds(
+          { ...pmRecord, key: pmRecord.key ?? pmKey },
+          pmKey
+        ),
+        pmKey
+      ) ?? pmRecord;
+    const kalshiNormalized =
+      normalizePipelineTradeEv(
+        enrichPipelineTradeEvCrossIds(
+          { ...kalshiRecord, key: kalshiRecord.key ?? kalshiKey },
+          kalshiKey
+        ),
+        kalshiKey
+      ) ?? kalshiRecord;
+
+    this.lookupWrites.push({ lookupKey: pmKey, value: pmNormalized });
+    this.lookupWrites.push({ lookupKey: kalshiKey, value: kalshiNormalized });
+  }
+
+  get pendingWriteCount(): number {
+    return (
+      this.pTrueWrites.length +
+      this.lookupWrites.length +
+      this.orderBookWrites.length +
+      this.mappingWrites.length * 2
+    );
+  }
+
+  async flush(): Promise<void> {
+    if (this.pendingWriteCount === 0) return;
+
+    const commands: RedisSetCommand[] = [];
+
+    for (const row of this.orderBookWrites) {
+      commands.push({
+        key: row.key,
+        value: row.value,
+        ex: EV_REDIS_TTL.orderBookSec,
+      });
+    }
+
+    for (const mapping of this.mappingWrites) {
+      commands.push({
+        key: evRedisKeys.mappingByPm(mapping.polymarketTokenId),
+        value: mapping,
+        ex: EV_REDIS_TTL.mappingSec,
+      });
+      commands.push({
+        key: evRedisKeys.mappingByKalshi(mapping.kalshiTicker),
+        value: mapping,
+        ex: EV_REDIS_TTL.mappingSec,
+      });
+    }
+
+    for (const row of this.pTrueWrites) {
+      commands.push({
+        key: evRedisKeys.pTrue(row.tokenId),
+        value: row.value,
+        ex: EV_REDIS_TTL.pTrueSec,
+      });
+    }
+
+    for (const row of this.lookupWrites) {
+      commands.push({
+        key: evRedisKeys.tradeEvLookup(row.lookupKey),
+        value: row.value,
+        ex: EV_REDIS_TTL.pTrueSec,
+      });
+    }
+
+    await execRedisWritePipeline(commands);
+  }
+}
+
+/** Flush many order-book mids in one pipeline round-trip. */
+export async function cacheOrderBookMidBatch(
+  entries: Array<{ key: string; value: CachedOrderBookMid }>
+): Promise<void> {
+  const batch = new EvPipelineRedisWriteBatch();
+  for (const entry of entries) {
+    batch.queueOrderBookMid(entry.key, entry.value);
+  }
+  await batch.flush();
+}
+
+/** Flush bilateral mapping cache entries in one pipeline round-trip. */
+export async function cacheMappingBothWaysBatch(
+  mappings: CachedMapping[]
+): Promise<void> {
+  const batch = new EvPipelineRedisWriteBatch();
+  for (const mapping of mappings) {
+    batch.queueMappingBothWays(mapping);
+  }
+  await batch.flush();
+}
+
 export async function cacheOrderBookMid(
   key: string,
   value: CachedOrderBookMid
 ): Promise<void> {
-  const client = getRedis();
-  if (!client) return;
-  try {
-    await client.set(key, value, { ex: EV_REDIS_TTL.orderBookSec });
-  } catch (err) {
-    console.warn(
-      "[ev/redis] cacheOrderBookMid failed:",
-      err instanceof Error ? err.message : err
-    );
-  }
+  await cacheOrderBookMidBatch([{ key, value }]);
 }
 
 export async function getOrderBookMid(
@@ -250,6 +524,52 @@ export async function getMappingByKalshi(
   } catch {
     return null;
   }
+}
+
+/** Batch-read PM-side mapping rows for trade EV enrichment. */
+export async function prefetchMappingsByPmTokenIds(
+  tokenIds: string[]
+): Promise<Map<string, CachedMapping>> {
+  const unique = Array.from(
+    new Set(
+      tokenIds
+        .map((id) => normalizePmTokenId(id))
+        .filter((id): id is string => !!id)
+    )
+  );
+  const result = new Map<string, CachedMapping>();
+  if (unique.length === 0) return result;
+
+  const keys = unique.map((id) => evRedisKeys.mappingByPm(id));
+  const raw = await execRedisReadPipeline(keys);
+  unique.forEach((id, idx) => {
+    const mapping = raw.get(keys[idx]) as CachedMapping | null;
+    if (mapping) result.set(id, mapping);
+  });
+  return result;
+}
+
+/** Batch-read Kalshi-side mapping rows for trade EV enrichment. */
+export async function prefetchMappingsByKalshiTickers(
+  tickers: string[]
+): Promise<Map<string, CachedMapping>> {
+  const unique = Array.from(
+    new Set(
+      tickers
+        .map((t) => normalizeKalshiTicker(t))
+        .filter((t): t is string => !!t)
+    )
+  );
+  const result = new Map<string, CachedMapping>();
+  if (unique.length === 0) return result;
+
+  const keys = unique.map((ticker) => evRedisKeys.mappingByKalshi(ticker));
+  const raw = await execRedisReadPipeline(keys);
+  unique.forEach((ticker, idx) => {
+    const mapping = raw.get(keys[idx]) as CachedMapping | null;
+    if (mapping) result.set(ticker, mapping);
+  });
+  return result;
 }
 
 export async function getMappingByPm(
@@ -319,22 +639,68 @@ export async function cacheTradeEvLookup(
   lookupKey: string,
   value: PipelineTradeEv
 ): Promise<void> {
+  seedPipelineLocalEvCache(lookupKey, value);
+  await safeCacheTradeEvLookupRedis(lookupKey, value);
+}
+
+/** Redis-only write — never throws; local cache must be seeded separately. */
+export async function safeCacheTradeEvLookupRedis(
+  lookupKey: string,
+  value: PipelineTradeEv
+): Promise<void> {
+  const client = getRedis();
+  if (!client) return;
+
   const normalized =
     normalizePipelineTradeEv({ ...value, key: value.key ?? lookupKey }, lookupKey) ??
     value;
-  initGlobalLocalEvCache().set(lookupKey, normalized);
 
-  const client = getRedis();
-  if (!client) return;
   try {
     await client.set(evRedisKeys.tradeEvLookup(lookupKey), normalized, {
       ex: EV_REDIS_TTL.pTrueSec,
     });
   } catch (err) {
-    console.warn(
-      "[ev/redis] cacheTradeEvLookup failed:",
-      err instanceof Error ? err.message : err
+    if (isRedisQuotaOrLimitError(err)) {
+      console.log(
+        "[Pipeline Redis Bypass] Database full, proceeding with local memory fallback only"
+      );
+    } else {
+      console.warn(
+        "[ev/redis] cacheTradeEvLookup failed:",
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+}
+
+export async function getTradeEvLookupRedisOnly(
+  lookupKey: string
+): Promise<PipelineTradeEv | null> {
+  const client = getRedis();
+  if (!client) return null;
+
+  try {
+    const raw = await client.get<PipelineTradeEv>(
+      evRedisKeys.tradeEvLookup(lookupKey)
     );
+    if (!raw) return null;
+
+    return (
+      normalizePipelineTradeEv(
+        { ...raw, key: raw.key ?? lookupKey },
+        lookupKey
+      ) ?? null
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (isRedisQuotaOrLimitError(err)) {
+      console.warn(
+        "[ev/redis] getTradeEvLookupRedisOnly quota/limit hit — skipping Redis read"
+      );
+    } else {
+      console.warn("[ev/redis] getTradeEvLookupRedisOnly failed:", message);
+    }
+    return null;
   }
 }
 
@@ -378,24 +744,7 @@ export async function getTradeEvLookup(
 export async function cacheMappingBothWays(
   mapping: CachedMapping
 ): Promise<void> {
-  const client = getRedis();
-  if (!client) return;
-  try {
-    const payload = mapping;
-    await Promise.all([
-      client.set(evRedisKeys.mappingByPm(mapping.polymarketTokenId), payload, {
-        ex: EV_REDIS_TTL.mappingSec,
-      }),
-      client.set(evRedisKeys.mappingByKalshi(mapping.kalshiTicker), payload, {
-        ex: EV_REDIS_TTL.mappingSec,
-      }),
-    ]);
-  } catch (err) {
-    console.warn(
-      "[ev/redis] cacheMappingBothWays failed:",
-      err instanceof Error ? err.message : err
-    );
-  }
+  await cacheMappingBothWaysBatch([mapping]);
 }
 
 export async function cacheTraderEv(

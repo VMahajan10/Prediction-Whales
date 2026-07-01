@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "pipeline:trigger": "wait-on http://localhost:3000 && sh -c 'set -a; [ -f .env.local ] && . ./.env.local; set +a; curl -fsS -H \"Authorization: Bearer $CRON_SECRET\" http://localhost:3000/api/cron/ev-pipeline'",
+    "dev:all": "concurrently \"npm run dev\" \"npm run pipeline:trigger\"",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -35,11 +37,13 @@
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "autoprefixer": "^10.4.20",
+    "concurrently": "^9.2.3",
     "drizzle-kit": "^0.31.0",
     "eslint": "^8",
     "eslint-config-next": "14.2.35",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
-    "typescript": "^5"
+    "typescript": "^5",
+    "wait-on": "^9.0.10"
   }
 }

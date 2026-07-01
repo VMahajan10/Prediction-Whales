@@ -15,7 +15,7 @@ import {
 } from "@/lib/finance/evEngine";
 import type { MatchedPair } from "@/lib/evPipeline/types";
 import {
-  cacheOrderBookMid,
+  EvPipelineRedisWriteBatch,
   cachePTrue,
   cacheTraderEv,
   evRedisKeys,
@@ -137,11 +137,12 @@ export async function processTestFallbackPTrue(
   );
 
   let processed = 0;
+  const redisBatch = new EvPipelineRedisWriteBatch();
 
   for (const target of targets) {
     const tokenId = target.polymarketTokenId;
 
-    await cacheOrderBookMid(evRedisKeys.orderBookPm(tokenId), {
+    redisBatch.queueOrderBookMid(evRedisKeys.orderBookPm(tokenId), {
       bid: 0.51,
       ask: 0.53,
       mid: pMarket,
@@ -187,6 +188,15 @@ export async function processTestFallbackPTrue(
     );
 
     processed += 1;
+  }
+
+  try {
+    await redisBatch.flush();
+  } catch (flushErr) {
+    console.warn(
+      "[ev-pipeline] test fallback Redis flush failed:",
+      flushErr instanceof Error ? flushErr.message : flushErr
+    );
   }
 
   return processed;

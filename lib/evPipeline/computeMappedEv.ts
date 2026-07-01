@@ -14,13 +14,18 @@ import {
   buildOkPipelineTradeEv,
 } from "@/lib/evPipeline/tradeEvRecord";
 import {
-  cachePTrue,
-  cacheTradeEvLookup,
-  evRedisKeys,
-  getOrderBookMid,
-  getPTrue,
-  seedPipelineLocalEvCache,
+  EvPipelineRedisWriteBatch,
+  mappingRedisPairKey,
+  prefetchMappingRedisBatch,
+  type MappingRedisPrefetch,
 } from "@/lib/evPipeline/redisCache";
+import {
+  createDerivativeAnchorStore,
+  deriveDerivativePTrue,
+  parseDerivativeFromMapping,
+  sortMappingsForDerivativePricing,
+  updateDerivativeAnchorFromPrimary,
+} from "@/lib/evPipeline/derivativePTrue";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -38,6 +43,34 @@ function resolvePlatformMarket(
   if (platformMid != null && Number.isFinite(platformMid)) return platformMid;
   if (crossMid != null && Number.isFinite(crossMid)) return crossMid;
   return marketPrior;
+}
+
+function marketContextFromPrefetch(prefetch: MappingRedisPrefetch): {
+  pmMid: number | null;
+  kalshiMid: number | null;
+  marketPrior: number;
+} {
+  const pmMid = prefetch.pmOb?.mid ?? null;
+  const kalshiMid = prefetch.kalshiOb?.mid ?? null;
+  const marketPrior =
+    pmMid != null && kalshiMid != null
+      ? (pmMid + kalshiMid) / 2
+      : (pmMid ?? kalshiMid ?? 0.5);
+  return { pmMid, kalshiMid, marketPrior };
+}
+
+function emptyMappingPrefetch(): MappingRedisPrefetch {
+  return { pmOb: null, kalshiOb: null, pTrue: null };
+}
+
+async function persistTradeEvLookups(
+  pmKey: string,
+  kalshiKey: string,
+  pmRecord: ReturnType<typeof buildOkPipelineTradeEv>,
+  kalshiRecord: ReturnType<typeof buildOkPipelineTradeEv>,
+  redisBatch: EvPipelineRedisWriteBatch
+): Promise<void> {
+  redisBatch.queueTradeEvLookups(pmKey, kalshiKey, pmRecord, kalshiRecord);
 }
 
 async function loadMappingsForPTrue(
@@ -113,7 +146,8 @@ async function cacheLookupEvForMapping(
   pTrue: number,
   pmMid: number | null,
   kalshiMid: number | null,
-  marketPrior: number
+  marketPrior: number,
+  redisBatch: EvPipelineRedisWriteBatch
 ): Promise<number> {
   if (!Number.isFinite(pTrue)) return 0;
 
@@ -145,13 +179,104 @@ async function cacheLookupEvForMapping(
     pMarket: kalshiMarket,
   });
 
-  seedPipelineLocalEvCache(pmKey, pmRecord);
-  seedPipelineLocalEvCache(kalshiKey, kalshiRecord);
-
-  await cacheTradeEvLookup(pmKey, pmRecord);
-  await cacheTradeEvLookup(kalshiKey, kalshiRecord);
+  await persistTradeEvLookups(pmKey, kalshiKey, pmRecord, kalshiRecord, redisBatch);
 
   return 2;
+}
+
+async function persistMappingPTrue(
+  db: Db,
+  mapping: {
+    id: number;
+    polymarketTokenId: string;
+    kalshiTicker: string;
+    polymarketTitle: string;
+    kalshiTitle: string;
+  },
+  pTrue: number,
+  opts: {
+    pmMid: number | null;
+    kalshiMid: number | null;
+    marketPrior: number;
+    sourceType: string;
+    modelVersion: string;
+    variance?: number;
+    sourceScore?: number;
+    logSuffix: string;
+  },
+  redisBatch: EvPipelineRedisWriteBatch
+): Promise<number> {
+  const tokenId = mapping.polymarketTokenId.toLowerCase();
+  const kalshiTicker = mapping.kalshiTicker.toUpperCase();
+  const variance = opts.variance ?? 0.05;
+  const sourceScore = opts.sourceScore ?? 0.7;
+
+  await db.insert(trueProbabilities).values({
+    mappingId: mapping.id > 0 ? mapping.id : null,
+    polymarketTokenId: tokenId,
+    kalshiTicker,
+    pTrue: fmtProb(pTrue),
+    sourceScore: fmtProb(sourceScore),
+    variance: fmtProb(variance),
+    sourceType: opts.sourceType,
+    modelVersion: opts.modelVersion,
+    contributors: [
+      {
+        source: opts.sourceType,
+        weight: 1,
+        p: pTrue,
+        variance,
+      },
+    ],
+  });
+
+  redisBatch.queuePTrue(tokenId, {
+    pTrue,
+    variance,
+    sourceScore,
+    sourceType: opts.sourceType,
+    kalshiTicker,
+    calculatedAt: new Date().toISOString(),
+  });
+
+  const cachedLookups = await cacheLookupEvForMapping(
+    tokenId,
+    kalshiTicker,
+    pTrue,
+    opts.pmMid,
+    opts.kalshiMid,
+    opts.marketPrior,
+    redisBatch
+  );
+
+  const pmMarket = resolvePlatformMarket(
+    opts.pmMid,
+    opts.kalshiMid,
+    opts.marketPrior
+  );
+  const preview = buildOkPipelineTradeEv({
+    lookupKey: pipelineEvLookupKeyPm(tokenId),
+    platform: "polymarket",
+    tokenId,
+    kalshiTicker,
+    pTrue,
+    pMarket: pmMarket,
+  });
+
+  if (preview.netEvPercent === 0) {
+    console.log("⚠️ [Backend Zero EV]", {
+      pmMid: opts.pmMid,
+      kalshiMid: opts.kalshiMid,
+      pTrue,
+      netEvPercent: preview.netEvPercent,
+    });
+  }
+
+  console.info(
+    `[ev-pipeline] computePTrue ${tokenId} ↔ ${kalshiTicker}: p_true=${pTrue.toFixed(4)} pm_mid=${opts.pmMid?.toFixed(4) ?? "—"} kalshi_mid=${opts.kalshiMid?.toFixed(4) ?? "—"} cached_lookups=${cachedLookups} netEvPercent=${preview.netEvPercent} ${opts.logSuffix}`
+  );
+
+  return 1;
 }
 
 /** Baseline edge (0%) when AI ensemble is unavailable — pTrue equals platform mid. */
@@ -160,7 +285,8 @@ async function seedBaselineEvForMapping(
   kalshiTicker: string,
   pmMid: number | null,
   kalshiMid: number | null,
-  marketPrior: number
+  marketPrior: number,
+  redisBatch: EvPipelineRedisWriteBatch
 ): Promise<number> {
   const crossMid =
     pmMid != null && kalshiMid != null
@@ -190,10 +316,14 @@ async function seedBaselineEvForMapping(
     pMarket: kalshiMarket,
   });
 
-  seedPipelineLocalEvCache(pmKey, pmRecord);
-  seedPipelineLocalEvCache(kalshiKey, kalshiRecord);
-  await cacheTradeEvLookup(pmKey, pmRecord);
-  await cacheTradeEvLookup(kalshiKey, kalshiRecord);
+  await persistTradeEvLookups(pmKey, kalshiKey, pmRecord, kalshiRecord, redisBatch);
+
+  console.log("⚠️ [Backend Zero EV]", {
+    pmMid,
+    kalshiMid,
+    pTrue: pmMarket,
+    netEvPercent: 0,
+  });
 
   console.info(
     `[ev-pipeline] computePTrue baseline fallback ${tokenId} ↔ ${kalshiTicker}: pm=${pmMarket.toFixed(4)} kalshi=${kalshiMarket.toFixed(4)} (0% edge)`
@@ -212,102 +342,114 @@ export async function processMappedPTrue(
   const mappings = await loadMappingsForPTrue(db, recentMatches);
   if (mappings.length === 0) return 0;
 
+  const anchorStore = createDerivativeAnchorStore();
+  const ordered = sortMappingsForDerivativePricing(mappings);
+  const redisPrefetch = await prefetchMappingRedisBatch(ordered, {
+    includePTrue: false,
+  });
+  const redisBatch = new EvPipelineRedisWriteBatch();
   let processed = 0;
 
-  for (const mapping of mappings) {
+  for (const mapping of ordered) {
+    const tokenId = mapping.polymarketTokenId.toLowerCase();
+    const kalshiTicker = mapping.kalshiTicker.toUpperCase();
+    const prefetch =
+      redisPrefetch.get(mappingRedisPairKey(tokenId, kalshiTicker)) ??
+      emptyMappingPrefetch();
+    const { pmMid, kalshiMid, marketPrior } = marketContextFromPrefetch(prefetch);
+
+    const spec = parseDerivativeFromMapping({
+      polymarketTitle: mapping.polymarketTitle,
+      kalshiTitle: mapping.kalshiTitle,
+      kalshiTicker,
+    });
+
+    if (spec && !spec.isPrimary) {
+      const derived = deriveDerivativePTrue(spec, anchorStore, marketPrior);
+      if (derived) {
+        try {
+          await persistMappingPTrue(db, mapping, derived.pTrue, {
+            pmMid,
+            kalshiMid,
+            marketPrior,
+            sourceType: derived.method,
+            modelVersion: "derivative_pricing_v2",
+            logSuffix: `(${derived.marketClass} ${derived.detail})`,
+          }, redisBatch);
+          processed += 1;
+          continue;
+        } catch (deriveErr) {
+          console.error(
+            "[ev-pipeline] derivative persist failed:",
+            deriveErr instanceof Error ? deriveErr.message : deriveErr
+          );
+        }
+      }
+    }
+
     try {
-      const tokenId = mapping.polymarketTokenId.toLowerCase();
-      const kalshiTicker = mapping.kalshiTicker.toUpperCase();
-
-      const pmOb = await getOrderBookMid(evRedisKeys.orderBookPm(tokenId));
-      const kalshiOb = await getOrderBookMid(
-        evRedisKeys.orderBookKalshi(kalshiTicker)
-      );
-      const pmMid = pmOb?.mid ?? null;
-      const kalshiMid = kalshiOb?.mid ?? null;
-      const marketPrior =
-        pmMid != null && kalshiMid != null
-          ? (pmMid + kalshiMid) / 2
-          : (pmMid ?? kalshiMid ?? 0.5);
-
       const ensemble = await calculatePTrue({
         marketTitle: mapping.polymarketTitle || mapping.kalshiTitle,
         marketContext: "",
         marketPrior,
       });
 
-      await db.insert(trueProbabilities).values({
-        mappingId: mapping.id > 0 ? mapping.id : null,
-        polymarketTokenId: tokenId,
-        kalshiTicker,
-        pTrue: fmtProb(ensemble.pTrue),
-        sourceScore: fmtProb(ensemble.sourceScore),
-        variance: fmtProb(ensemble.variance),
-        sourceType: "ensemble",
-        modelVersion: "pipeline_v1",
-        contributors: ensemble.contributors.map((c) => ({
-          source: c.source,
-          weight: c.weight,
-          p: c.impliedProbability,
-          variance: ensemble.variance,
-        })),
-      });
+      if (spec) {
+        updateDerivativeAnchorFromPrimary(
+          anchorStore,
+          spec,
+          ensemble.pTrue,
+          marketPrior
+        );
+      }
 
-      await cachePTrue(tokenId, {
-        pTrue: ensemble.pTrue,
-        variance: ensemble.variance,
-        sourceScore: ensemble.sourceScore,
-        sourceType: "ensemble",
-        kalshiTicker,
-        calculatedAt: new Date().toISOString(),
-      });
-
-      const cachedLookups = await cacheLookupEvForMapping(
-        tokenId,
-        kalshiTicker,
-        ensemble.pTrue,
+      await persistMappingPTrue(db, mapping, ensemble.pTrue, {
         pmMid,
         kalshiMid,
-        marketPrior
-      );
-
-      const pmMarket = resolvePlatformMarket(pmMid, kalshiMid, marketPrior);
-      const preview = buildOkPipelineTradeEv({
-        lookupKey: pipelineEvLookupKeyPm(tokenId),
-        platform: "polymarket",
-        tokenId,
-        kalshiTicker,
-        pTrue: ensemble.pTrue,
-        pMarket: pmMarket,
-      });
-
-      console.info(
-        `[ev-pipeline] computePTrue ${tokenId} ↔ ${kalshiTicker}: p_true=${ensemble.pTrue.toFixed(4)} pm_mid=${pmMid?.toFixed(4) ?? "—"} kalshi_mid=${kalshiMid?.toFixed(4) ?? "—"} cached_lookups=${cachedLookups} netEvPercent=${preview.netEvPercent}`
-      );
+        marketPrior,
+        sourceType: "ensemble",
+        modelVersion: "pipeline_v1",
+        variance: ensemble.variance,
+        sourceScore: ensemble.sourceScore,
+        logSuffix: "(ensemble)",
+      }, redisBatch);
 
       processed += 1;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error("Batch EV Fetch Error:", message);
+
+      if (spec) {
+        const derived = deriveDerivativePTrue(spec, anchorStore, marketPrior);
+        if (derived) {
+          try {
+            await persistMappingPTrue(db, mapping, derived.pTrue, {
+              pmMid,
+              kalshiMid,
+              marketPrior,
+              sourceType: derived.method,
+              modelVersion: "derivative_pricing_v2",
+              logSuffix: `(fallback ${derived.marketClass} ${derived.detail})`,
+            }, redisBatch);
+            processed += 1;
+            continue;
+          } catch (deriveErr) {
+            console.error(
+              "[ev-pipeline] derivative fallback failed:",
+              deriveErr instanceof Error ? deriveErr.message : deriveErr
+            );
+          }
+        }
+      }
+
       try {
-        const tokenId = mapping.polymarketTokenId.toLowerCase();
-        const kalshiTicker = mapping.kalshiTicker.toUpperCase();
-        const pmOb = await getOrderBookMid(evRedisKeys.orderBookPm(tokenId));
-        const kalshiOb = await getOrderBookMid(
-          evRedisKeys.orderBookKalshi(kalshiTicker)
-        );
-        const pmMid = pmOb?.mid ?? null;
-        const kalshiMid = kalshiOb?.mid ?? null;
-        const marketPrior =
-          pmMid != null && kalshiMid != null
-            ? (pmMid + kalshiMid) / 2
-            : (pmMid ?? kalshiMid ?? 0.5);
         await seedBaselineEvForMapping(
           tokenId,
           kalshiTicker,
           pmMid,
           kalshiMid,
-          marketPrior
+          marketPrior,
+          redisBatch
         );
         processed += 1;
       } catch (fallbackErr) {
@@ -317,6 +459,15 @@ export async function processMappedPTrue(
         );
       }
     }
+  }
+
+  try {
+    await redisBatch.flush();
+  } catch (flushErr) {
+    console.warn(
+      "[ev-pipeline] processMappedPTrue Redis flush failed:",
+      flushErr instanceof Error ? flushErr.message : flushErr
+    );
   }
 
   return processed;
@@ -332,34 +483,80 @@ export async function ensureMappedTradeEvLookups(
   const mappings = await loadMappingsForPTrue(db, recentMatches);
   if (mappings.length === 0) return 0;
 
+  const ordered = sortMappingsForDerivativePricing(mappings);
+  const redisPrefetch = await prefetchMappingRedisBatch(ordered, {
+    includePTrue: true,
+  });
+  const anchorStore = createDerivativeAnchorStore();
+  const redisBatch = new EvPipelineRedisWriteBatch();
   let cached = 0;
 
-  for (const mapping of mappings) {
+  for (const mapping of ordered) {
     try {
       const tokenId = mapping.polymarketTokenId.toLowerCase();
       const kalshiTicker = mapping.kalshiTicker.toUpperCase();
+      const prefetch =
+        redisPrefetch.get(mappingRedisPairKey(tokenId, kalshiTicker)) ??
+        emptyMappingPrefetch();
+      const pTrue = prefetch.pTrue?.pTrue ?? null;
 
-      const pTrueCached = await getPTrue(tokenId);
-      let pTrue = pTrueCached?.pTrue ?? null;
+      if (pTrue != null && Number.isFinite(pTrue)) {
+        const spec = parseDerivativeFromMapping({
+          polymarketTitle: mapping.polymarketTitle,
+          kalshiTitle: mapping.kalshiTitle,
+          kalshiTicker,
+        });
+        if (spec) {
+          const { marketPrior } = marketContextFromPrefetch(prefetch);
+          updateDerivativeAnchorFromPrimary(anchorStore, spec, pTrue, marketPrior);
+        }
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[ev-pipeline] ensureMappedTradeEvLookups anchor seed:", message);
+    }
+  }
 
-      const pmOb = await getOrderBookMid(evRedisKeys.orderBookPm(tokenId));
-      const kalshiOb = await getOrderBookMid(
-        evRedisKeys.orderBookKalshi(kalshiTicker)
-      );
-      const pmMid = pmOb?.mid ?? null;
-      const kalshiMid = kalshiOb?.mid ?? null;
-      const marketPrior =
-        pmMid != null && kalshiMid != null
-          ? (pmMid + kalshiMid) / 2
-          : (pmMid ?? kalshiMid ?? 0.5);
+  for (const mapping of ordered) {
+    try {
+      const tokenId = mapping.polymarketTokenId.toLowerCase();
+      const kalshiTicker = mapping.kalshiTicker.toUpperCase();
+      const prefetch =
+        redisPrefetch.get(mappingRedisPairKey(tokenId, kalshiTicker)) ??
+        emptyMappingPrefetch();
+      const pTrue = prefetch.pTrue?.pTrue ?? null;
+      const { pmMid, kalshiMid, marketPrior } = marketContextFromPrefetch(prefetch);
 
       if (pTrue == null || !Number.isFinite(pTrue)) {
+        const spec = parseDerivativeFromMapping({
+          polymarketTitle: mapping.polymarketTitle,
+          kalshiTitle: mapping.kalshiTitle,
+          kalshiTicker,
+        });
+        if (spec) {
+          const derived = deriveDerivativePTrue(spec, anchorStore, marketPrior);
+          if (derived) {
+            const written = await cacheLookupEvForMapping(
+              tokenId,
+              kalshiTicker,
+              derived.pTrue,
+              pmMid,
+              kalshiMid,
+              marketPrior,
+              redisBatch
+            );
+            if (written > 0) cached += 1;
+            continue;
+          }
+        }
+
         const written = await seedBaselineEvForMapping(
           tokenId,
           kalshiTicker,
           pmMid,
           kalshiMid,
-          marketPrior
+          marketPrior,
+          redisBatch
         );
         if (written > 0) cached += 1;
         continue;
@@ -371,7 +568,8 @@ export async function ensureMappedTradeEvLookups(
         pTrue,
         pmMid,
         kalshiMid,
-        marketPrior
+        marketPrior,
+        redisBatch
       );
 
       if (written > 0) cached += 1;
@@ -379,6 +577,15 @@ export async function ensureMappedTradeEvLookups(
       const message = err instanceof Error ? err.message : String(err);
       console.error("[ev-pipeline] ensureMappedTradeEvLookups:", message);
     }
+  }
+
+  try {
+    await redisBatch.flush();
+  } catch (flushErr) {
+    console.warn(
+      "[ev-pipeline] ensureMappedTradeEvLookups Redis flush failed:",
+      flushErr instanceof Error ? flushErr.message : flushErr
+    );
   }
 
   return cached;

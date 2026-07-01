@@ -8,6 +8,7 @@ import {
   pipelineEvLookupKeyPm,
 } from "@/lib/evPipeline/types";
 import { normalizePipelineTradeEv } from "@/lib/evPipeline/tradeEvRecord";
+import { indexPipelineTradeEvAliases } from "@/lib/evPipeline/crossAssetLookup";
 import type { WhaleTrade } from "@/lib/whaleTrades";
 
 const REFRESH_MS = 45_000;
@@ -130,12 +131,12 @@ export async function fetchPipelineEvBatch(
   const next = new Map<string, PipelineTradeEv>();
   for (const entry of data.entries ?? []) {
     const normalized = normalizePipelineTradeEv(entry, entry.key);
-    if (normalized) next.set(normalized.key, normalized);
+    if (normalized) indexPipelineTradeEvAliases(next, normalized, entry.key);
   }
   for (const [key, entry] of Object.entries(data.byKey ?? {})) {
     if (next.has(key)) continue;
     const normalized = normalizePipelineTradeEv(entry, key);
-    if (normalized) next.set(key, normalized);
+    if (normalized) indexPipelineTradeEvAliases(next, normalized, key);
   }
   return next;
 }
