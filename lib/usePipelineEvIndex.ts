@@ -7,6 +7,7 @@ import type { WhaleTrade } from "@/lib/whaleTrades";
 import {
   buildWhalePipelineEvRequests,
   fetchPipelineEvBatch,
+  normalizePipelineEvEntry,
   subscribePipelineEvForTrades,
 } from "@/lib/pipelineEvClient";
 
@@ -35,6 +36,7 @@ export function usePipelineTradeEv(input: {
 }) {
   const [ev, setEv] = useState<PipelineTradeEv | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (input.enabled === false) return;
@@ -43,6 +45,7 @@ export function usePipelineTradeEv(input: {
 
     let cancelled = false;
     setLoading(true);
+    setError(null);
 
     void (async () => {
       try {
@@ -54,11 +57,34 @@ export function usePipelineTradeEv(input: {
         }
 
         const res = await fetch(`/api/ev/trades?${params.toString()}`);
-        if (!res.ok || cancelled) return;
-        const data: { entry?: PipelineTradeEv | null } = await res.json();
-        if (!cancelled) setEv(data.entry ?? null);
-      } catch {
-        if (!cancelled) setEv(null);
+        if (cancelled) return;
+
+        const data: { entry?: PipelineTradeEv | null; error?: string } =
+          await res.json();
+
+        if (!res.ok) {
+          setEv(null);
+          setError(data.error ?? `Pipeline EV HTTP ${res.status}`);
+          return;
+        }
+
+        const normalized = normalizePipelineEvEntry(data.entry ?? null);
+        console.log("[usePipelineTradeEv] hydrated", {
+          source: input.source,
+          tokenId: input.tokenId,
+          kalshiTicker: input.kalshiTicker,
+          mappingPairKey: normalized?.mappingPairKey,
+          status: normalized?.status,
+        });
+        setEv(normalized);
+        setError(null);
+      } catch (err) {
+        if (!cancelled) {
+          setEv(null);
+          setError(
+            err instanceof Error ? err.message : "Pipeline EV fetch failed"
+          );
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -75,7 +101,7 @@ export function usePipelineTradeEv(input: {
     input.enabled,
   ]);
 
-  return { ev, loading };
+  return { ev, loading, error };
 }
 
 const WHALE_EV_REFRESH_MS = 45_000;

@@ -8,10 +8,37 @@ import {
   pipelineEvLookupKeyPm,
 } from "@/lib/evPipeline/types";
 import { normalizePipelineTradeEv } from "@/lib/evPipeline/tradeEvRecord";
-import { indexPipelineTradeEvAliases } from "@/lib/evPipeline/crossAssetLookup";
+import {
+  enrichPipelineTradeEvCrossIds,
+  indexPipelineTradeEvAliases,
+} from "@/lib/evPipeline/crossAssetLookup";
+import type { MarketSummary } from "@/lib/polymarket";
 import type { WhaleTrade } from "@/lib/whaleTrades";
 
 const REFRESH_MS = 45_000;
+
+export function resolvePolymarketPipelineTokenId(
+  tradeAssetId?: string | null,
+  matchedMarket?: Pick<MarketSummary, "clobTokenIds" | "source"> | null
+): string | undefined {
+  if (tradeAssetId?.trim()) return tradeAssetId.trim();
+  if (
+    matchedMarket?.source === "polymarket" &&
+    matchedMarket.clobTokenIds?.[0]
+  ) {
+    return matchedMarket.clobTokenIds[0];
+  }
+  return undefined;
+}
+
+export function normalizePipelineEvEntry(
+  entry: PipelineTradeEv | null | undefined,
+  lookupKey?: string
+): PipelineTradeEv | null {
+  if (!entry) return null;
+  const enriched = enrichPipelineTradeEvCrossIds(entry, lookupKey ?? entry.key);
+  return normalizePipelineTradeEv(enriched, lookupKey ?? enriched.key) ?? enriched;
+}
 
 export interface PipelineEvRequestItem {
   source: "polymarket" | "kalshi";

@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CopyBetSignal from "@/components/CopyBetSignal";
 import CrossMarketEvBadge from "@/components/CrossMarketEvBadge";
+import { TradeArbitrageSection } from "@/components/ArbitrageBoxSpreadMatrix";
 import LoadErrorCard from "@/components/LoadErrorCard";
 import MarketPriceChart from "@/components/MarketPriceChart";
 import TradeDetailSkeleton, {
@@ -31,6 +32,8 @@ import { usePolymarketSocketContext } from "@/lib/PolymarketSocketProvider";
 import { isPolymarketTrade } from "@/lib/tradeSource";
 import { useResolvedWallet } from "@/lib/useResolvedWallet";
 import { useCrossMarketEvIndex } from "@/lib/useCrossMarketEvIndex";
+import { usePipelineTradeEv } from "@/lib/usePipelineEvIndex";
+import { resolvePolymarketPipelineTokenId } from "@/lib/pipelineEvClient";
 import { getFullDate, getTimeAgo, getUtcString } from "@/lib/time";
 import {
   formatImpliedProbabilitySummary,
@@ -96,6 +99,20 @@ export default function TradeDetailPage() {
   const { resolvedWallet, walletResolutionFailed } =
     useResolvedWallet(polymarketTrade);
   const { index: evIndex } = useCrossMarketEvIndex();
+  const pipelineTokenId = useMemo(
+    () =>
+      resolvePolymarketPipelineTokenId(
+        polymarketTrade?.assetId,
+        matchedMarket
+      ),
+    [polymarketTrade?.assetId, matchedMarket]
+  );
+  const { ev: pipelineData, loading: pipelineLoading } = usePipelineTradeEv({
+    source: "polymarket",
+    tokenId: pipelineTokenId,
+    tradePrice: polymarketTrade?.price,
+    enabled: pipelineTokenId != null,
+  });
 
   const displayWallet = useMemo(
     () => polymarketTrade?.proxyWallet ?? resolvedWallet,
@@ -626,6 +643,15 @@ export default function TradeDetailPage() {
             className="mb-4"
           />
         )}
+        <TradeArbitrageSection
+          pipelineData={pipelineData}
+          pipelineLoading={pipelineLoading}
+          tradeLinks={{
+            eventSlug: trade.eventSlug,
+            slug: trade.slug,
+          }}
+          className="mb-4"
+        />
         <p className="mb-4 text-sm leading-relaxed text-slate-300">
           Each share costs {priceCents}¢ and pays $1.00 if correct. That&apos;s
           a <strong className="text-white">{multiplier}x</strong> return on each

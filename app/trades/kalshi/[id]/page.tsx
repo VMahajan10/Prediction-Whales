@@ -8,6 +8,7 @@ import KalshiAnonymousTradePanel from "@/components/KalshiMarketFlowPanel";
 import KalshiMarketMetrics from "@/components/KalshiMarketMetrics";
 import KalshiOrderBookDepth from "@/components/KalshiOrderBookDepth";
 import CopyBetSignal from "@/components/CopyBetSignal";
+import { TradeArbitrageSection } from "@/components/ArbitrageBoxSpreadMatrix";
 import LoadErrorCard from "@/components/LoadErrorCard";
 import TradeDetailSkeleton, {
   EnrichmentSkeleton,
@@ -29,6 +30,7 @@ import {
   peekStashedKalshiTrade,
 } from "@/lib/tradeNavigationStore";
 import { useCrossMarketEvIndex } from "@/lib/useCrossMarketEvIndex";
+import { usePipelineTradeEv } from "@/lib/usePipelineEvIndex";
 import { resolveCrossMarketEvForTrade } from "@/lib/resolveTradeCrossMarketEv";
 import type { TradeSummary } from "@/lib/polymarket";
 import { getFullDate, getTimeAgo, getUtcString } from "@/lib/time";
@@ -118,6 +120,12 @@ export default function KalshiTradeDetailPage() {
   const [enriching, setEnriching] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const { index: evIndex } = useCrossMarketEvIndex();
+  const { ev: pipelineData, loading: pipelineLoading } = usePipelineTradeEv({
+    source: "kalshi",
+    kalshiTicker: payload?.trade.ticker,
+    tradePrice: payload?.trade.price,
+    enabled: payload?.trade.ticker != null,
+  });
 
   const retryLoad = useCallback(() => {
     setLoadError(null);
@@ -628,6 +636,12 @@ export default function KalshiTradeDetailPage() {
         <p className="mb-4 text-sm text-slate-300">
           Price paid: <strong className="text-white">{priceCents}¢</strong>
         </p>
+        <TradeArbitrageSection
+          pipelineData={pipelineData}
+          pipelineLoading={pipelineLoading}
+          tradeLinks={{}}
+          className="mb-4"
+        />
         <p className="mb-4 text-sm leading-relaxed text-slate-300">
           Each contract costs {priceCents}¢ and pays $1.00 if correct. That&apos;s
           a <strong className="text-white">{multiplier}x</strong> return on each

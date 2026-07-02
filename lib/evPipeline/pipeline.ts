@@ -206,12 +206,8 @@ export async function matchMarkets(): Promise<PipelineStageResult> {
 }
 
 /**
- * Stage 3 — Ensemble / LLM → p_true; append true_probabilities; cache Redis.
- *
- * p_true ≈ weighted mean of:
- * - cross-market midpoint (PM + Kalshi + sportsbook)
- * - LLM sentiment / resolution analysis (future)
- * - historical calibration layer (future)
+ * Stage 3 — pricing-engine p_true + cache trade EV at pm:{tokenId} / kalshi:{ticker}.
+ * Ensemble probabilities are persisted to DB; Redis lookup EV uses lib/evPipeline/pricing.ts.
  */
 export async function computePTrue(): Promise<PipelineStageResult> {
   const start = Date.now();

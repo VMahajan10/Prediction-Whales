@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CopyBetSignal from "@/components/CopyBetSignal";
 import CrossMarketEvBadge from "@/components/CrossMarketEvBadge";
+import { TradeArbitrageSection } from "@/components/ArbitrageBoxSpreadMatrix";
 import BookmarkTraderButton from "@/components/BookmarkTraderButton";
 import LoadErrorCard from "@/components/LoadErrorCard";
 import TradeDetailSkeleton, {
@@ -31,6 +32,8 @@ import {
 } from "@/lib/polymarket";
 import { useResolvedWallet } from "@/lib/useResolvedWallet";
 import { useCrossMarketEvIndex } from "@/lib/useCrossMarketEvIndex";
+import { usePipelineTradeEv } from "@/lib/usePipelineEvIndex";
+import { resolvePolymarketPipelineTokenId } from "@/lib/pipelineEvClient";
 import { resolveCrossMarketEvForTrade } from "@/lib/resolveTradeCrossMarketEv";
 import { isPolymarketTrade } from "@/lib/tradeSource";
 import { getFullDate, getTimeAgo, getUtcString } from "@/lib/time";
@@ -457,6 +460,16 @@ export default function WhaleProfilePage() {
   );
 
   const { index: evIndex } = useCrossMarketEvIndex();
+  const pipelineTokenId = useMemo(
+    () => resolvePolymarketPipelineTokenId(trade?.assetId, matchedMarket),
+    [trade?.assetId, matchedMarket]
+  );
+  const { ev: pipelineData, loading: pipelineLoading } = usePipelineTradeEv({
+    source: "polymarket",
+    tokenId: pipelineTokenId,
+    tradePrice: trade?.price,
+    enabled: pipelineTokenId != null,
+  });
 
   const tradeEvInput = useMemo(() => {
     if (!trade || !isPolymarketTrade(trade)) return null;
@@ -631,9 +644,19 @@ export default function WhaleProfilePage() {
         <CrossMarketEvBadge
           trade={tradeEvInput}
           index={evIndex}
-          className="mb-8"
+          className="mb-4"
         />
       )}
+
+      <TradeArbitrageSection
+        pipelineData={pipelineData}
+        pipelineLoading={pipelineLoading}
+        tradeLinks={{
+          eventSlug: trade.eventSlug,
+          slug: trade.slug,
+        }}
+        className="mb-8"
+      />
 
       {/* SECTION 1: WHALE IDENTITY */}
       <section className="mb-8 rounded-xl border border-pulse-border bg-slate-800 p-6">

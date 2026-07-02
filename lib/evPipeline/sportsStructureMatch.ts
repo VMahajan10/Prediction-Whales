@@ -4,7 +4,7 @@ import {
   type ParsedGameKey,
 } from "@/lib/crossMarketEv";
 import { countryNameToPm, teamsMatchGame } from "@/lib/sportsTeamMatch";
-import { pmCodeToKalshi } from "@/lib/teamCodes";
+import { normalizePmTeamCode, pmCodeToKalshi } from "@/lib/teamCodes";
 import type { MatchedPair, NormalizedMarketContract } from "@/lib/evPipeline/types";
 
 const PM_GAME_SLUG =
@@ -16,12 +16,24 @@ const VS_TITLE =
 const LINE_TEXT =
   /\b(?:o\/u|over\/under|over under|total|line)\s*(\d+(?:\.\d+)?)\b/i;
 
+const DRAW_TITLE =
+  /\b(?:end|finish|result)(?:\s+\w+){0,6}\s+(?:in\s+)?(?:a\s+)?(?:draw|tie)\b|\b(?:draw|tie)\s*\?/i;
+
+const TEAM_WIN_TITLE =
+  /\bwill\s+(?:the\s+)?(.+?)\s+(?:win|advance|qualify)\b/i;
+
 export type SportsMarketKind = "moneyline" | "total" | "spread" | "score" | "unknown";
+
+export type PmOutcomeLeg =
+  | { type: "team"; pmTeamCode: string; kalshiTeamCode: string }
+  | { type: "draw" }
+  | { type: "unspecified" };
 
 interface ParsedPmSports {
   game: ParsedGameKey;
   kind: SportsMarketKind;
   line: number | null;
+  outcomeLeg: PmOutcomeLeg | null;
 }
 
 function buildGameKey(
@@ -42,6 +54,114 @@ function buildGameKey(
     kickoffEpochSec: null,
     kickoffKnown: false,
   };
+}
+
+function parseTeamOutcomeLeg(pmTeamCode: string): PmOutcomeLeg | null {
+  const normalized = normalizePmTeamCode(pmTeamCode);
+  const kalshiTeamCode = pmCodeToKalshi(normalized);
+  if (!kalshiTeamCode) return null;
+  return { type: "team", pmTeamCode: normalized, kalshiTeamCode };
+}
+
+function teamCodeInGame(pmTeamCode: string, game: ParsedGameKey): boolean {
+  const normalized = normalizePmTeamCode(pmTeamCode);
+  return (
+    normalized === normalizePmTeamCode(game.pmTeamA) ||
+    normalized === normalizePmTeamCode(game.pmTeamB)
+  );
+}
+
+function parseOutcomeLegFromSlugSuffix(
+  suffix: string,
+  game: ParsedGameKey
+): PmOutcomeLeg | null {
+  const token = suffix.trim().toLowerCase();
+  if (!token) return null;
+  if (token === "draw" || token === "tie") return { type: "draw" };
+  if (teamCodeInGame(token, game)) return parseTeamOutcomeLeg(token);
+  return null;
+}
+
+function parseOutcomeLegFromTitle(
+  title: string,
+  game: ParsedGameKey
+): PmOutcomeLeg | null {
+  if (DRAW_TITLE.test(title)) return { type: "draw" };
+
+  const winMatch = title.match(TEAM_WIN_TITLE);
+  if (winMatch) {
+    const pmTeam = countryNameToPm(winMatch[1]);
+    if (pmTeam && teamCodeInGame(pmTeam, game)) {
+      return parseTeamOutcomeLeg(pmTeam);
+    }
+  }
+
+  return null;
+}
+
+function resolvePmOutcomeLeg(
+  contract: NormalizedMarketContract,
+  game: ParsedGameKey,
+  kind: SportsMarketKind,
+  slugSuffix: string | null
+): PmOutcomeLeg | null {
+  if (kind !== "moneyline") return { type: "unspecified" };
+
+  const slug = (contract.slug ?? contract.eventSlug ?? "").toLowerCase();
+  if (slug) {
+    const moneyline = parsePmMoneylineSlug(slug);
+    if (moneyline) {
+      if (moneyline.outcomePm === "draw") return { type: "draw" };
+      if (teamCodeInGame(moneyline.outcomePm, game)) {
+        return parseTeamOutcomeLeg(moneyline.outcomePm);
+      }
+      return null;
+    }
+  }
+
+  if (slugSuffix) {
+    const fromSuffix = parseOutcomeLegFromSlugSuffix(slugSuffix, game);
+    if (fromSuffix) return fromSuffix;
+  }
+
+  return parseOutcomeLegFromTitle(contract.title, game);
+}
+
+/** Exported for tests — strict PM ↔ Kalshi outcome leg alignment. */
+export function sportsOutcomeLegsAligned(
+  pmInfo: ParsedPmSports,
+  kalshiOutcomeKalshi: string,
+  kalshiKind: SportsMarketKind
+): boolean {
+  const kalshiLeg = kalshiOutcomeKalshi.toUpperCase();
+
+  if (pmInfo.kind === "moneyline" && kalshiKind === "moneyline") {
+    const leg = pmInfo.outcomeLeg;
+    if (!leg || leg.type === "unspecified") return false;
+    if (leg.type === "draw") return kalshiLeg === "TIE";
+    if (leg.type === "team") return kalshiLeg === leg.kalshiTeamCode.toUpperCase();
+    return false;
+  }
+
+  if (
+    pmInfo.kind === "total" ||
+    pmInfo.kind === "spread" ||
+    kalshiKind === "total" ||
+    kalshiKind === "spread" ||
+    kalshiKind === "score"
+  ) {
+    return true;
+  }
+
+  if (pmInfo.kind === "moneyline" || kalshiKind === "moneyline") {
+    const leg = pmInfo.outcomeLeg;
+    if (!leg || leg.type === "unspecified") return false;
+    if (leg.type === "draw") return kalshiLeg === "TIE";
+    if (leg.type === "team") return kalshiLeg === leg.kalshiTeamCode.toUpperCase();
+    return false;
+  }
+
+  return true;
 }
 
 function inferKindFromText(text: string): SportsMarketKind {
@@ -95,7 +215,18 @@ function parsePmSportsContract(
   if (slug) {
     const moneyline = parsePmMoneylineSlug(slug);
     if (moneyline) {
-      return { game: moneyline.game, kind: "moneyline", line: null };
+      const outcomeLeg = resolvePmOutcomeLeg(
+        contract,
+        moneyline.game,
+        "moneyline",
+        null
+      );
+      return {
+        game: moneyline.game,
+        kind: "moneyline",
+        line: null,
+        outcomeLeg,
+      };
     }
 
     const gameSlug = slug.match(PM_GAME_SLUG);
@@ -110,20 +241,37 @@ function parsePmSportsContract(
         kind = "moneyline";
       }
 
+      const outcomeLeg = resolvePmOutcomeLeg(
+        contract,
+        game,
+        kind,
+        suffix || null
+      );
+
       return {
         game,
         kind,
         line: extractLine(corpus) ?? parseLineFromSlugSuffix(suffix),
+        outcomeLeg,
       };
     }
   }
 
   const titleGame = parseGameFromTitle(contract.title);
   if (titleGame) {
+    let kind = inferKindFromText(corpus);
+    if (
+      kind === "unknown" &&
+      (DRAW_TITLE.test(contract.title) || TEAM_WIN_TITLE.test(contract.title))
+    ) {
+      kind = "moneyline";
+    }
+    const outcomeLeg = resolvePmOutcomeLeg(contract, titleGame, kind, null);
     return {
       game: titleGame,
-      kind: inferKindFromText(corpus),
+      kind,
       line: extractLine(corpus),
+      outcomeLeg,
     };
   }
 
@@ -218,6 +366,11 @@ export function matchSportsStructurePairs(
       const kKind = kalshiSeriesKind(parsed.series);
       if (!kindsCompatible(pmInfo.kind, kKind)) continue;
       if (!linesCompatible(pmInfo.line, parsed.outcomeKalshi)) continue;
+      if (
+        !sportsOutcomeLegsAligned(pmInfo, parsed.outcomeKalshi, kKind)
+      ) {
+        continue;
+      }
 
       const dedupeKey = `${pm.tokenOrTicker.toLowerCase()}:${km.tokenOrTicker.toUpperCase()}`;
       if (seen.has(dedupeKey)) continue;

@@ -127,6 +127,12 @@ export function normalizePipelineTradeEv(
   const pMarket =
     readOptionalNumber(raw.pMarket) ??
     readOptionalNumber((raw as Record<string, unknown>).p_market);
+  const pmMid =
+    readOptionalNumber(raw.pmMid) ??
+    readOptionalNumber((raw as Record<string, unknown>).pm_mid);
+  const kalshiMid =
+    readOptionalNumber(raw.kalshiMid) ??
+    readOptionalNumber((raw as Record<string, unknown>).kalshi_mid);
 
   let netEvPercent =
     readOptionalNumber(raw.netEvPercent) ??
@@ -157,6 +163,8 @@ export function normalizePipelineTradeEv(
       grossEvPercent: null,
       pTrue: null,
       pMarket: null,
+      pmMid: null,
+      kalshiMid: null,
     };
   }
 
@@ -174,6 +182,8 @@ export function normalizePipelineTradeEv(
         mappingPairKey,
         pTrue,
         pMarket: resolvedPMarket,
+        pmMid,
+        kalshiMid,
         grossEv: grossEv || calculatedNetEv,
         netEv: netEv || calculatedNetEv,
         grossEvPercent: grossEvPercent ?? calculatedEvPercent,
@@ -191,6 +201,8 @@ export function normalizePipelineTradeEv(
     mappingPairKey,
     pTrue,
     pMarket,
+    pmMid,
+    kalshiMid,
     grossEv,
     netEv,
     grossEvPercent: grossEvPercent ?? null,

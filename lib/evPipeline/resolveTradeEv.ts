@@ -6,26 +6,28 @@ import {
 } from "@/lib/crossmarket/store/schema";
 import type { EvPlatform } from "@/lib/finance/evEngine";
 import {
-  buildOkPipelineTradeEv,
-  DEFAULT_P_MARKET_FALLBACK,
-  DYNAMIC_BASELINE_NET_EV_DRAG,
-  normalizeIncomingTradePrice,
-  normalizePipelineTradeEv,
-} from "@/lib/evPipeline/tradeEvRecord";
-import {
   enrichPipelineEvInputFromMapping,
   normalizeKalshiTicker,
   normalizePmTokenId,
+  pipelineMappingPairKey,
 } from "@/lib/evPipeline/crossAssetLookup";
+import {
+  applyExecutionPricingToTradeEv,
+  buildPipelineTradeEvFromPricing,
+} from "@/lib/evPipeline/pricing";
 import {
   cacheTradeEvLookup,
   evRedisKeys,
   getMappingByKalshi,
   getMappingByPm,
   getOrderBookMid,
-  getPTrue,
   getTradeEvLookupRedisOnly,
 } from "@/lib/evPipeline/redisCache";
+import {
+  DEFAULT_P_MARKET_FALLBACK,
+  normalizeIncomingTradePrice,
+  normalizePipelineTradeEv,
+} from "@/lib/evPipeline/tradeEvRecord";
 import type {
   PipelineTradeEv,
   PipelineTradeEvInput,
@@ -61,50 +63,61 @@ export function createUnmappedPipelineTradeEv(
     grossEvPercent: null,
     pTrue: null,
     pMarket: null,
+    pmMid: null,
+    kalshiMid: null,
   };
 }
 
-/** On-the-fly 0% edge baseline when a trade token is not yet in localEvCache. */
+/** Standalone / cache-miss pricing using resting order-book baseline + execution price. */
 export function buildDynamicBaselineTradeEv(
   searchKey: string,
   item?: PipelineTradeEvInput
 ): PipelineTradeEv {
   const lower = searchKey.toLowerCase();
-  const realMarketPrice =
-    normalizeIncomingTradePrice(item?.tradePrice) ?? DEFAULT_P_MARKET_FALLBACK;
+  const executionPrice = normalizeIncomingTradePrice(item?.tradePrice);
 
   let tokenId: string | null = normalizePmTokenId(item?.tokenId);
   let kalshiTicker: string | null = normalizeKalshiTicker(item?.kalshiTicker);
+  let platform: EvPlatform =
+    item?.source === "kalshi" ? "kalshi" : "polymarket";
 
   if (lower.startsWith("pm:")) {
     tokenId = normalizePmTokenId(searchKey.slice(3));
+    platform = "polymarket";
   } else if (lower.startsWith("kalshi:")) {
     kalshiTicker = normalizeKalshiTicker(searchKey.slice(7));
+    platform = "kalshi";
   }
 
-  const baseline: PipelineTradeEv = {
+  const priced = buildPipelineTradeEvFromPricing({
+    lookupKey: searchKey,
+    platform,
+    tokenId,
+    kalshiTicker,
+    mappingPairKey: null,
+    executionPrice,
+    pmMid: executionPrice ?? DEFAULT_P_MARKET_FALLBACK,
+    kalshiMid: executionPrice ?? DEFAULT_P_MARKET_FALLBACK,
+  });
+
+  if (priced) return priced;
+
+  const fallbackPrice = executionPrice ?? DEFAULT_P_MARKET_FALLBACK;
+  return {
     key: searchKey,
     status: "ok",
     tokenId,
     kalshiTicker,
     mappingPairKey: null,
-    pMarket: realMarketPrice,
-    pTrue: realMarketPrice,
+    pMarket: fallbackPrice,
+    pTrue: fallbackPrice,
+    pmMid: platform === "polymarket" ? fallbackPrice : null,
+    kalshiMid: platform === "kalshi" ? fallbackPrice : null,
     grossEv: 0,
-    netEv: DYNAMIC_BASELINE_NET_EV_DRAG,
+    netEv: 0,
     grossEvPercent: 0,
     netEvPercent: 0,
   };
-
-  console.log("⚠️ [Backend Zero EV]", {
-    lookupKey: searchKey,
-    pmMid: realMarketPrice,
-    kalshiMid: undefined,
-    pTrue: realMarketPrice,
-    netEvPercent: 0,
-  });
-
-  return baseline;
 }
 
 async function latestPTrueFromDb(tokenId: string): Promise<number | null> {
@@ -149,47 +162,30 @@ async function resolvePmTokenForKalshi(
   }
 }
 
-async function resolvePTrue(tokenId: string): Promise<number | null> {
-  try {
-    const cached = await getPTrue(tokenId.toLowerCase());
-    if (cached?.pTrue != null && Number.isFinite(cached.pTrue)) {
-      return cached.pTrue;
-    }
-    return latestPTrueFromDb(tokenId);
-  } catch {
-    return null;
-  }
-}
-
-async function resolvePMarket(
-  platform: EvPlatform,
+async function loadOrderBookContext(
   tokenId: string | null,
-  kalshiTicker: string | null,
-  tradePrice?: number
-): Promise<number | null> {
-  try {
-    if (platform === "polymarket" && tokenId) {
-      const ob = await getOrderBookMid(
-        evRedisKeys.orderBookPm(tokenId.toLowerCase())
-      );
-      if (ob?.mid != null && Number.isFinite(ob.mid)) return ob.mid;
-    }
+  kalshiTicker: string | null
+): Promise<{
+  pmOb: Awaited<ReturnType<typeof getOrderBookMid>>;
+  kalshiOb: Awaited<ReturnType<typeof getOrderBookMid>>;
+  pmMid: number | null;
+  kalshiMid: number | null;
+}> {
+  const [pmOb, kalshiOb] = await Promise.all([
+    tokenId
+      ? getOrderBookMid(evRedisKeys.orderBookPm(tokenId.toLowerCase()))
+      : Promise.resolve(null),
+    kalshiTicker
+      ? getOrderBookMid(evRedisKeys.orderBookKalshi(kalshiTicker.toUpperCase()))
+      : Promise.resolve(null),
+  ]);
 
-    if (platform === "kalshi" && kalshiTicker) {
-      const ob = await getOrderBookMid(
-        evRedisKeys.orderBookKalshi(kalshiTicker.toUpperCase())
-      );
-      if (ob?.mid != null && Number.isFinite(ob.mid)) return ob.mid;
-    }
-
-    if (tradePrice != null && Number.isFinite(tradePrice)) {
-      return tradePrice;
-    }
-
-    return null;
-  } catch {
-    return null;
-  }
+  return {
+    pmOb,
+    kalshiOb,
+    pmMid: pmOb?.mid ?? null,
+    kalshiMid: kalshiOb?.mid ?? null,
+  };
 }
 
 async function enrichInputFromMappingCache(
@@ -211,24 +207,41 @@ async function enrichInputFromMappingCache(
   return input;
 }
 
+function applyPricingToResolvedTrade(
+  record: PipelineTradeEv,
+  input: PipelineTradeEvInput,
+  books: Awaited<ReturnType<typeof loadOrderBookContext>>
+): PipelineTradeEv {
+  const tokenId = normalizePmTokenId(record.tokenId ?? input.tokenId);
+  const kalshiTicker = normalizeKalshiTicker(
+    record.kalshiTicker ?? input.kalshiTicker
+  );
+  const mappingPairKey =
+    record.mappingPairKey ??
+    (tokenId && kalshiTicker
+      ? pipelineMappingPairKey(tokenId, kalshiTicker)
+      : null);
+
+  return applyExecutionPricingToTradeEv(record, {
+    lookupKey: record.key,
+    mappingPairKey,
+    platform: input.source,
+    pmOb: books.pmOb,
+    kalshiOb: books.kalshiOb,
+    pmMid: books.pmMid ?? record.pmMid ?? null,
+    kalshiMid: books.kalshiMid ?? record.kalshiMid ?? null,
+    executionPrice: input.tradePrice,
+    tokenId,
+    kalshiTicker,
+  });
+}
+
 export async function resolvePipelineTradeEv(
   input: PipelineTradeEvInput
 ): Promise<PipelineTradeEv | null> {
   const enriched = await enrichInputFromMappingCache(input);
   const key = tradeEvKey(enriched);
   if (!key) return null;
-
-  try {
-    const cachedEv = await getTradeEvLookupRedisOnly(key);
-    if (cachedEv?.status === "ok") {
-      const normalized = finalizePipelineTradeEv({ ...cachedEv, key }, key);
-      if (normalized.netEvPercent !== null && normalized.netEvPercent !== undefined) {
-        return normalized;
-      }
-    }
-  } catch {
-    // Fall through to live resolution.
-  }
 
   let tokenId = normalizePmTokenId(enriched.tokenId);
   const kalshiTicker = normalizeKalshiTicker(enriched.kalshiTicker);
@@ -237,40 +250,85 @@ export async function resolvePipelineTradeEv(
     tokenId = normalizePmTokenId(await resolvePmTokenForKalshi(kalshiTicker));
   }
 
+  const books = await loadOrderBookContext(tokenId, kalshiTicker);
+  const executionPrice = normalizeIncomingTradePrice(enriched.tradePrice);
+  const mappingPairKey =
+    tokenId && kalshiTicker
+      ? pipelineMappingPairKey(tokenId, kalshiTicker)
+      : null;
+
+  try {
+    const cachedEv = await getTradeEvLookupRedisOnly(key);
+    if (cachedEv?.status === "ok") {
+      const priced = applyPricingToResolvedTrade(
+        finalizePipelineTradeEv({ ...cachedEv, key }, key),
+        enriched,
+        books
+      );
+      if (
+        priced.netEvPercent !== null &&
+        priced.netEvPercent !== undefined &&
+        (executionPrice != null || priced.netEvPercent !== 0)
+      ) {
+        return priced;
+      }
+    }
+  } catch {
+    // Fall through to live resolution.
+  }
+
+  if (!tokenId && !kalshiTicker) {
+    return createUnmappedPipelineTradeEv(key, enriched);
+  }
+
+  const priced = buildPipelineTradeEvFromPricing({
+    lookupKey: key,
+    platform: enriched.source,
+    tokenId,
+    kalshiTicker,
+    mappingPairKey,
+    pmOb: books.pmOb,
+    kalshiOb: books.kalshiOb,
+    pmMid: books.pmMid,
+    kalshiMid: books.kalshiMid,
+    executionPrice: enriched.tradePrice,
+  });
+
+  if (priced) {
+    const result = finalizePipelineTradeEv(priced, key);
+    await cacheTradeEvLookup(key, result);
+    return result;
+  }
+
   if (!tokenId) {
     return createUnmappedPipelineTradeEv(key, enriched);
   }
 
-  const pTrue = await resolvePTrue(tokenId);
-  if (pTrue == null) {
-    return createUnmappedPipelineTradeEv(key, enriched);
+  const dbPTrue = await latestPTrueFromDb(tokenId);
+  if (dbPTrue == null) {
+    return buildDynamicBaselineTradeEv(key, enriched);
   }
 
-  const resolvedPMarket =
-    (await resolvePMarket(
-      enriched.source,
-      tokenId,
-      kalshiTicker,
-      enriched.tradePrice
-    )) ?? DEFAULT_P_MARKET_FALLBACK;
+  const fallback = buildPipelineTradeEvFromPricing({
+    lookupKey: key,
+    platform: enriched.source,
+    tokenId,
+    kalshiTicker,
+    mappingPairKey,
+    pmOb: books.pmOb,
+    kalshiOb: books.kalshiOb,
+    pmMid: books.pmMid ?? dbPTrue,
+    kalshiMid: books.kalshiMid ?? dbPTrue,
+    executionPrice: enriched.tradePrice,
+  });
 
-  const result = finalizePipelineTradeEv(
-    buildOkPipelineTradeEv({
-      lookupKey: key,
-      platform: enriched.source,
-      tokenId,
-      kalshiTicker: kalshiTicker ?? "",
-      pTrue,
-      pMarket: resolvedPMarket,
-    }),
-    key
-  );
-
-  if (result.status === "ok") {
+  if (fallback) {
+    const result = finalizePipelineTradeEv(fallback, key);
     await cacheTradeEvLookup(key, result);
+    return result;
   }
 
-  return result;
+  return buildDynamicBaselineTradeEv(key, enriched);
 }
 
 export async function resolvePipelineTradeEvBatch(

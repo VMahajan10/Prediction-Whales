@@ -19,9 +19,13 @@ import {
 import {
   enrichPipelineEvInputFromMapping,
   expandPipelineEvByKey,
+  enrichPipelineTradeEvCrossIds,
   normalizeKalshiTicker,
   normalizePmTokenId,
 } from "@/lib/evPipeline/crossAssetLookup";
+import {
+  applyExecutionPricingToTradeEv,
+} from "@/lib/evPipeline/pricing";
 import {
   normalizeIncomingTradePrice,
   normalizePipelineTradeEv,
@@ -92,28 +96,36 @@ function normalizeItem(item: TradeEvRequestItem): PipelineTradeEvInput | null {
 
 function mapApiTradeEvPayload(
   item: PipelineTradeEv,
-  lookupKey: string
+  lookupKey: string,
+  requestItem?: PipelineTradeEvInput
 ): PipelineTradeEv {
   const normalized = normalizePipelineTradeEv(item, lookupKey) ?? item;
-  const payload = strictApiTradeEvPayload(normalized, lookupKey);
-  if (payload.status === "ok" && payload.netEvPercent === 0) {
-    console.log("⚠️ [Backend Zero EV]", {
+  let payload = strictApiTradeEvPayload(normalized, lookupKey);
+
+  const executionPrice = normalizeIncomingTradePrice(requestItem?.tradePrice);
+  if (executionPrice != null && payload.status === "ok") {
+    payload = applyExecutionPricingToTradeEv(payload, {
       lookupKey,
-      pmMid: payload.pMarket,
-      kalshiMid: undefined,
-      pTrue: payload.pTrue,
-      netEvPercent: payload.netEvPercent,
+      platform: requestItem?.source ?? "polymarket",
+      executionPrice,
+      tokenId: payload.tokenId,
+      kalshiTicker: payload.kalshiTicker,
+      mappingPairKey: payload.mappingPairKey ?? null,
+      pmMid: payload.pmMid ?? null,
+      kalshiMid: payload.kalshiMid ?? null,
     });
   }
+
   return payload;
 }
 
 function safeMapApiTradeEvPayload(
   item: PipelineTradeEv,
-  lookupKey: string
+  lookupKey: string,
+  requestItem?: PipelineTradeEvInput
 ): PipelineTradeEv {
   try {
-    return mapApiTradeEvPayload(item, lookupKey);
+    return mapApiTradeEvPayload(item, lookupKey, requestItem);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("Batch EV Fetch Error:", message);
@@ -157,7 +169,7 @@ async function resolveBatchTradeEv(
   try {
     const storeHit = await getTradeEvLookupRedisOnly(lookupKey);
     if (storeHit) {
-      const payload = safeMapApiTradeEvPayload(storeHit, lookupKey);
+      const payload = safeMapApiTradeEvPayload(storeHit, lookupKey, item);
       if (isCachedOkPayload(payload)) {
         seedPipelineLocalEvCache(lookupKey, payload);
         return payload;
@@ -167,7 +179,7 @@ async function resolveBatchTradeEv(
     try {
       const row = await resolvePipelineTradeEv(item);
       if (row) {
-        const resolvedPayload = safeMapApiTradeEvPayload(row, lookupKey);
+        const resolvedPayload = safeMapApiTradeEvPayload(row, lookupKey, item);
         if (isCachedOkPayload(resolvedPayload)) {
           seedPipelineLocalEvCache(lookupKey, resolvedPayload);
           return resolvedPayload;
@@ -182,21 +194,21 @@ async function resolveBatchTradeEv(
 
     const localHit = readLocalTradeEvLookup(lookupKey, item.source);
     if (localHit) {
-      const payload = safeMapApiTradeEvPayload(localHit, lookupKey);
+      const payload = safeMapApiTradeEvPayload(localHit, lookupKey, item);
       if (isCachedOkPayload(payload)) {
         return payload;
       }
     }
 
     const dynamicFallback = buildDynamicBaselineTradeEv(lookupKey, item);
-    const payload = safeMapApiTradeEvPayload(dynamicFallback, lookupKey);
+    const payload = safeMapApiTradeEvPayload(dynamicFallback, lookupKey, item);
     seedPipelineLocalEvCache(lookupKey, payload);
     return payload;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("Batch EV Fetch Error:", message);
     const dynamicFallback = buildDynamicBaselineTradeEv(lookupKey, item);
-    const payload = safeMapApiTradeEvPayload(dynamicFallback, lookupKey);
+    const payload = safeMapApiTradeEvPayload(dynamicFallback, lookupKey, item);
     seedPipelineLocalEvCache(lookupKey, payload);
     return payload;
   }
@@ -301,7 +313,7 @@ export async function POST(request: NextRequest) {
         const message = err instanceof Error ? err.message : String(err);
         console.error("Batch EV Fetch Error:", message);
         const fallback = buildDynamicBaselineTradeEv(lookupKey, item);
-        const payload = safeMapApiTradeEvPayload(fallback, lookupKey);
+        const payload = safeMapApiTradeEvPayload(fallback, lookupKey, item);
         seedPipelineLocalEvCache(lookupKey, payload);
         byKey[lookupKey] = payload;
         entries.push(payload);
@@ -393,8 +405,13 @@ export async function GET(request: NextRequest) {
     const resolvedItem = row?.item ?? item;
 
     const entry = await resolveBatchTradeEv(lookupKey, resolvedItem);
-    console.log("Final Sent Payload Sample:", entry);
-    return NextResponse.json({ entry }, { status: 200 });
+    const enrichedEntry =
+      normalizePipelineTradeEv(
+        enrichPipelineTradeEvCrossIds(entry, lookupKey),
+        lookupKey
+      ) ?? enrichPipelineTradeEvCrossIds(entry, lookupKey);
+    console.log("Final Sent Payload Sample:", enrichedEntry);
+    return NextResponse.json({ entry: enrichedEntry }, { status: 200 });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("Batch EV Fetch Error:", message);

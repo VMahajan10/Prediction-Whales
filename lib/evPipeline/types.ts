@@ -93,6 +93,10 @@ export interface PipelineTradeEv {
   grossEvPercent?: number | null;
   pTrue?: number | null;
   pMarket?: number | null;
+  /** Cached PM resting mid used by pricing engine. */
+  pmMid?: number | null;
+  /** Cached Kalshi resting mid used by pricing engine. */
+  kalshiMid?: number | null;
 }
 
 /** Shared frontend/API lookup keys for batch trade EV. */
