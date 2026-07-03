@@ -12,6 +12,10 @@ export interface WhaleTrade extends TradeSummary {
   isLive: boolean;
   /** Kalshi market ticker when source is kalshi */
   ticker?: string;
+  /** Pre-computed pipeline average EV % (from backend enrichment). */
+  averageEv?: number | null;
+  netEvPercent?: number | null;
+  grossEvPercent?: number | null;
 }
 
 export function isWhaleNotional(usd: number): boolean {

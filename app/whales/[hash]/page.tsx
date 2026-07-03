@@ -651,6 +651,9 @@ export default function WhaleProfilePage() {
       <TradeArbitrageSection
         pipelineData={pipelineData}
         pipelineLoading={pipelineLoading}
+        pmTokenId={pipelineTokenId}
+        title={trade.title}
+        tradePrice={price}
         tradeLinks={{
           eventSlug: trade.eventSlug,
           slug: trade.slug,

@@ -639,6 +639,10 @@ export default function KalshiTradeDetailPage() {
         <TradeArbitrageSection
           pipelineData={pipelineData}
           pipelineLoading={pipelineLoading}
+          pmTokenId={pipelineData?.tokenId}
+          title={trade.title}
+          tradePrice={price}
+          isSportsMarket
           tradeLinks={{}}
           className="mb-4"
         />

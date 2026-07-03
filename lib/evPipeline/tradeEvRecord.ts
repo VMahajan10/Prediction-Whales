@@ -89,6 +89,7 @@ export function strictApiTradeEvPayload(
     netEv,
     grossEv,
     grossEvPercent,
+    averageEv: netEvPercent,
   };
 }
 

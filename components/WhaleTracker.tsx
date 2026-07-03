@@ -7,7 +7,6 @@ import PlatformFilterToggle from "@/components/PlatformFilterToggle";
 import { useLiveFeedPlatform } from "@/lib/LiveFeedPlatformContext";
 import { liveFeedPlatformLabel } from "@/lib/liveFeedMerge";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
-import { normalizeIncomingTradePrice } from "@/lib/evPipeline/tradeEvRecord";
 import { pipelineEvKeyForWhale } from "@/lib/pipelineEvClient";
 import { usePipelineEvForWhales } from "@/lib/usePipelineEvIndex";
 import {
@@ -54,47 +53,32 @@ function formatStake(size: number): string {
   return `$${Math.round(size).toLocaleString("en-US")}`;
 }
 
-function parseExecutionPrice(raw: unknown): number | null {
-  if (raw == null) return null;
-
-  if (typeof raw === "string") {
-    const trimmed = raw.trim();
-    const centsMatch = trimmed.match(/^(\d+(?:\.\d+)?)\s*¢$/);
-    if (centsMatch) {
-      const cents = parseFloat(centsMatch[1]);
-      if (Number.isFinite(cents) && cents > 0) return cents / 100;
+function precomputedEvPercent(
+  trade: WhaleTrade,
+  pipelineData: PipelineTradeEv | null | undefined
+): number | null {
+  if (pipelineData?.status === "ok") {
+    const fromPipeline =
+      pipelineData.averageEv ??
+      pipelineData.netEvPercent ??
+      pipelineData.grossEvPercent;
+    if (fromPipeline != null && Number.isFinite(fromPipeline)) {
+      return fromPipeline;
     }
   }
 
-  return normalizeIncomingTradePrice(raw) ?? null;
-}
+  const fromTrade =
+    trade.averageEv ?? trade.netEvPercent ?? trade.grossEvPercent ?? null;
+  if (fromTrade != null && Number.isFinite(fromTrade)) {
+    return fromTrade;
+  }
 
-function whaleExecutionPrice(trade: WhaleTrade): number | null {
-  return parseExecutionPrice(trade.price);
-}
-
-function pipelineMidsMissing(
-  pipelineData: PipelineTradeEv
-): boolean {
-  const ext = pipelineData as PipelineTradeEv & {
-    pmMid?: unknown;
-    kalshiMid?: unknown;
-  };
-  return ext.pmMid === undefined || ext.kalshiMid === undefined;
-}
-
-function shouldUseLocalEvFallback(pipelineData: PipelineTradeEv): boolean {
-  return (
-    pipelineData.netEvPercent === 0 ||
-    pipelineData.netEvPercent == null ||
-    pipelineMidsMissing(pipelineData)
-  );
+  return null;
 }
 
 function formatEvPercentDisplay(netEvPercent: number): {
   value: string;
   valueClass: string;
-  loading: false;
 } {
   const normalized = Object.is(netEvPercent, -0) ? 0 : netEvPercent;
   const isPositive = normalized > 0;
@@ -105,63 +89,28 @@ function formatEvPercentDisplay(netEvPercent: number): {
       ? "text-rose-500 font-semibold"
       : "text-pulse-label";
 
-  return { value: formatted, valueClass, loading: false };
+  return { value: formatted, valueClass };
 }
 
 function resolveAvgEvDisplay(
+  trade: WhaleTrade,
   pipelineData: PipelineTradeEv | null | undefined,
-  pipelineLoading: boolean,
-  hasLookupKey: boolean,
-  executionPrice: number | null
-): { value: string; valueClass: string; loading: boolean } {
+  hasLookupKey: boolean
+): { value: string; valueClass: string } {
   if (!hasLookupKey) {
-    return { value: "N/A", valueClass: "text-pulse-label", loading: false };
+    return { value: "N/A", valueClass: "text-pulse-label" };
   }
 
-  if (hasLookupKey && pipelineData == null && pipelineLoading) {
-    return {
-      value: "Calculating…",
-      valueClass:
-        "text-[10px] font-semibold uppercase tracking-wide text-pulse-muted animate-pulse",
-      loading: true,
-    };
+  if (pipelineData?.status === "unmapped") {
+    return { value: "—", valueClass: "text-pulse-label" };
   }
 
-  if (!pipelineData) {
-    return { value: "—", valueClass: "text-pulse-label", loading: false };
+  const evPercent = precomputedEvPercent(trade, pipelineData);
+  if (evPercent != null) {
+    return formatEvPercentDisplay(evPercent);
   }
 
-  if (pipelineData.status === "unmapped") {
-    return { value: "—", valueClass: "text-pulse-label", loading: false };
-  }
-
-  if (pipelineData.status === "ok") {
-    const pTrue = pipelineData.pTrue;
-    const hasValidPTrue =
-      typeof pTrue === "number" && Number.isFinite(pTrue);
-    const hasValidExecutionPrice =
-      executionPrice != null && Number.isFinite(executionPrice);
-
-    if (
-      shouldUseLocalEvFallback(pipelineData) &&
-      hasValidPTrue &&
-      hasValidExecutionPrice
-    ) {
-      const localEvPercent = (pTrue - executionPrice) * 100;
-      return formatEvPercentDisplay(localEvPercent);
-    }
-
-    if (typeof pipelineData.netEvPercent === "number") {
-      return formatEvPercentDisplay(pipelineData.netEvPercent);
-    }
-
-    if (hasValidPTrue && hasValidExecutionPrice) {
-      const localEvPercent = (pTrue - executionPrice) * 100;
-      return formatEvPercentDisplay(localEvPercent);
-    }
-  }
-
-  return { value: "—", valueClass: "text-pulse-label", loading: false };
+  return { value: "—", valueClass: "text-pulse-label" };
 }
 
 function AvgEvStatCell({
@@ -172,17 +121,9 @@ function AvgEvStatCell({
   return (
     <div className="rounded-lg bg-pulse-surface px-3 py-2.5">
       <p className="pulse-label text-pulse-label">Avg. EV</p>
-      {avgEv.loading ? (
-        <span
-          className={`mt-1 inline-flex rounded border border-pulse-border bg-pulse-card px-2 py-0.5 ${avgEv.valueClass}`}
-        >
-          {avgEv.value}
-        </span>
-      ) : (
-        <p className={`mt-1 text-sm font-bold ${avgEv.valueClass}`}>
-          {avgEv.value}
-        </p>
-      )}
+      <p className={`mt-1 text-sm font-bold ${avgEv.valueClass}`}>
+        {avgEv.value}
+      </p>
     </div>
   );
 }
@@ -217,17 +158,12 @@ function ExpandedEvBreakdown({
   pipelineData: PipelineTradeEv | null;
   avgEv: ReturnType<typeof resolveAvgEvDisplay>;
 }) {
-  if (!isPairedPipelineTrade(pipelineData) || avgEv.loading) return null;
+  if (!isPairedPipelineTrade(pipelineData)) return null;
 
-  const netEvPercent =
-    pipelineData?.netEvPercent ??
-    (pipelineData?.pTrue != null && whaleExecutionPrice(trade) != null
-      ? (pipelineData.pTrue - whaleExecutionPrice(trade)!) * 100
-      : null);
-
+  const evPercent = precomputedEvPercent(trade, pipelineData);
   const evLabel =
-    netEvPercent != null && Number.isFinite(netEvPercent)
-      ? formatEvPercent(netEvPercent)
+    evPercent != null && Number.isFinite(evPercent)
+      ? formatEvPercent(evPercent)
       : avgEv.value;
 
   return (
@@ -244,14 +180,12 @@ function WhaleFeedCard({
   trade,
   now,
   pipelineData,
-  pipelineLoading,
   expandedCardId,
   setExpandedCardId,
 }: {
   trade: WhaleTrade;
   now: number;
   pipelineData: PipelineTradeEv | null;
-  pipelineLoading: boolean;
   expandedCardId: string | null;
   setExpandedCardId: (id: string | null) => void;
 }) {
@@ -264,13 +198,10 @@ function WhaleFeedCard({
   const isExpanded = expandedCardId === trade.id;
   const isPaired = isPairedPipelineTrade(pipelineData);
 
-  const executionPrice = whaleExecutionPrice(trade);
-
   const avgEv = resolveAvgEvDisplay(
+    trade,
     pipelineData,
-    pipelineLoading,
-    lookupKey != null,
-    executionPrice
+    lookupKey != null
   );
 
   const cardInner = (
@@ -370,7 +301,10 @@ function WhaleFeedCard({
           ) : null}
           <TradeArbitrageSection
             pipelineData={pipelineData}
-            pipelineLoading={pipelineLoading}
+            pmTokenId={pipelineData?.tokenId ?? trade.assetId}
+            title={trade.title}
+            tradePrice={trade.price}
+            isSportsMarket={category === "SPORTS"}
             tradeLinks={{
               eventSlug: trade.eventSlug,
               slug: trade.slug,
@@ -436,8 +370,7 @@ export default function WhaleTracker({
 }: WhaleTrackerProps) {
   const { platform, setPlatform } = useLiveFeedPlatform();
   const topWhales = whales.slice(0, TOP_WHALE_COUNT);
-  const { index: pipelineEvIndex, loading: pipelineEvLoading } =
-    usePipelineEvForWhales(topWhales);
+  const { index: pipelineEvIndex } = usePipelineEvForWhales(topWhales);
   const [now, setNow] = useState(() => Date.now());
   const [expandedCardId, setExpandedCardId] = useState<string | null>(null);
 
@@ -494,7 +427,6 @@ export default function WhaleTracker({
                 }
                 trade={trade}
                 now={now}
-                pipelineLoading={pipelineEvLoading}
                 pipelineData={
                   lookupKey ? pipelineEvIndex.get(lookupKey) ?? null : null
                 }

@@ -10,11 +10,13 @@ const KALSHI_TO_PM: Record<string, string> = {
   NZL: "nzl",
   EGY: "egy",
   DZA: "dza",
+  ALG: "dza",
   IRQ: "irq",
   SEN: "sen",
   RSA: "rsa",
   NED: "ned",
   SUI: "sui",
+  CHE: "sui",
   TUR: "tur",
   PAR: "par",
   AUS: "aus",
@@ -64,10 +66,23 @@ const PM_SLUG_TO_KALSHI: Record<string, string> = {
   cvi: "CPV", // Cape Verde — PM slug uses cvi, Kalshi uses CPV
 };
 
-/** Canonical PM code for verified slug variants (strict same-team only). */
+/**
+ * Verified PM slug / ISO / exchange tokens → canonical PM code used across
+ * the pipeline (sportsbook names, Kalshi tickers, cross-market index keys).
+ */
 const PM_CODE_CANONICAL: Record<string, string> = {
   ury: "uru",
   cvi: "cpv",
+  /** Switzerland — PM fifwc slugs use ISO alpha-3 `che`, internal code `sui`. */
+  che: "sui",
+  /** Algeria — PM fifwc slugs use `alg`, internal / Kalshi code `dza`. */
+  alg: "dza",
+  /** Iran — Kalshi `IRI` vs PM `irn`. */
+  iri: "irn",
+  /** Germany ISO alpha-3. */
+  deu: "ger",
+  /** Costa Rica short slug. */
+  cos: "crc",
 };
 
 const unmatchedKalshi = new Set<string>();
@@ -75,8 +90,14 @@ const unmatchedPm = new Set<string>();
 
 /** Normalize PM team codes for equivalence checks (verified aliases only). */
 export function normalizePmTeamCode(code: string): string {
-  const lower = code.toLowerCase();
+  const lower = code.trim().toLowerCase();
+  if (!lower) return lower;
   return PM_CODE_CANONICAL[lower] ?? lower;
+}
+
+/** True when two PM / slug / ISO tokens refer to the same team. */
+export function pmTeamCodesEquivalent(a: string, b: string): boolean {
+  return normalizePmTeamCode(a) === normalizePmTeamCode(b);
 }
 
 /** PM event-slug tokens to try when fetching Gamma (verified variants only). */
@@ -95,21 +116,21 @@ export function pmEventSlugCodeVariants(code: string): string[] {
 }
 
 export function kalshiCodeToPm(code: string): string | null {
-  const upper = code.toUpperCase();
+  const upper = code.trim().toUpperCase();
   if (KALSHI_TO_PM[upper]) return KALSHI_TO_PM[upper];
-  const lower = upper.toLowerCase();
-  if (lower.length === 3) return lower;
+  const canonical = normalizePmTeamCode(upper.toLowerCase());
+  if (PM_TO_KALSHI[canonical] || PM_SLUG_TO_KALSHI[canonical]) return canonical;
+  if (canonical.length === 3) return canonical;
   unmatchedKalshi.add(upper);
   return null;
 }
 
 export function pmCodeToKalshi(code: string): string | null {
-  const lower = code.toLowerCase();
-  if (PM_SLUG_TO_KALSHI[lower]) return PM_SLUG_TO_KALSHI[lower];
-  if (PM_TO_KALSHI[lower]) return PM_TO_KALSHI[lower];
-  const upper = lower.toUpperCase();
-  if (upper.length === 3) return upper;
-  unmatchedPm.add(lower);
+  const canonical = normalizePmTeamCode(code.trim());
+  if (PM_SLUG_TO_KALSHI[canonical]) return PM_SLUG_TO_KALSHI[canonical];
+  if (PM_TO_KALSHI[canonical]) return PM_TO_KALSHI[canonical];
+  if (canonical.length === 3) return canonical.toUpperCase();
+  unmatchedPm.add(canonical);
   return null;
 }
 

@@ -22,6 +22,7 @@ import {
   EvPipelineRedisWriteBatch,
   mappingRedisPairKey,
   prefetchMappingRedisBatch,
+  type CachedOrderBookMid,
   type MappingRedisPrefetch,
 } from "@/lib/evPipeline/redisCache";
 import {
@@ -154,7 +155,10 @@ async function cacheLookupEvForMapping(
   redisBatch: EvPipelineRedisWriteBatch,
   pmOb: MappingRedisPrefetch["pmOb"] = null,
   kalshiOb: MappingRedisPrefetch["kalshiOb"] = null
-): Promise<number> {
+): Promise<{
+  pmRecord: PipelineTradeEv;
+  kalshiRecord: PipelineTradeEv;
+} | null> {
   const pmKey = pipelineEvLookupKeyPm(tokenId);
   const kalshiKey = pipelineEvLookupKeyKalshi(kalshiTicker);
   const mappingPairKey = pipelineMappingPairKey(tokenId, kalshiTicker);
@@ -223,7 +227,7 @@ async function cacheLookupEvForMapping(
       fallbackKalshi,
       redisBatch
     );
-    return 2;
+    return { pmRecord: fallbackPm, kalshiRecord: fallbackKalshi };
   }
 
   await persistTradeEvLookups(
@@ -234,7 +238,7 @@ async function cacheLookupEvForMapping(
     redisBatch
   );
 
-  return 2;
+  return { pmRecord, kalshiRecord };
 }
 
 async function persistMappingPTrue(
@@ -260,7 +264,7 @@ async function persistMappingPTrue(
     logSuffix: string;
   },
   redisBatch: EvPipelineRedisWriteBatch
-): Promise<number> {
+): Promise<PipelineTradeEv | null> {
   const tokenId = mapping.polymarketTokenId.toLowerCase();
   const kalshiTicker = mapping.kalshiTicker.toUpperCase();
   const variance = opts.variance ?? 0.05;
@@ -320,10 +324,175 @@ async function persistMappingPTrue(
       : 0;
 
   console.info(
-    `[ev-pipeline] computePTrue ${tokenId} ↔ ${kalshiTicker}: ensemble_p_true=${pTrue.toFixed(4)} pricing_p_true=${displayPTrue.toFixed(4)} pm_mid=${opts.pmMid?.toFixed(4) ?? "—"} kalshi_mid=${opts.kalshiMid?.toFixed(4) ?? "—"} cross_arb=${crossArbPercent.toFixed(1)}% cached_lookups=${cachedLookups} ${opts.logSuffix}`
+    `[ev-pipeline] computePTrue ${tokenId} ↔ ${kalshiTicker}: ensemble_p_true=${pTrue.toFixed(4)} pricing_p_true=${displayPTrue.toFixed(4)} pm_mid=${opts.pmMid?.toFixed(4) ?? "—"} kalshi_mid=${opts.kalshiMid?.toFixed(4) ?? "—"} cross_arb=${crossArbPercent.toFixed(1)}% cached_lookups=${cachedLookups ? 2 : 0} ${opts.logSuffix}`
   );
 
-  return 1;
+  return cachedLookups?.pmRecord ?? null;
+}
+
+export interface MappedPairEvSnapshot {
+  pTrue: number | null;
+  grossEvPercent: number | null;
+  netEvPercent: number | null;
+  averageEv: number | null;
+  pmMid: number | null;
+  kalshiMid: number | null;
+  computedAt: string;
+}
+
+export interface ComputeEvForMappedPairInput {
+  id?: number;
+  polymarketTokenId: string;
+  kalshiTicker: string;
+  polymarketTitle: string;
+  kalshiTitle: string;
+  pmMid: number | null;
+  kalshiMid: number | null;
+  pmOb?: CachedOrderBookMid | null;
+  kalshiOb?: CachedOrderBookMid | null;
+}
+
+function snapshotFromPmRecord(
+  pmRecord: PipelineTradeEv | null | undefined
+): MappedPairEvSnapshot | null {
+  if (!pmRecord || pmRecord.status !== "ok") return null;
+  const netEvPercent = pmRecord.netEvPercent ?? null;
+  const grossEvPercent = pmRecord.grossEvPercent ?? netEvPercent;
+  return {
+    pTrue: pmRecord.pTrue ?? null,
+    grossEvPercent,
+    netEvPercent,
+    averageEv: netEvPercent,
+    pmMid: pmRecord.pmMid ?? null,
+    kalshiMid: pmRecord.kalshiMid ?? null,
+    computedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Eager ensemble + pricing EV for a newly mapped pair.
+ * Seeds trade EV lookups (local + Redis batch) and returns primary-market snapshot.
+ */
+export async function computeEvForMappedPair(
+  db: Db,
+  input: ComputeEvForMappedPairInput,
+  redisBatch: EvPipelineRedisWriteBatch
+): Promise<MappedPairEvSnapshot | null> {
+  const tokenId = input.polymarketTokenId.toLowerCase();
+  const kalshiTicker = input.kalshiTicker.toUpperCase();
+  const pmMid = input.pmMid;
+  const kalshiMid = input.kalshiMid;
+  const marketPrior =
+    pmMid != null && kalshiMid != null
+      ? (pmMid + kalshiMid) / 2
+      : (pmMid ?? kalshiMid ?? 0.5);
+
+  const pmOb =
+    input.pmOb ??
+    (pmMid != null
+      ? {
+          bid: pmMid,
+          ask: pmMid,
+          mid: pmMid,
+          ts: Date.now(),
+        }
+      : null);
+  const kalshiOb =
+    input.kalshiOb ??
+    (kalshiMid != null
+      ? {
+          bid: kalshiMid,
+          ask: kalshiMid,
+          mid: kalshiMid,
+          ts: Date.now(),
+        }
+      : null);
+
+  const mapping = {
+    id: input.id ?? 0,
+    polymarketTokenId: tokenId,
+    kalshiTicker,
+    polymarketTitle: input.polymarketTitle,
+    kalshiTitle: input.kalshiTitle,
+  };
+
+  const spec = parseDerivativeFromMapping({
+    polymarketTitle: input.polymarketTitle,
+    kalshiTitle: input.kalshiTitle,
+    kalshiTicker,
+  });
+
+  if (spec && !spec.isPrimary) {
+    const anchorStore = createDerivativeAnchorStore();
+    const derived = deriveDerivativePTrue(spec, anchorStore, marketPrior);
+    if (derived) {
+      try {
+        const pmRecord = await persistMappingPTrue(db, mapping, derived.pTrue, {
+          pmMid,
+          kalshiMid,
+          marketPrior,
+          pmOb,
+          kalshiOb,
+          sourceType: derived.method,
+          modelVersion: "derivative_pricing_v2",
+          logSuffix: `(mapping-time ${derived.marketClass})`,
+        }, redisBatch);
+        return snapshotFromPmRecord(pmRecord);
+      } catch (deriveErr) {
+        console.error(
+          "[ev-pipeline] mapping-time derivative EV failed:",
+          deriveErr instanceof Error ? deriveErr.message : deriveErr
+        );
+      }
+    }
+  }
+
+  try {
+    const ensemble = await calculatePTrue({
+      marketTitle: input.polymarketTitle || input.kalshiTitle,
+      marketContext: "",
+      marketPrior,
+    });
+
+    const pmRecord = await persistMappingPTrue(db, mapping, ensemble.pTrue, {
+      pmMid,
+      kalshiMid,
+      marketPrior,
+      pmOb,
+      kalshiOb,
+      sourceType: "ensemble",
+      modelVersion: "pipeline_v1",
+      variance: ensemble.variance,
+      sourceScore: ensemble.sourceScore,
+      logSuffix: "(mapping-time ensemble)",
+    }, redisBatch);
+
+    return snapshotFromPmRecord(pmRecord);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[ev-pipeline] mapping-time ensemble EV failed:", message);
+
+    try {
+      const pmRecord = await seedBaselineEvForMapping(
+        tokenId,
+        kalshiTicker,
+        pmMid,
+        kalshiMid,
+        marketPrior,
+        redisBatch,
+        pmOb,
+        kalshiOb
+      );
+      return snapshotFromPmRecord(pmRecord);
+    } catch (fallbackErr) {
+      console.error(
+        "[ev-pipeline] mapping-time baseline EV failed:",
+        fallbackErr instanceof Error ? fallbackErr.message : fallbackErr
+      );
+    }
+  }
+
+  return null;
 }
 
 /** Pricing-engine baseline when ensemble is unavailable — cross/standalone resting mids. */
@@ -336,8 +505,8 @@ async function seedBaselineEvForMapping(
   redisBatch: EvPipelineRedisWriteBatch,
   pmOb: MappingRedisPrefetch["pmOb"] = null,
   kalshiOb: MappingRedisPrefetch["kalshiOb"] = null
-): Promise<number> {
-  const written = await cacheLookupEvForMapping(
+): Promise<PipelineTradeEv | null> {
+  const cached = await cacheLookupEvForMapping(
     tokenId,
     kalshiTicker,
     pmMid,
@@ -361,7 +530,7 @@ async function seedBaselineEvForMapping(
     `[ev-pipeline] computePTrue baseline fallback ${tokenId} ↔ ${kalshiTicker}: pricing_p_true=${pricingPreview?.pTrue.toFixed(4) ?? "—"} pm=${pmMid?.toFixed(4) ?? "—"} kalshi=${kalshiMid?.toFixed(4) ?? "—"}`
   );
 
-  return written;
+  return cached?.pmRecord ?? null;
 }
 
 /**
@@ -576,7 +745,7 @@ export async function ensureMappedTradeEvLookups(
         if (spec) {
           const derived = deriveDerivativePTrue(spec, anchorStore, marketPrior);
           if (derived) {
-            const written = await cacheLookupEvForMapping(
+            const cachedPair = await cacheLookupEvForMapping(
               tokenId,
               kalshiTicker,
               pmMid,
@@ -586,12 +755,12 @@ export async function ensureMappedTradeEvLookups(
               prefetch.pmOb,
               prefetch.kalshiOb
             );
-            if (written > 0) cached += 1;
+            if (cachedPair) cached += 1;
             continue;
           }
         }
 
-        const written = await seedBaselineEvForMapping(
+        const baselineRecord = await seedBaselineEvForMapping(
           tokenId,
           kalshiTicker,
           pmMid,
@@ -601,11 +770,11 @@ export async function ensureMappedTradeEvLookups(
           prefetch.pmOb,
           prefetch.kalshiOb
         );
-        if (written > 0) cached += 1;
+        if (baselineRecord) cached += 1;
         continue;
       }
 
-      const written = await cacheLookupEvForMapping(
+      const cachedPair = await cacheLookupEvForMapping(
         tokenId,
         kalshiTicker,
         pmMid,
@@ -616,7 +785,7 @@ export async function ensureMappedTradeEvLookups(
         prefetch.kalshiOb
       );
 
-      if (written > 0) cached += 1;
+      if (cachedPair) cached += 1;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error("[ev-pipeline] ensureMappedTradeEvLookups:", message);

@@ -45,6 +45,12 @@ export interface MatchedPair {
   kalshiTitle: string;
   /** vector | token_boost | token_heuristic | sports_structure | TEST_FALLBACK_PAIR */
   matchMethod?: string;
+  /** Pre-computed ensemble p_true (primary PM market). */
+  pTrue?: number | null;
+  /** Resting-mid average EV % on the primary PM market (pre-computed at mapping). */
+  averageEv?: number | null;
+  grossEvPercent?: number | null;
+  netEvPercent?: number | null;
 }
 
 export interface MapMarketsResult {
@@ -91,6 +97,8 @@ export interface PipelineTradeEv {
   netEv: number;
   grossEv?: number;
   grossEvPercent?: number | null;
+  /** Resting-mid / cross-venue average EV % (alias for netEvPercent at mapping time). */
+  averageEv?: number | null;
   pTrue?: number | null;
   pMarket?: number | null;
   /** Cached PM resting mid used by pricing engine. */
@@ -161,11 +169,15 @@ export function isResolvedPipelineTradeEv(
   pTrue: number;
   pMarket: number;
 } {
+  const evPercent =
+    ev?.averageEv ?? ev?.netEvPercent ?? ev?.grossEvPercent ?? null;
   return (
     ev != null &&
     ev.status === "ok" &&
-    ev.netEvPercent !== null &&
-    ev.netEvPercent !== undefined &&
-    Number.isFinite(ev.netEvPercent)
+    evPercent !== null &&
+    evPercent !== undefined &&
+    Number.isFinite(evPercent) &&
+    ev.pTrue != null &&
+    Number.isFinite(ev.pTrue)
   );
 }

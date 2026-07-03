@@ -3,6 +3,11 @@ import { getDb, isDatabaseEnabled } from "@/lib/crossmarket/store/db";
 import { marketMappings } from "@/lib/crossmarket/store/schema";
 import { pipelineMappingPairKey } from "@/lib/evPipeline/crossAssetLookup";
 import {
+  exchangeBaselineToYesNoAsks,
+  lookupExchangeConsensusBaseline,
+  type ExchangeConsensusBaseline,
+} from "@/lib/evPipeline/exchangeConsensusArb";
+import {
   getMappingByKalshi,
   getMappingByPm,
   getOrderBookMid,
@@ -16,17 +21,18 @@ export const MIN_ARBITRAGE_COST_THRESHOLD = 0.98;
 
 const TEST_FALLBACK_MATCH_METHOD = "TEST_FALLBACK_PAIR";
 
-export type ArbitrageVenue = "polymarket" | "kalshi";
+export type ArbitrageVenue = "polymarket" | "kalshi" | "exchange";
 export type ArbitrageSide = "YES" | "NO";
 
 export type ArbitrageStrategy =
   | "pm_yes_kalshi_no"
-  | "kalshi_yes_pm_no";
+  | "kalshi_yes_pm_no"
+  | "pm_vs_exchange_arb";
 
 export interface ArbitrageLeg {
   venue: ArbitrageVenue;
   side: ArbitrageSide;
-  /** Polymarket CLOB token id or Kalshi ticker. */
+  /** Polymarket CLOB token id, Kalshi ticker, or exchange match id. */
   contractId: string;
   askPrice: number;
 }
@@ -34,7 +40,7 @@ export interface ArbitrageLeg {
 export interface ArbitrageOpportunity {
   mappingPairKey: string;
   polymarketTokenId: string;
-  kalshiTicker: string;
+  kalshiTicker: string | null;
   strategy: ArbitrageStrategy;
   legs: ArbitrageLeg[];
   combinedCost: number;
@@ -43,8 +49,12 @@ export interface ArbitrageOpportunity {
   netRoiPercent: number;
   pmYesAsk: number;
   pmNoAsk: number;
-  kalshiYesAsk: number;
-  kalshiNoAsk: number;
+  kalshiYesAsk: number | null;
+  kalshiNoAsk: number | null;
+  exchangeYesBid?: number | null;
+  exchangeYesAsk?: number | null;
+  exchangeLabel?: string | null;
+  secondaryVenue?: "kalshi" | "exchange";
   orderBookTimestampMs: number | null;
 }
 
@@ -95,11 +105,11 @@ export function computeNetRoiPercent(combinedCost: number): number {
   return Math.round((profit / combinedCost) * 1000) / 10;
 }
 
-function buildOpportunity(params: {
+function buildKalshiOpportunity(params: {
   mappingPairKey: string;
   polymarketTokenId: string;
   kalshiTicker: string;
-  strategy: ArbitrageStrategy;
+  strategy: "pm_yes_kalshi_no" | "kalshi_yes_pm_no";
   combinedCost: number;
   pm: YesNoAsks;
   kalshi: YesNoAsks;
@@ -151,8 +161,128 @@ function buildOpportunity(params: {
     pmNoAsk: params.pm.noAsk,
     kalshiYesAsk: params.kalshi.yesAsk,
     kalshiNoAsk: params.kalshi.noAsk,
+    secondaryVenue: "kalshi",
     orderBookTimestampMs: params.orderBookTimestampMs,
   };
+}
+
+function buildExchangeOpportunity(params: {
+  polymarketTokenId: string;
+  combinedCost: number;
+  pm: YesNoAsks;
+  exchange: YesNoAsks;
+  baseline: ExchangeConsensusBaseline;
+  orderBookTimestampMs: number | null;
+}): ArbitrageOpportunity {
+  const exchangeNoAsk = exchangeBaselineToYesNoAsks(params.baseline).noAsk;
+  const legs: ArbitrageLeg[] = [
+    {
+      venue: "polymarket",
+      side: "YES",
+      contractId: params.polymarketTokenId,
+      askPrice: params.pm.yesAsk,
+    },
+    {
+      venue: "exchange",
+      side: "NO",
+      contractId: params.baseline.matchId,
+      askPrice: exchangeNoAsk,
+    },
+  ];
+
+  const netProfitPerUnit = 1 - params.combinedCost;
+  const pairKey = `exchange:pm:${params.polymarketTokenId}`;
+
+  return {
+    mappingPairKey: pairKey,
+    polymarketTokenId: params.polymarketTokenId,
+    kalshiTicker: null,
+    strategy: "pm_vs_exchange_arb",
+    legs,
+    combinedCost: Math.round(params.combinedCost * 10000) / 10000,
+    guaranteedPayout: 1,
+    netProfitPerUnit: Math.round(netProfitPerUnit * 10000) / 10000,
+    netRoiPercent: computeNetRoiPercent(params.combinedCost),
+    pmYesAsk: params.pm.yesAsk,
+    pmNoAsk: params.pm.noAsk,
+    kalshiYesAsk: null,
+    kalshiNoAsk: null,
+    exchangeYesBid: params.baseline.yesBid,
+    exchangeYesAsk: params.baseline.yesAsk,
+    exchangeLabel: params.baseline.label,
+    secondaryVenue: "exchange",
+    orderBookTimestampMs: params.orderBookTimestampMs,
+  };
+}
+
+/**
+ * PM resting book vs sportsbook consensus (Pinnacle/Betfair no-vig cache).
+ */
+export function evaluateExchangeArbitrage(
+  polymarketTokenId: string,
+  pmOb: CachedOrderBookMid | null,
+  baseline: ExchangeConsensusBaseline,
+  maxCombinedCost = MIN_ARBITRAGE_COST_THRESHOLD
+): ArbitrageOpportunity[] {
+  const pm = deriveYesNoAsksFromOrderBook(pmOb);
+  const exchange = exchangeBaselineToYesNoAsks(baseline);
+  if (!pm) return [];
+
+  const tokenId = polymarketTokenId.toLowerCase();
+  const orderBookTimestampMs = Math.max(
+    pmOb?.ts ?? 0,
+    baseline.quoteUpdatedAt ? baseline.quoteUpdatedAt * 1000 : 0
+  );
+
+  const costPmYesExchangeNo = pm.yesAsk + exchange.noAsk;
+  const costExchangeYesPmNo = exchange.yesAsk + pm.noAsk;
+  const opportunities: ArbitrageOpportunity[] = [];
+
+  if (costPmYesExchangeNo < maxCombinedCost) {
+    opportunities.push(
+      buildExchangeOpportunity({
+        polymarketTokenId: tokenId,
+        combinedCost: costPmYesExchangeNo,
+        pm,
+        exchange,
+        baseline,
+        orderBookTimestampMs: orderBookTimestampMs || null,
+      })
+    );
+  }
+
+  if (
+    costExchangeYesPmNo < maxCombinedCost &&
+    costExchangeYesPmNo < costPmYesExchangeNo
+  ) {
+    opportunities.push({
+      ...buildExchangeOpportunity({
+        polymarketTokenId: tokenId,
+        combinedCost: costExchangeYesPmNo,
+        pm,
+        exchange,
+        baseline,
+        orderBookTimestampMs: orderBookTimestampMs || null,
+      }),
+      strategy: "pm_vs_exchange_arb",
+      legs: [
+        {
+          venue: "exchange",
+          side: "YES",
+          contractId: baseline.matchId,
+          askPrice: exchange.yesAsk,
+        },
+        {
+          venue: "polymarket",
+          side: "NO",
+          contractId: tokenId,
+          askPrice: pm.noAsk,
+        },
+      ],
+    });
+  }
+
+  return opportunities.sort((a, b) => b.netRoiPercent - a.netRoiPercent);
 }
 
 /**
@@ -162,19 +292,33 @@ export function evaluatePairArbitrage(
   mapping: PairedMappingRow,
   pmOb: CachedOrderBookMid | null,
   kalshiOb: CachedOrderBookMid | null,
-  maxCombinedCost = MIN_ARBITRAGE_COST_THRESHOLD
+  maxCombinedCost = MIN_ARBITRAGE_COST_THRESHOLD,
+  exchangeBaseline?: ExchangeConsensusBaseline | null
 ): ArbitrageOpportunity[] {
   if (mapping.orientation === "inverted") {
     return [];
   }
 
-  const pm = deriveYesNoAsksFromOrderBook(pmOb);
-  const kalshi = deriveYesNoAsksFromOrderBook(kalshiOb);
-  if (!pm || !kalshi) return [];
-
   const tokenId = mapping.polymarketTokenId.toLowerCase();
   const kalshiTicker = mapping.kalshiTicker.toUpperCase();
   const pairKey = pipelineMappingPairKey(tokenId, kalshiTicker);
+
+  const pm = deriveYesNoAsksFromOrderBook(pmOb);
+  const kalshi = deriveYesNoAsksFromOrderBook(kalshiOb);
+
+  if (!pm) return [];
+
+  if (!kalshi && exchangeBaseline) {
+    return evaluateExchangeArbitrage(
+      tokenId,
+      pmOb,
+      exchangeBaseline,
+      maxCombinedCost
+    );
+  }
+
+  if (!kalshi) return [];
+
   const orderBookTimestampMs = Math.max(
     pmOb?.ts ?? 0,
     kalshiOb?.ts ?? 0
@@ -186,7 +330,7 @@ export function evaluatePairArbitrage(
 
   if (costOptionA < maxCombinedCost) {
     opportunities.push(
-      buildOpportunity({
+      buildKalshiOpportunity({
         mappingPairKey: pairKey,
         polymarketTokenId: tokenId,
         kalshiTicker,
@@ -201,7 +345,7 @@ export function evaluatePairArbitrage(
 
   if (costOptionB < maxCombinedCost) {
     opportunities.push(
-      buildOpportunity({
+      buildKalshiOpportunity({
         mappingPairKey: pairKey,
         polymarketTokenId: tokenId,
         kalshiTicker,
@@ -294,7 +438,8 @@ export async function scanArbitrageOpportunities(
 export async function scanArbitrageForPair(
   polymarketTokenId: string,
   kalshiTicker: string,
-  maxCombinedCost = MIN_ARBITRAGE_COST_THRESHOLD
+  maxCombinedCost = MIN_ARBITRAGE_COST_THRESHOLD,
+  options: { slug?: string | null; title?: string | null } = {}
 ): Promise<ArbitrageOpportunity[]> {
   const tokenId = polymarketTokenId.toLowerCase();
   const ticker = kalshiTicker.toUpperCase();
@@ -325,7 +470,191 @@ export async function scanArbitrageForPair(
     };
   }
 
-  return evaluatePairArbitrage(mapping, pmOb, kalshiOb, maxCombinedCost);
+  const kalshiAsks = deriveYesNoAsksFromOrderBook(kalshiOb);
+  let exchangeBaseline: ExchangeConsensusBaseline | null = null;
+  if (!kalshiAsks) {
+    exchangeBaseline = await lookupExchangeConsensusBaseline({
+      tokenId,
+      slug: options.slug,
+      title: options.title,
+    });
+  }
+
+  return evaluatePairArbitrage(
+    mapping,
+    pmOb,
+    kalshiOb,
+    maxCombinedCost,
+    exchangeBaseline
+  );
+}
+
+/**
+ * Sports PM token arbitrage via exchange consensus when Kalshi is absent.
+ */
+export async function scanArbitrageForPmSports(
+  polymarketTokenId: string,
+  options: {
+    slug?: string | null;
+    title?: string | null;
+    maxCombinedCost?: number;
+  } = {}
+): Promise<ArbitrageOpportunity[]> {
+  const tokenId = polymarketTokenId.toLowerCase();
+  const maxCombinedCost =
+    options.maxCombinedCost ?? MIN_ARBITRAGE_COST_THRESHOLD;
+
+  const [pmOb, baseline] = await Promise.all([
+    getOrderBookMid(evRedisKeys.orderBookPm(tokenId)),
+    lookupExchangeConsensusBaseline({
+      tokenId,
+      slug: options.slug,
+      title: options.title,
+    }),
+  ]);
+
+  if (!baseline) return [];
+  return evaluateExchangeArbitrage(tokenId, pmOb, baseline, maxCombinedCost);
+}
+
+/** Unified box-spread matrix for Kalshi or exchange opposing leg. */
+export type BoxSpreadStatus =
+  | "OK"
+  | "AWAITING_PM_ORDER_BOOK"
+  | "AWAITING_KALSHI_ORDER_BOOK"
+  | "AWAITING_EXCHANGE_BASELINE"
+  | "INSUFFICIENT_LIQUIDITY"
+  | "PARTIAL_QUOTES";
+
+export interface BoxSpreadSnapshot {
+  pmYesAsk: number | null;
+  opposingNoAsk: number | null;
+  opposingVenue: "kalshi" | "exchange";
+  opposingVenueLabel: string;
+  combinedCost: number | null;
+  netProfitDelta: number | null;
+  netRoiPercent: number | null;
+  isActionable: boolean;
+  /** Alias for opposingNoAsk when venue is exchange. */
+  exchangeNoAsk?: number | null;
+  /** Alias for opposingNoAsk when venue is kalshi. */
+  kalshiNoAsk?: number | null;
+  /** Machine-readable quote availability for the dashboard. */
+  status?: BoxSpreadStatus;
+  /** Human-readable status for the dashboard. */
+  statusMessage?: string;
+}
+
+/** @deprecated Use BoxSpreadSnapshot — kept for API compat during migration. */
+export interface ExchangeSpreadSnapshot {
+  pmYesAsk: number | null;
+  pmNoAsk: number | null;
+  exchangeYesBid: number;
+  exchangeYesAsk: number;
+  exchangeNoAsk: number;
+  combinedCost: number | null;
+  edgePerDollar: number | null;
+  netRoiPercent: number | null;
+  isActionable: boolean;
+}
+
+function roundSpread4(value: number): number {
+  return Math.round(value * 10000) / 10000;
+}
+
+export function computeKalshiBoxSpreadSnapshot(
+  pmOb: CachedOrderBookMid | null,
+  kalshiOb: CachedOrderBookMid | null,
+  kalshiTicker: string,
+  maxCombinedCost = MIN_ARBITRAGE_COST_THRESHOLD
+): BoxSpreadSnapshot {
+  const pm = deriveYesNoAsksFromOrderBook(pmOb);
+  const kalshi = deriveYesNoAsksFromOrderBook(kalshiOb);
+  const combinedCost =
+    pm && kalshi ? roundSpread4(pm.yesAsk + kalshi.noAsk) : null;
+  const netProfitDelta =
+    combinedCost != null ? roundSpread4(1 - combinedCost) : null;
+
+  return {
+    pmYesAsk: pm?.yesAsk ?? null,
+    opposingNoAsk: kalshi?.noAsk ?? null,
+    opposingVenue: "kalshi",
+    opposingVenueLabel: kalshiTicker.toUpperCase(),
+    combinedCost,
+    netProfitDelta,
+    netRoiPercent:
+      combinedCost != null ? computeNetRoiPercent(combinedCost) : null,
+    isActionable:
+      combinedCost != null &&
+      combinedCost < maxCombinedCost &&
+      (netProfitDelta ?? 0) > 0,
+  };
+}
+
+export function computeExchangeBoxSpreadSnapshot(
+  pmOb: CachedOrderBookMid | null,
+  baseline: ExchangeConsensusBaseline,
+  maxCombinedCost = MIN_ARBITRAGE_COST_THRESHOLD
+): BoxSpreadSnapshot {
+  const pm = deriveYesNoAsksFromOrderBook(pmOb);
+  const exchange = exchangeBaselineToYesNoAsks(baseline);
+  const combinedCost = pm
+    ? roundSpread4(pm.yesAsk + exchange.noAsk)
+    : null;
+  const netProfitDelta =
+    combinedCost != null ? roundSpread4(1 - combinedCost) : null;
+
+  const snapshot = {
+    pmYesAsk: pm?.yesAsk ?? null,
+    opposingNoAsk: exchange.noAsk,
+    opposingVenue: "exchange" as const,
+    opposingVenueLabel: baseline.label,
+    combinedCost,
+    netProfitDelta,
+    netRoiPercent:
+      combinedCost != null ? computeNetRoiPercent(combinedCost) : null,
+    isActionable:
+      combinedCost != null &&
+      combinedCost < maxCombinedCost &&
+      (netProfitDelta ?? 0) > 0,
+    exchangeNoAsk: exchange.noAsk,
+  };
+
+  console.log("[arbitrageScanner] computeExchangeBoxSpreadSnapshot", {
+    matchId: baseline.matchId,
+    outcome: baseline.outcome,
+    outcomeLabel: baseline.outcomeLabel ?? null,
+    yesAsk: baseline.yesAsk,
+    exchangeNoAsk: exchange.noAsk,
+    pmYesAsk: snapshot.pmYesAsk,
+    combinedCost: snapshot.combinedCost,
+    invertedFromOpposing: baseline.invertedFromOpposing ?? false,
+  });
+
+  return snapshot;
+}
+
+/** @deprecated Use computeExchangeBoxSpreadSnapshot */
+export function computeExchangeSpreadSnapshot(
+  pmOb: CachedOrderBookMid | null,
+  baseline: ExchangeConsensusBaseline,
+  maxCombinedCost = MIN_ARBITRAGE_COST_THRESHOLD
+): ExchangeSpreadSnapshot {
+  const box = computeExchangeBoxSpreadSnapshot(pmOb, baseline, maxCombinedCost);
+  const exchange = exchangeBaselineToYesNoAsks(baseline);
+  const pm = deriveYesNoAsksFromOrderBook(pmOb);
+
+  return {
+    pmYesAsk: box.pmYesAsk,
+    pmNoAsk: pm?.noAsk ?? null,
+    exchangeYesBid: baseline.yesBid,
+    exchangeYesAsk: baseline.yesAsk,
+    exchangeNoAsk: exchange.noAsk,
+    combinedCost: box.combinedCost,
+    edgePerDollar: box.netProfitDelta,
+    netRoiPercent: box.netRoiPercent,
+    isActionable: box.isActionable,
+  };
 }
 
 /** Type guard for downstream alert consumers. */

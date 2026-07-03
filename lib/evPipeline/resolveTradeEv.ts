@@ -15,18 +15,25 @@ import {
   applyExecutionPricingToTradeEv,
   buildPipelineTradeEvFromPricing,
 } from "@/lib/evPipeline/pricing";
+import { lookupExchangeConsensusBaseline } from "@/lib/evPipeline/exchangeConsensusArb";
 import {
   cacheTradeEvLookup,
   evRedisKeys,
+  EvPipelineRedisWriteBatch,
   getMappingByKalshi,
   getMappingByPm,
   getOrderBookMid,
+  getTradeEvLookup,
   getTradeEvLookupRedisOnly,
+  readLocalTradeEvLookup,
+  type CachedMapping,
 } from "@/lib/evPipeline/redisCache";
+import { computeEvForMappedPair } from "@/lib/evPipeline/computeMappedEv";
 import {
   DEFAULT_P_MARKET_FALLBACK,
   normalizeIncomingTradePrice,
   normalizePipelineTradeEv,
+  strictApiTradeEvPayload,
 } from "@/lib/evPipeline/tradeEvRecord";
 import type {
   PipelineTradeEv,
@@ -61,11 +68,161 @@ export function createUnmappedPipelineTradeEv(
     netEv: 0,
     grossEv: 0,
     grossEvPercent: null,
+    averageEv: null,
     pTrue: null,
     pMarket: null,
     pmMid: null,
     kalshiMid: null,
   };
+}
+
+export function isFullyComputedTradeEv(
+  payload: PipelineTradeEv | null | undefined
+): payload is PipelineTradeEv & {
+  status: "ok";
+  netEvPercent: number;
+  grossEvPercent: number;
+  averageEv: number;
+  pTrue: number;
+} {
+  return (
+    payload != null &&
+    payload.status === "ok" &&
+    payload.netEvPercent != null &&
+    Number.isFinite(payload.netEvPercent) &&
+    payload.pTrue != null &&
+    Number.isFinite(payload.pTrue)
+  );
+}
+
+export function attachAverageEvField(
+  payload: PipelineTradeEv
+): PipelineTradeEv {
+  if (payload.status !== "ok") return payload;
+  const averageEv =
+    payload.averageEv ??
+    payload.netEvPercent ??
+    payload.grossEvPercent ??
+    null;
+  const grossEvPercent =
+    payload.grossEvPercent ?? payload.netEvPercent ?? averageEv;
+  return {
+    ...payload,
+    averageEv,
+    grossEvPercent,
+    grossEv: payload.grossEv ?? payload.netEv ?? 0,
+  };
+}
+
+export function buildTradeEvFromCachedMapping(
+  lookupKey: string,
+  mapping: CachedMapping,
+  item: PipelineTradeEvInput
+): PipelineTradeEv | null {
+  const netEvPercent =
+    mapping.netEvPercent ?? mapping.averageEv ?? mapping.grossEvPercent;
+  if (netEvPercent == null || !Number.isFinite(netEvPercent)) return null;
+  if (mapping.pTrue == null || !Number.isFinite(mapping.pTrue)) return null;
+
+  const tokenId = normalizePmTokenId(item.tokenId ?? mapping.polymarketTokenId);
+  const kalshiTicker = normalizeKalshiTicker(
+    item.kalshiTicker ?? mapping.kalshiTicker
+  );
+
+  return attachAverageEvField({
+    key: lookupKey,
+    status: "ok",
+    tokenId,
+    kalshiTicker,
+    mappingPairKey:
+      tokenId && kalshiTicker
+        ? pipelineMappingPairKey(tokenId, kalshiTicker)
+        : null,
+    pTrue: mapping.pTrue,
+    pMarket: null,
+    netEvPercent,
+    grossEvPercent: mapping.grossEvPercent ?? netEvPercent,
+    averageEv: mapping.averageEv ?? netEvPercent,
+    netEv: 0,
+    pmMid: null,
+    kalshiMid: null,
+  });
+}
+
+/** Redis first, then Postgres market_mappings when the mapping cache is cold. */
+export async function loadMappingForTradeEv(
+  tokenId?: string | null,
+  kalshiTicker?: string | null
+): Promise<CachedMapping | null> {
+  const pm = normalizePmTokenId(tokenId);
+  const kalshi = normalizeKalshiTicker(kalshiTicker);
+
+  if (pm) {
+    const fromRedis = await getMappingByPm(pm);
+    if (fromRedis) return fromRedis;
+  }
+
+  if (kalshi) {
+    const fromRedis = await getMappingByKalshi(kalshi);
+    if (fromRedis) return fromRedis;
+  }
+
+  if (!isDatabaseEnabled()) return null;
+
+  try {
+    const db = getDb();
+    if (pm) {
+      const rows = await db
+        .select({
+          polymarketTokenId: marketMappings.polymarketTokenId,
+          kalshiTicker: marketMappings.kalshiTicker,
+          confidenceScore: marketMappings.confidenceScore,
+          orientation: marketMappings.orientation,
+          matchMethod: marketMappings.matchMethod,
+        })
+        .from(marketMappings)
+        .where(eq(marketMappings.polymarketTokenId, pm))
+        .limit(1);
+      const row = rows[0];
+      if (row) {
+        return {
+          polymarketTokenId: row.polymarketTokenId.toLowerCase(),
+          kalshiTicker: row.kalshiTicker.toUpperCase(),
+          confidenceScore: row.confidenceScore,
+          orientation: row.orientation as CachedMapping["orientation"],
+          matchMethod: row.matchMethod,
+        };
+      }
+    }
+
+    if (kalshi) {
+      const rows = await db
+        .select({
+          polymarketTokenId: marketMappings.polymarketTokenId,
+          kalshiTicker: marketMappings.kalshiTicker,
+          confidenceScore: marketMappings.confidenceScore,
+          orientation: marketMappings.orientation,
+          matchMethod: marketMappings.matchMethod,
+        })
+        .from(marketMappings)
+        .where(eq(marketMappings.kalshiTicker, kalshi))
+        .limit(1);
+      const row = rows[0];
+      if (row) {
+        return {
+          polymarketTokenId: row.polymarketTokenId.toLowerCase(),
+          kalshiTicker: row.kalshiTicker.toUpperCase(),
+          confidenceScore: row.confidenceScore,
+          orientation: row.orientation as CachedMapping["orientation"],
+          matchMethod: row.matchMethod,
+        };
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
 }
 
 /** Standalone / cache-miss pricing using resting order-book baseline + execution price. */
@@ -100,10 +257,10 @@ export function buildDynamicBaselineTradeEv(
     kalshiMid: executionPrice ?? DEFAULT_P_MARKET_FALLBACK,
   });
 
-  if (priced) return priced;
+  if (priced) return attachAverageEvField(priced);
 
   const fallbackPrice = executionPrice ?? DEFAULT_P_MARKET_FALLBACK;
-  return {
+  return attachAverageEvField({
     key: searchKey,
     status: "ok",
     tokenId,
@@ -117,7 +274,258 @@ export function buildDynamicBaselineTradeEv(
     netEv: 0,
     grossEvPercent: 0,
     netEvPercent: 0,
+    averageEv: 0,
+  });
+}
+
+async function syncComputePricingEv(
+  lookupKey: string,
+  item: PipelineTradeEvInput,
+  mapping?: CachedMapping | null
+): Promise<PipelineTradeEv | null> {
+  const enriched = mapping
+    ? enrichPipelineEvInputFromMapping(item, mapping)
+    : await enrichInputFromMappingCache(item);
+
+  let tokenId = normalizePmTokenId(enriched.tokenId);
+  let kalshiTicker = normalizeKalshiTicker(enriched.kalshiTicker);
+
+  if (enriched.source === "kalshi" && kalshiTicker && !tokenId) {
+    tokenId = normalizePmTokenId(await resolvePmTokenForKalshi(kalshiTicker));
+  }
+
+  if (!tokenId && !kalshiTicker) return null;
+
+  const books = await loadOrderBookContext(tokenId, kalshiTicker);
+  const executionPrice = normalizeIncomingTradePrice(enriched.tradePrice);
+  const mappingPairKey =
+    tokenId && kalshiTicker
+      ? pipelineMappingPairKey(tokenId, kalshiTicker)
+      : null;
+  const exchangeMid = await resolveSportsExchangeMid(
+    enriched,
+    tokenId,
+    mappingPairKey
+  );
+
+  const priced = buildPipelineTradeEvFromPricing({
+    lookupKey,
+    platform: enriched.source,
+    tokenId,
+    kalshiTicker,
+    mappingPairKey,
+    pmOb: books.pmOb,
+    kalshiOb: books.kalshiOb,
+    pmMid: books.pmMid,
+    kalshiMid: books.kalshiMid,
+    exchangeMid,
+    executionPrice: enriched.tradePrice,
+  });
+
+  if (priced) {
+    const result = attachAverageEvField(
+      finalizePipelineTradeEv(priced, lookupKey)
+    );
+    await cacheTradeEvLookup(lookupKey, result);
+    return result;
+  }
+
+  if (!tokenId) return null;
+
+  const dbPTrue = await latestPTrueFromDb(tokenId);
+  if (dbPTrue == null) return null;
+
+  const fallback = buildPipelineTradeEvFromPricing({
+    lookupKey,
+    platform: enriched.source,
+    tokenId,
+    kalshiTicker,
+    mappingPairKey,
+    pmOb: books.pmOb,
+    kalshiOb: books.kalshiOb,
+    pmMid: books.pmMid ?? dbPTrue,
+    kalshiMid: books.kalshiMid ?? dbPTrue,
+    exchangeMid,
+    executionPrice: enriched.tradePrice,
+  });
+
+  if (!fallback) return null;
+
+  const result = attachAverageEvField(
+    finalizePipelineTradeEv(fallback, lookupKey)
+  );
+  await cacheTradeEvLookup(lookupKey, result);
+  return result;
+}
+
+async function syncComputePipelineEvForMapping(
+  lookupKey: string,
+  item: PipelineTradeEvInput,
+  mapping: CachedMapping
+): Promise<PipelineTradeEv | null> {
+  if (!isDatabaseEnabled()) return null;
+
+  try {
+    const tokenId = normalizePmTokenId(
+      item.tokenId ?? mapping.polymarketTokenId
+    );
+    const kalshiTicker = normalizeKalshiTicker(
+      item.kalshiTicker ?? mapping.kalshiTicker
+    );
+    if (!tokenId || !kalshiTicker) return null;
+
+    const books = await loadOrderBookContext(tokenId, kalshiTicker);
+    const redisBatch = new EvPipelineRedisWriteBatch();
+    const db = getDb();
+
+    const snapshot = await computeEvForMappedPair(
+      db,
+      {
+        polymarketTokenId: tokenId,
+        kalshiTicker,
+        polymarketTitle: tokenId,
+        kalshiTitle: kalshiTicker,
+        pmMid: books.pmMid,
+        kalshiMid: books.kalshiMid,
+        pmOb: books.pmOb,
+        kalshiOb: books.kalshiOb,
+      },
+      redisBatch
+    );
+
+    await redisBatch.flush();
+
+    if (!snapshot) return null;
+
+    const fromMapping = buildTradeEvFromCachedMapping(lookupKey, {
+      ...mapping,
+      pTrue: snapshot.pTrue,
+      averageEv: snapshot.averageEv,
+      grossEvPercent: snapshot.grossEvPercent,
+      netEvPercent: snapshot.netEvPercent,
+      evComputedAt: snapshot.computedAt,
+    }, item);
+
+    if (fromMapping) {
+      await cacheTradeEvLookup(lookupKey, fromMapping);
+      return fromMapping;
+    }
+
+    return readLocalTradeEvLookup(lookupKey, item.source);
+  } catch (err) {
+    console.error(
+      "[ev/trades] sync pipeline EV failed:",
+      err instanceof Error ? err.message : err
+    );
+    return null;
+  }
+}
+
+function finalizeApiTradeEv(
+  record: PipelineTradeEv,
+  lookupKey: string,
+  item: PipelineTradeEvInput
+): PipelineTradeEv {
+  const normalized = normalizePipelineTradeEv(record, lookupKey) ?? record;
+  let payload = attachAverageEvField(
+    strictApiTradeEvPayload(normalized, lookupKey)
+  );
+
+  const executionPrice = normalizeIncomingTradePrice(item.tradePrice);
+  if (executionPrice != null && payload.status === "ok") {
+    payload = attachAverageEvField(
+      applyExecutionPricingToTradeEv(payload, {
+        lookupKey,
+        platform: item.source,
+        executionPrice,
+        tokenId: payload.tokenId,
+        kalshiTicker: payload.kalshiTicker,
+        mappingPairKey: payload.mappingPairKey ?? null,
+        pmMid: payload.pmMid ?? null,
+        kalshiMid: payload.kalshiMid ?? null,
+      })
+    );
+  }
+
+  return payload;
+}
+
+/**
+ * Resolve trade EV for API responses — always returns numeric EV for mapped markets.
+ * Reads precomputed pipeline cache first; sync-computes before responding on cache miss.
+ */
+export async function ensureFullyComputedTradeEv(
+  lookupKey: string,
+  item: PipelineTradeEvInput,
+  mapping?: CachedMapping | null
+): Promise<PipelineTradeEv> {
+  const resolvedMapping =
+    mapping ??
+    (await loadMappingForTradeEv(item.tokenId, item.kalshiTicker));
+
+  const tryFinalize = (record: PipelineTradeEv | null | undefined) => {
+    if (!record) return null;
+    const payload = finalizeApiTradeEv(record, lookupKey, item);
+    return isFullyComputedTradeEv(payload) ? payload : null;
   };
+
+  const localHit = tryFinalize(readLocalTradeEvLookup(lookupKey, item.source));
+  if (localHit) return localHit;
+
+  const storeHit = tryFinalize(await getTradeEvLookup(lookupKey));
+  if (storeHit) {
+    await cacheTradeEvLookup(lookupKey, storeHit);
+    return storeHit;
+  }
+
+  if (resolvedMapping) {
+    const fromMapping = tryFinalize(
+      buildTradeEvFromCachedMapping(lookupKey, resolvedMapping, item)
+    );
+    if (fromMapping) {
+      await cacheTradeEvLookup(lookupKey, fromMapping);
+      return fromMapping;
+    }
+  }
+
+  const syncPriced = tryFinalize(
+    await syncComputePricingEv(lookupKey, item, resolvedMapping)
+  );
+  if (syncPriced) return syncPriced;
+
+  try {
+    const resolved = await resolvePipelineTradeEv(item);
+    const resolvedPayload = tryFinalize(resolved);
+    if (resolvedPayload) return resolvedPayload;
+  } catch (resolveErr) {
+    console.error(
+      "[ev/trades] resolvePipelineTradeEv failed:",
+      resolveErr instanceof Error ? resolveErr.message : resolveErr
+    );
+  }
+
+  if (resolvedMapping) {
+    const pipelineSynced = tryFinalize(
+      await syncComputePipelineEvForMapping(lookupKey, item, resolvedMapping)
+    );
+    if (pipelineSynced) return pipelineSynced;
+
+    const retryLocal = tryFinalize(
+      readLocalTradeEvLookup(lookupKey, item.source)
+    );
+    if (retryLocal) return retryLocal;
+
+    const retryStore = tryFinalize(await getTradeEvLookup(lookupKey));
+    if (retryStore) return retryStore;
+  }
+
+  if (resolvedMapping) {
+    console.warn(
+      `[ev/trades] Mapped market ${lookupKey} missing precomputed EV after sync attempts`
+    );
+  }
+
+  return createUnmappedPipelineTradeEv(lookupKey, item);
 }
 
 async function latestPTrueFromDb(tokenId: string): Promise<number | null> {
@@ -194,23 +602,26 @@ async function enrichInputFromMappingCache(
   const tokenId = normalizePmTokenId(input.tokenId);
   const kalshiTicker = normalizeKalshiTicker(input.kalshiTicker);
 
-  if (input.source === "polymarket" && tokenId && !kalshiTicker) {
-    const mapping = await getMappingByPm(tokenId);
-    return enrichPipelineEvInputFromMapping(input, mapping);
-  }
+  const mapping = await loadMappingForTradeEv(tokenId, kalshiTicker);
+  return enrichPipelineEvInputFromMapping(input, mapping);
+}
 
-  if (input.source === "kalshi" && kalshiTicker && !tokenId) {
-    const mapping = await getMappingByKalshi(kalshiTicker);
-    return enrichPipelineEvInputFromMapping(input, mapping);
-  }
-
-  return input;
+async function resolveSportsExchangeMid(
+  input: PipelineTradeEvInput,
+  tokenId: string | null,
+  mappingPairKey: string | null
+): Promise<number | null> {
+  if (mappingPairKey || !tokenId || input.source !== "polymarket") return null;
+  const baseline = await lookupExchangeConsensusBaseline({ tokenId });
+  if (!baseline) return null;
+  return Math.round(((baseline.yesBid + baseline.yesAsk) / 2) * 10000) / 10000;
 }
 
 function applyPricingToResolvedTrade(
   record: PipelineTradeEv,
   input: PipelineTradeEvInput,
-  books: Awaited<ReturnType<typeof loadOrderBookContext>>
+  books: Awaited<ReturnType<typeof loadOrderBookContext>>,
+  exchangeMid: number | null = null
 ): PipelineTradeEv {
   const tokenId = normalizePmTokenId(record.tokenId ?? input.tokenId);
   const kalshiTicker = normalizeKalshiTicker(
@@ -230,6 +641,7 @@ function applyPricingToResolvedTrade(
     kalshiOb: books.kalshiOb,
     pmMid: books.pmMid ?? record.pmMid ?? null,
     kalshiMid: books.kalshiMid ?? record.kalshiMid ?? null,
+    exchangeMid,
     executionPrice: input.tradePrice,
     tokenId,
     kalshiTicker,
@@ -256,6 +668,11 @@ export async function resolvePipelineTradeEv(
     tokenId && kalshiTicker
       ? pipelineMappingPairKey(tokenId, kalshiTicker)
       : null;
+  const exchangeMid = await resolveSportsExchangeMid(
+    enriched,
+    tokenId,
+    mappingPairKey
+  );
 
   try {
     const cachedEv = await getTradeEvLookupRedisOnly(key);
@@ -263,7 +680,8 @@ export async function resolvePipelineTradeEv(
       const priced = applyPricingToResolvedTrade(
         finalizePipelineTradeEv({ ...cachedEv, key }, key),
         enriched,
-        books
+        books,
+        exchangeMid
       );
       if (
         priced.netEvPercent !== null &&
@@ -291,6 +709,7 @@ export async function resolvePipelineTradeEv(
     kalshiOb: books.kalshiOb,
     pmMid: books.pmMid,
     kalshiMid: books.kalshiMid,
+    exchangeMid,
     executionPrice: enriched.tradePrice,
   });
 
@@ -319,6 +738,7 @@ export async function resolvePipelineTradeEv(
     kalshiOb: books.kalshiOb,
     pmMid: books.pmMid ?? dbPTrue,
     kalshiMid: books.kalshiMid ?? dbPTrue,
+    exchangeMid,
     executionPrice: enriched.tradePrice,
   });
 

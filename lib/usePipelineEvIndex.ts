@@ -108,7 +108,6 @@ const WHALE_EV_REFRESH_MS = 45_000;
 
 export function usePipelineEvForWhales(whales: WhaleTrade[]) {
   const [index, setIndex] = useState<Map<string, PipelineTradeEv>>(new Map());
-  const [loading, setLoading] = useState(true);
 
   const whalesKey = whales
     .map(
@@ -121,17 +120,12 @@ export function usePipelineEvForWhales(whales: WhaleTrade[]) {
     const items = buildWhalePipelineEvRequests(whales);
     if (items.length === 0) {
       setIndex(new Map());
-      setLoading(false);
       return;
     }
 
     let cancelled = false;
 
-    const load = async (isRefresh = false) => {
-      if (!isRefresh) {
-        setLoading(true);
-      }
-
+    const load = async () => {
       try {
         const fetched = await fetchPipelineEvBatch(items);
         if (!cancelled) {
@@ -144,17 +138,13 @@ export function usePipelineEvForWhales(whales: WhaleTrade[]) {
           });
         }
       } catch {
-        if (!cancelled && !isRefresh) {
-          setIndex(new Map());
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
+        // Keep prior index entries on refresh failure.
       }
     };
 
-    void load(false);
+    void load();
     const timer = setInterval(() => {
-      void load(true);
+      void load();
     }, WHALE_EV_REFRESH_MS);
 
     return () => {
@@ -163,5 +153,5 @@ export function usePipelineEvForWhales(whales: WhaleTrade[]) {
     };
   }, [whalesKey]);
 
-  return { index, loading };
+  return { index };
 }

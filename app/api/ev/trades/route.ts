@@ -1,20 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  buildDynamicBaselineTradeEv,
   createUnmappedPipelineTradeEv,
-  resolvePipelineTradeEv,
+  ensureFullyComputedTradeEv,
+  loadMappingForTradeEv,
   type PipelineTradeEvInput,
 } from "@/lib/evPipeline/resolveTradeEv";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import { normalizePipelineLookupKey } from "@/lib/evPipeline/types";
 import {
   mergeLocalEvCache,
-  readLocalTradeEvLookup,
   initGlobalLocalEvCache,
   seedPipelineLocalEvCache,
-  getTradeEvLookupRedisOnly,
-  prefetchMappingsByKalshiTickers,
-  prefetchMappingsByPmTokenIds,
+  type CachedMapping,
 } from "@/lib/evPipeline/redisCache";
 import {
   enrichPipelineEvInputFromMapping,
@@ -24,12 +21,8 @@ import {
   normalizePmTokenId,
 } from "@/lib/evPipeline/crossAssetLookup";
 import {
-  applyExecutionPricingToTradeEv,
-} from "@/lib/evPipeline/pricing";
-import {
   normalizeIncomingTradePrice,
   normalizePipelineTradeEv,
-  strictApiTradeEvPayload,
 } from "@/lib/evPipeline/tradeEvRecord";
 
 initGlobalLocalEvCache();
@@ -94,53 +87,6 @@ function normalizeItem(item: TradeEvRequestItem): PipelineTradeEvInput | null {
   };
 }
 
-function mapApiTradeEvPayload(
-  item: PipelineTradeEv,
-  lookupKey: string,
-  requestItem?: PipelineTradeEvInput
-): PipelineTradeEv {
-  const normalized = normalizePipelineTradeEv(item, lookupKey) ?? item;
-  let payload = strictApiTradeEvPayload(normalized, lookupKey);
-
-  const executionPrice = normalizeIncomingTradePrice(requestItem?.tradePrice);
-  if (executionPrice != null && payload.status === "ok") {
-    payload = applyExecutionPricingToTradeEv(payload, {
-      lookupKey,
-      platform: requestItem?.source ?? "polymarket",
-      executionPrice,
-      tokenId: payload.tokenId,
-      kalshiTicker: payload.kalshiTicker,
-      mappingPairKey: payload.mappingPairKey ?? null,
-      pmMid: payload.pmMid ?? null,
-      kalshiMid: payload.kalshiMid ?? null,
-    });
-  }
-
-  return payload;
-}
-
-function safeMapApiTradeEvPayload(
-  item: PipelineTradeEv,
-  lookupKey: string,
-  requestItem?: PipelineTradeEvInput
-): PipelineTradeEv {
-  try {
-    return mapApiTradeEvPayload(item, lookupKey, requestItem);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error("Batch EV Fetch Error:", message);
-    return createUnmappedPipelineTradeEv(lookupKey);
-  }
-}
-
-function isCachedOkPayload(payload: PipelineTradeEv): boolean {
-  return (
-    payload.status === "ok" &&
-    payload.netEvPercent !== null &&
-    payload.netEvPercent !== undefined
-  );
-}
-
 function logSamplePayload(responseData: {
   entries: PipelineTradeEv[];
   byKey: Record<string, PipelineTradeEv>;
@@ -162,98 +108,32 @@ function logSamplePayload(responseData: {
   }
 }
 
-async function resolveBatchTradeEv(
-  lookupKey: string,
-  item: PipelineTradeEvInput
-): Promise<PipelineTradeEv> {
-  try {
-    const storeHit = await getTradeEvLookupRedisOnly(lookupKey);
-    if (storeHit) {
-      const payload = safeMapApiTradeEvPayload(storeHit, lookupKey, item);
-      if (isCachedOkPayload(payload)) {
-        seedPipelineLocalEvCache(lookupKey, payload);
-        return payload;
-      }
-    }
-
-    try {
-      const row = await resolvePipelineTradeEv(item);
-      if (row) {
-        const resolvedPayload = safeMapApiTradeEvPayload(row, lookupKey, item);
-        if (isCachedOkPayload(resolvedPayload)) {
-          seedPipelineLocalEvCache(lookupKey, resolvedPayload);
-          return resolvedPayload;
-        }
-      }
-    } catch (resolveErr) {
-      console.error(
-        "Batch EV Fetch Error:",
-        resolveErr instanceof Error ? resolveErr.message : resolveErr
-      );
-    }
-
-    const localHit = readLocalTradeEvLookup(lookupKey, item.source);
-    if (localHit) {
-      const payload = safeMapApiTradeEvPayload(localHit, lookupKey, item);
-      if (isCachedOkPayload(payload)) {
-        return payload;
-      }
-    }
-
-    const dynamicFallback = buildDynamicBaselineTradeEv(lookupKey, item);
-    const payload = safeMapApiTradeEvPayload(dynamicFallback, lookupKey, item);
-    seedPipelineLocalEvCache(lookupKey, payload);
-    return payload;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error("Batch EV Fetch Error:", message);
-    const dynamicFallback = buildDynamicBaselineTradeEv(lookupKey, item);
-    const payload = safeMapApiTradeEvPayload(dynamicFallback, lookupKey, item);
-    seedPipelineLocalEvCache(lookupKey, payload);
-    return payload;
-  }
-}
-
 async function enrichBatchItemsFromMappings(
   items: Map<string, { item: PipelineTradeEvInput; lookupKey: string }>
-): Promise<Map<string, { item: PipelineTradeEvInput; lookupKey: string }>> {
-  const pmTokenIds: string[] = [];
-  const kalshiTickers: string[] = [];
-
-  for (const { item } of Array.from(items.values())) {
-    const tokenId = normalizePmTokenId(item.tokenId);
-    const kalshiTicker = normalizeKalshiTicker(item.kalshiTicker);
-    if (item.source === "polymarket" && tokenId && !kalshiTicker) {
-      pmTokenIds.push(tokenId);
-    }
-    if (item.source === "kalshi" && kalshiTicker && !tokenId) {
-      kalshiTickers.push(kalshiTicker);
-    }
-  }
-
-  const [pmMappings, kalshiMappings] = await Promise.all([
-    prefetchMappingsByPmTokenIds(pmTokenIds),
-    prefetchMappingsByKalshiTickers(kalshiTickers),
-  ]);
-
+): Promise<
+  Map<
+    string,
+    { item: PipelineTradeEvInput; lookupKey: string; mapping: CachedMapping | null }
+  >
+> {
   const enriched = new Map<
     string,
-    { item: PipelineTradeEvInput; lookupKey: string }
+    { item: PipelineTradeEvInput; lookupKey: string; mapping: CachedMapping | null }
   >();
 
-  for (const [lookupKey, row] of Array.from(items.entries())) {
-    const tokenId = normalizePmTokenId(row.item.tokenId);
-    const kalshiTicker = normalizeKalshiTicker(row.item.kalshiTicker);
-    const mapping =
-      (tokenId ? pmMappings.get(tokenId) : null) ??
-      (kalshiTicker ? kalshiMappings.get(kalshiTicker) : null) ??
-      null;
+  await Promise.all(
+    Array.from(items.entries()).map(async ([lookupKey, row]) => {
+      const tokenId = normalizePmTokenId(row.item.tokenId);
+      const kalshiTicker = normalizeKalshiTicker(row.item.kalshiTicker);
+      const mapping = await loadMappingForTradeEv(tokenId, kalshiTicker);
 
-    enriched.set(lookupKey, {
-      lookupKey,
-      item: enrichPipelineEvInputFromMapping(row.item, mapping),
-    });
-  }
+      enriched.set(lookupKey, {
+        lookupKey,
+        mapping,
+        item: enrichPipelineEvInputFromMapping(row.item, mapping),
+      });
+    })
+  );
 
   return enriched;
 }
@@ -304,19 +184,24 @@ export async function POST(request: NextRequest) {
       collectUniqueBatchItems(body.items ?? [])
     );
 
-    for (const { lookupKey, item } of Array.from(unique.values())) {
+    for (const { lookupKey, item, mapping } of Array.from(unique.values())) {
       try {
-        const payload = await resolveBatchTradeEv(lookupKey, item);
+        const payload = await ensureFullyComputedTradeEv(
+          lookupKey,
+          item,
+          mapping
+        );
         byKey[lookupKey] = payload;
         entries.push(payload);
+        if (payload.status === "ok") {
+          seedPipelineLocalEvCache(lookupKey, payload);
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error("Batch EV Fetch Error:", message);
-        const fallback = buildDynamicBaselineTradeEv(lookupKey, item);
-        const payload = safeMapApiTradeEvPayload(fallback, lookupKey, item);
-        seedPipelineLocalEvCache(lookupKey, payload);
-        byKey[lookupKey] = payload;
-        entries.push(payload);
+        const fallback = createUnmappedPipelineTradeEv(lookupKey, item);
+        byKey[lookupKey] = fallback;
+        entries.push(fallback);
       }
     }
 
@@ -403,8 +288,16 @@ export async function GET(request: NextRequest) {
     );
     const row = enriched.get(lookupKey);
     const resolvedItem = row?.item ?? item;
+    const resolvedMapping = row?.mapping ?? null;
 
-    const entry = await resolveBatchTradeEv(lookupKey, resolvedItem);
+    const entry = await ensureFullyComputedTradeEv(
+      lookupKey,
+      resolvedItem,
+      resolvedMapping
+    );
+    if (entry.status === "ok") {
+      seedPipelineLocalEvCache(lookupKey, entry);
+    }
     const enrichedEntry =
       normalizePipelineTradeEv(
         enrichPipelineTradeEvCrossIds(entry, lookupKey),

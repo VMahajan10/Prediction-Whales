@@ -1,4 +1,4 @@
-import { kalshiCodeToPm, pmCodeToKalshi } from "@/lib/teamCodes";
+import { kalshiCodeToPm, normalizePmTeamCode, pmCodeToKalshi } from "@/lib/teamCodes";
 import { mapWithConcurrency } from "@/lib/clvPriceHistory";
 import {
   attachManifoldBooksToIndex,
@@ -235,9 +235,9 @@ export function parsePmMoneylineSlug(slug: string): {
   let outcome: OutcomeSide | null = null;
   if (outcomePm === "draw") {
     outcome = "draw";
-  } else if (outcomePm === pmA) {
+  } else if (normalizePmTeamCode(outcomePm) === normalizePmTeamCode(pmA)) {
     outcome = "team_a";
-  } else if (outcomePm === pmB) {
+  } else if (normalizePmTeamCode(outcomePm) === normalizePmTeamCode(pmB)) {
     outcome = "team_b";
   }
 

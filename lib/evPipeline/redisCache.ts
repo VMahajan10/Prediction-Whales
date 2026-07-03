@@ -172,6 +172,13 @@ export interface CachedMapping {
   confidenceScore: number;
   orientation: "same" | "inverted";
   matchMethod: string;
+  /** Ensemble p_true on the primary PM market. */
+  pTrue?: number | null;
+  /** Resting-mid average EV % (alias: netEvPercent at mapping time). */
+  averageEv?: number | null;
+  grossEvPercent?: number | null;
+  netEvPercent?: number | null;
+  evComputedAt?: string;
 }
 
 export interface CachedTraderEv {

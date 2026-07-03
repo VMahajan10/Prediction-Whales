@@ -25,12 +25,14 @@ export default function PipelineEvBadge({
 }: PipelineEvBadgeProps) {
   if (!isResolvedPipelineTradeEv(ev)) return null;
 
-  const label = formatEvPercent(ev.netEvPercent);
-  const title = `AI pipeline EV · p_true ${(ev.pTrue * 100).toFixed(1)}¢ vs market ${(ev.pMarket * 100).toFixed(1)}¢`;
+  const netEvPercent = ev.averageEv ?? ev.netEvPercent;
+  const label = formatEvPercent(netEvPercent);
+  const pMarket = ev.pMarket ?? 0;
+  const title = `AI pipeline EV · p_true ${(ev.pTrue * 100).toFixed(1)}¢ vs market ${(pMarket * 100).toFixed(1)}¢`;
 
   return (
     <span
-      className={`inline-flex shrink-0 items-center rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${badgeClasses(ev.netEvPercent)} ${className}`}
+      className={`inline-flex shrink-0 items-center rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${badgeClasses(netEvPercent)} ${className}`}
       title={title}
     >
       {label} EV
@@ -44,7 +46,7 @@ export function PipelineEvInline({
 }: PipelineEvBadgeProps) {
   if (!isResolvedPipelineTradeEv(ev)) return null;
 
-  const netEvPercent = ev.netEvPercent;
+  const netEvPercent = ev.averageEv ?? ev.netEvPercent;
   const positive = netEvPercent > 0;
   const negative = netEvPercent < -0.05;
   const color = positive
@@ -52,11 +54,12 @@ export function PipelineEvInline({
     : negative
       ? "text-red-400/80"
       : "text-slate-400";
+  const pMarket = ev.pMarket ?? 0;
 
   return (
     <span
       className={`text-[11px] ${color} ${className}`}
-      title={`AI pipeline · p_true ${(ev.pTrue * 100).toFixed(1)}¢ vs ${(ev.pMarket * 100).toFixed(1)}¢`}
+      title={`AI pipeline · p_true ${(ev.pTrue * 100).toFixed(1)}¢ vs ${(pMarket * 100).toFixed(1)}¢`}
     >
       {formatEvPercent(netEvPercent)} EV
     </span>

@@ -12,7 +12,7 @@ import {
   toEvDisplayPercent,
 } from "@/lib/evPipeline/tradeEvRecord";
 
-export type PricingMode = "paired_cross" | "standalone_resting";
+export type PricingMode = "paired_cross" | "standalone_resting" | "exchange_consensus";
 
 export interface TradeEvPricingInput {
   mappingPairKey: string | null;
@@ -21,6 +21,8 @@ export interface TradeEvPricingInput {
   kalshiOb?: CachedOrderBookMid | null;
   pmMid?: number | null;
   kalshiMid?: number | null;
+  /** Sportsbook consensus mid when Kalshi pair is missing. */
+  exchangeMid?: number | null;
   executionPrice?: number | null;
   tokenId?: string | null;
   kalshiTicker?: string | null;
@@ -110,6 +112,7 @@ export function computePricingPTrue(input: {
   kalshiOb?: CachedOrderBookMid | null;
   pmMid?: number | null;
   kalshiMid?: number | null;
+  exchangeMid?: number | null;
 }):
   | {
       pTrue: number;
@@ -144,6 +147,21 @@ export function computePricingPTrue(input: {
     pmResting,
     kalshiResting
   );
+
+  if (
+    !input.mappingPairKey &&
+    input.platform === "polymarket" &&
+    input.exchangeMid != null &&
+    Number.isFinite(input.exchangeMid)
+  ) {
+    return {
+      pTrue: input.exchangeMid,
+      pmMid: pmResting,
+      kalshiMid: kalshiResting,
+      pricingMode: "exchange_consensus",
+    };
+  }
+
   if (standalone == null) return null;
 
   return {
@@ -185,6 +203,7 @@ export function computeTradeEvPricing(
     kalshiOb: input.kalshiOb,
     pmMid: input.pmMid,
     kalshiMid: input.kalshiMid,
+    exchangeMid: input.exchangeMid,
   });
 
   if (!priced) return null;
@@ -286,6 +305,7 @@ export function applyExecutionPricingToTradeEv(
     kalshiOb: input.kalshiOb,
     pmMid: input.pmMid ?? record.pmMid ?? null,
     kalshiMid: input.kalshiMid ?? record.kalshiMid ?? null,
+    exchangeMid: input.exchangeMid,
     executionPrice: input.executionPrice,
     tokenId,
     kalshiTicker,

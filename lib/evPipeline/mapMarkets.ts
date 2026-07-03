@@ -1,6 +1,8 @@
+import { and, eq } from "drizzle-orm";
 import { getDb, isDatabaseEnabled } from "@/lib/crossmarket/store/db";
 import { marketMappings } from "@/lib/crossmarket/store/schema";
 import { cosineSimilarity, embedTexts } from "@/lib/evPipeline/embeddings";
+import { computeEvForMappedPair } from "@/lib/evPipeline/computeMappedEv";
 import {
   validateMatchMarketsPreflight,
   formatPreflightErrors,
@@ -20,7 +22,9 @@ import {
 import {
   EvPipelineRedisWriteBatch,
   evRedisKeys,
+  initGlobalLocalEvCache,
   type CachedMapping,
+  type CachedOrderBookMid,
 } from "@/lib/evPipeline/redisCache";
 import {
   matchSportsStructurePairs,
@@ -36,6 +40,8 @@ import {
   type MappingFailure,
   type NormalizedMarketContract,
 } from "@/lib/evPipeline/types";
+
+initGlobalLocalEvCache();
 
 export interface RunMarketMappingOptions extends FetchMarketsOptions {
   similarityThreshold?: number;
@@ -129,43 +135,108 @@ async function persistMatches(
           },
         });
 
-      const cached: CachedMapping = {
-        polymarketTokenId: match.polymarketTokenId.toLowerCase(),
-        kalshiTicker: match.kalshiTicker.toUpperCase(),
-        confidenceScore: match.similarity,
-        orientation: "same",
-        matchMethod,
-      };
-      redisBatch.queueMappingBothWays(cached);
+      const [mappingRow] = await db
+        .select({ id: marketMappings.id })
+        .from(marketMappings)
+        .where(
+          and(
+            eq(
+              marketMappings.polymarketTokenId,
+              match.polymarketTokenId.toLowerCase()
+            ),
+            eq(marketMappings.kalshiTicker, match.kalshiTicker.toUpperCase())
+          )
+        )
+        .limit(1);
 
       const pmContract = pmByToken.get(match.polymarketTokenId.toLowerCase());
       const kalshiContract = kalshiByTicker.get(match.kalshiTicker.toUpperCase());
       const pmMid = midFromContract(pmContract);
       const kalshiMid = midFromContract(kalshiContract);
 
-      if (pmMid != null) {
+      const pmOb: CachedOrderBookMid | null =
+        pmMid != null
+          ? {
+              bid: pmContract?.yesBid ?? pmMid,
+              ask: pmContract?.yesAsk ?? pmMid,
+              mid: pmMid,
+              ts: Date.now(),
+            }
+          : null;
+      const kalshiOb: CachedOrderBookMid | null =
+        kalshiMid != null
+          ? {
+              bid: kalshiContract?.yesBid ?? kalshiMid,
+              ask: kalshiContract?.yesAsk ?? kalshiMid,
+              mid: kalshiMid,
+              ts: Date.now(),
+            }
+          : null;
+
+      if (pmOb) {
         redisBatch.queueOrderBookMid(
           evRedisKeys.orderBookPm(match.polymarketTokenId.toLowerCase()),
-          {
-            bid: pmContract?.yesBid ?? pmMid,
-            ask: pmContract?.yesAsk ?? pmMid,
-            mid: pmMid,
-            ts: Date.now(),
-          }
+          pmOb
         );
       }
 
-      if (kalshiMid != null) {
+      if (kalshiOb) {
         redisBatch.queueOrderBookMid(
           evRedisKeys.orderBookKalshi(match.kalshiTicker.toUpperCase()),
-          {
-            bid: kalshiContract?.yesBid ?? kalshiMid,
-            ask: kalshiContract?.yesAsk ?? kalshiMid,
-            mid: kalshiMid,
-            ts: Date.now(),
-          }
+          kalshiOb
         );
       }
+
+      let evSnapshot: Awaited<ReturnType<typeof computeEvForMappedPair>> = null;
+      try {
+        evSnapshot = await computeEvForMappedPair(
+          db,
+          {
+            id: mappingRow?.id,
+            polymarketTokenId: match.polymarketTokenId,
+            kalshiTicker: match.kalshiTicker,
+            polymarketTitle: match.polymarketTitle,
+            kalshiTitle: match.kalshiTitle,
+            pmMid,
+            kalshiMid,
+            pmOb,
+            kalshiOb,
+          },
+          redisBatch
+        );
+      } catch (evErr) {
+        console.error(
+          `[ev/map-markets] Eager EV failed for ${match.polymarketTokenId} ↔ ${match.kalshiTicker}:`,
+          evErr instanceof Error ? evErr.message : evErr
+        );
+        failures.push({
+          stage: "persist",
+          message: `Eager EV computation failed: ${evErr instanceof Error ? evErr.message : String(evErr)}`,
+          polymarketTokenId: match.polymarketTokenId,
+          kalshiTicker: match.kalshiTicker,
+        });
+      }
+
+      if (evSnapshot) {
+        match.pTrue = evSnapshot.pTrue;
+        match.averageEv = evSnapshot.averageEv;
+        match.grossEvPercent = evSnapshot.grossEvPercent;
+        match.netEvPercent = evSnapshot.netEvPercent;
+      }
+
+      const cached: CachedMapping = {
+        polymarketTokenId: match.polymarketTokenId.toLowerCase(),
+        kalshiTicker: match.kalshiTicker.toUpperCase(),
+        confidenceScore: match.similarity,
+        orientation: "same",
+        matchMethod,
+        pTrue: evSnapshot?.pTrue ?? null,
+        averageEv: evSnapshot?.averageEv ?? null,
+        grossEvPercent: evSnapshot?.grossEvPercent ?? null,
+        netEvPercent: evSnapshot?.netEvPercent ?? null,
+        evComputedAt: evSnapshot?.computedAt,
+      };
+      redisBatch.queueMappingBothWays(cached);
 
       persisted += 1;
     } catch (err) {
