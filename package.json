@@ -14,7 +14,15 @@
     "cap:android": "npx cap open android",
     "db:migrate": "drizzle-kit migrate",
     "db:generate": "drizzle-kit generate",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "test:phase0-phase1": "npx tsx --tsconfig tsconfig.json lib/evPipeline/phase0Phase1.test.ts",
+    "test:phase4": "npx tsx --tsconfig tsconfig.json lib/evPipeline/phase4.test.ts",
+    "test:phase5": "npx tsx --tsconfig tsconfig.json lib/evPipeline/phase5.test.ts",
+    "test:rag-live": "npx tsx --tsconfig tsconfig.json scripts/test-rag-live.ts",
+    "backfill:ptrue": "npx tsx --tsconfig tsconfig.json scripts/backfill-ptrue.ts",
+    "report:pipeline-coverage": "npx tsx --tsconfig tsconfig.json scripts/pipeline-coverage-report.ts",
+    "flush:ev-cache": "npx tsx --tsconfig tsconfig.json scripts/flush-ev-cache.ts",
+    "test:live-ptrue": "npx tsx --tsconfig tsconfig.json scripts/test-live-ptrue-workflow.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.77",

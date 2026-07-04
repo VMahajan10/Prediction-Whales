@@ -22,7 +22,7 @@ import {
 } from "@/lib/evPipeline/crossAssetLookup";
 import {
   normalizeIncomingTradePrice,
-  normalizePipelineTradeEv,
+  sealClientTradeEvPayload,
 } from "@/lib/evPipeline/tradeEvRecord";
 
 initGlobalLocalEvCache();
@@ -85,6 +85,16 @@ function normalizeItem(item: TradeEvRequestItem): PipelineTradeEvInput | null {
     kalshiTicker: (item.kalshiTicker ?? item.ticker)?.trim(),
     tradePrice,
   };
+}
+
+function sealTradeEvResponse(
+  entry: PipelineTradeEv,
+  lookupKey: string
+): PipelineTradeEv {
+  return sealClientTradeEvPayload(
+    enrichPipelineTradeEvCrossIds(entry, lookupKey),
+    lookupKey
+  );
 }
 
 function logSamplePayload(responseData: {
@@ -191,10 +201,11 @@ export async function POST(request: NextRequest) {
           item,
           mapping
         );
-        byKey[lookupKey] = payload;
-        entries.push(payload);
-        if (payload.status === "ok") {
-          seedPipelineLocalEvCache(lookupKey, payload);
+        const sealed = sealTradeEvResponse(payload, lookupKey);
+        byKey[lookupKey] = sealed;
+        entries.push(sealed);
+        if (sealed.status === "ok") {
+          seedPipelineLocalEvCache(lookupKey, sealed);
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -295,14 +306,10 @@ export async function GET(request: NextRequest) {
       resolvedItem,
       resolvedMapping
     );
-    if (entry.status === "ok") {
-      seedPipelineLocalEvCache(lookupKey, entry);
+    const enrichedEntry = sealTradeEvResponse(entry, lookupKey);
+    if (enrichedEntry.status === "ok") {
+      seedPipelineLocalEvCache(lookupKey, enrichedEntry);
     }
-    const enrichedEntry =
-      normalizePipelineTradeEv(
-        enrichPipelineTradeEvCrossIds(entry, lookupKey),
-        lookupKey
-      ) ?? enrichPipelineTradeEvCrossIds(entry, lookupKey);
     console.log("Final Sent Payload Sample:", enrichedEntry);
     return NextResponse.json({ entry: enrichedEntry }, { status: 200 });
   } catch (err) {

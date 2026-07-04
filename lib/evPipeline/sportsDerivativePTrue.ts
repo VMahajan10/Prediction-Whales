@@ -5,14 +5,14 @@ import {
   type ParsedGameKey,
 } from "@/lib/crossMarketEv";
 import { countryNameToPm } from "@/lib/sportsTeamMatch";
-import { pmCodeToKalshi } from "@/lib/teamCodes";
 import { kalshiLineFromOutcome, type SportsMarketKind } from "@/lib/evPipeline/sportsStructureMatch";
-
-const PM_GAME_SLUG =
-  /^fifwc-([a-z]+)-([a-z]+)-(\d{4}-\d{2}-\d{2})(?:-(.*))?$/i;
-
-const VS_TITLE =
-  /\b([a-z][a-z\s'’.\-]{1,40}?)\s+(?:vs\.?|versus|v\.?)\s+([a-z][a-z\s'’.\-]{1,40}?)\b/i;
+import {
+  buildLooseParsedGameKey,
+  fuzzyTeamTokenFromLabel,
+  parseGameFromPmSlug,
+  parseGenericPmGameSlug,
+  parseVsTitleTeams,
+} from "@/lib/evPipeline/sportsSlugParse";
 
 const LINE_TEXT =
   /\b(?:o\/u|over\/under|over under|total|line)\s*(\d+(?:\.\d+)?)\b/i;
@@ -52,19 +52,8 @@ function clampProb(p: number): number {
   return Math.max(0.001, Math.min(0.999, p));
 }
 
-function buildGameKey(pmA: string, pmB: string, date: string): ParsedGameKey | null {
-  const kalshiA = pmCodeToKalshi(pmA);
-  const kalshiB = pmCodeToKalshi(pmB);
-  if (!kalshiA || !kalshiB) return null;
-  return {
-    date,
-    kalshiTeamA: kalshiA,
-    kalshiTeamB: kalshiB,
-    pmTeamA: pmA,
-    pmTeamB: pmB,
-    kickoffEpochSec: null,
-    kickoffKnown: false,
-  };
+function buildGameKey(pmA: string, pmB: string, date: string): ParsedGameKey {
+  return buildLooseParsedGameKey(pmA, pmB, date);
 }
 
 function inferKind(text: string): SportsMarketKind {
@@ -104,10 +93,15 @@ function inferSide(text: string): "over" | "under" | "yes" | null {
 }
 
 function parseGameFromTitle(title: string): ParsedGameKey | null {
-  const m = title.match(VS_TITLE);
+  const vsLoose = parseVsTitleTeams(title);
+  if (vsLoose) {
+    return buildGameKey(vsLoose.teamA, vsLoose.teamB, "");
+  }
+
+  const m = title.match(/\b(.+?)\s+vs\.?\s+(.+?)(?:\?|$)/i);
   if (!m) return null;
-  const pmA = countryNameToPm(m[1]);
-  const pmB = countryNameToPm(m[2]);
+  const pmA = countryNameToPm(m[1]) ?? fuzzyTeamTokenFromLabel(m[1]);
+  const pmB = countryNameToPm(m[2]) ?? fuzzyTeamTokenFromLabel(m[2]);
   if (!pmA || !pmB) return null;
   return buildGameKey(pmA, pmB, "");
 }
@@ -164,13 +158,14 @@ export function parseSportsDerivativeFromMapping(input: {
       teamOutcomePm = moneyline.outcomePm;
       line = null;
     } else {
-      const gameSlug = slug.match(PM_GAME_SLUG);
-      if (gameSlug) {
-        const [, pmA, pmB, date, suffixRaw] = gameSlug;
-        game = buildGameKey(pmA, pmB, date);
-        const suffix = (suffixRaw ?? "").toLowerCase();
+      const generic = parseGenericPmGameSlug(slug);
+      if (generic) {
+        game = buildGameKey(generic.pmTeamA, generic.pmTeamB, generic.date);
+        const suffix = generic.suffix ?? "";
         if (kind === "unknown") kind = inferKind(`${suffix} ${corpus}`);
         line = line ?? extractLine(corpus) ?? parseLineFromSlugSuffix(suffix);
+      } else {
+        game = parseGameFromPmSlug(slug);
       }
     }
   }

@@ -4,8 +4,9 @@ import {
   marketMappings,
   trueProbabilities,
 } from "@/lib/crossmarket/store/schema";
-import { calculatePTrue } from "@/lib/ai/probabilityEngine";
 import type { MatchedPair, PipelineTradeEv } from "@/lib/evPipeline/types";
+import { resolvePTrue } from "@/lib/evPipeline/pTrueEnsembleResolver";
+import type { PTrueResult } from "@/lib/evPipeline/pTrueTypes";
 import {
   pipelineEvLookupKeyKalshi,
   pipelineEvLookupKeyPm,
@@ -32,6 +33,7 @@ import {
   sortMappingsForDerivativePricing,
   updateDerivativeAnchorFromPrimary,
 } from "@/lib/evPipeline/derivativePTrue";
+import { appendOddsHistory } from "@/lib/ai/rag/oddsHistoryStore";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -69,6 +71,34 @@ function emptyMappingPrefetch(): MappingRedisPrefetch {
   return { pmOb: null, kalshiOb: null, pTrue: null };
 }
 
+async function resolveMappingEnsemblePTrue(params: {
+  tokenId: string;
+  kalshiTicker: string;
+  title: string;
+  pmMid: number | null;
+  kalshiMid: number | null;
+  marketPrior: number;
+  pmOb: MappingRedisPrefetch["pmOb"];
+  kalshiOb: MappingRedisPrefetch["kalshiOb"];
+  computeEnsembleIfMissing?: boolean;
+}): Promise<PTrueResult> {
+  return resolvePTrue({
+    mappingPairKey: pipelineMappingPairKey(params.tokenId, params.kalshiTicker),
+    platform: "polymarket",
+    tokenId: params.tokenId,
+    kalshiTicker: params.kalshiTicker,
+    title: params.title,
+    pmOb: params.pmOb,
+    kalshiOb: params.kalshiOb,
+    pmMid: params.pmMid,
+    kalshiMid: params.kalshiMid,
+    marketPrior: params.marketPrior,
+    fetchEnsemble: true,
+    fetchExchangeConsensus: true,
+    computeEnsembleIfMissing: params.computeEnsembleIfMissing ?? true,
+  });
+}
+
 async function persistTradeEvLookups(
   pmKey: string,
   kalshiKey: string,
@@ -81,7 +111,8 @@ async function persistTradeEvLookups(
 
 async function loadMappingsForPTrue(
   db: Db,
-  recentMatches: MatchedPair[]
+  recentMatches: MatchedPair[],
+  dbLimit = 2000
 ): Promise<
   Array<{
     id: number;
@@ -135,7 +166,7 @@ async function loadMappingsForPTrue(
     .from(marketMappings)
     .where(ne(marketMappings.matchMethod, TEST_FALLBACK_MATCH_METHOD))
     .orderBy(desc(marketMappings.updatedAt))
-    .limit(2000);
+    .limit(dbLimit);
 
   return rows.map((r) => ({
     id: r.id,
@@ -154,7 +185,8 @@ async function cacheLookupEvForMapping(
   marketPrior: number,
   redisBatch: EvPipelineRedisWriteBatch,
   pmOb: MappingRedisPrefetch["pmOb"] = null,
-  kalshiOb: MappingRedisPrefetch["kalshiOb"] = null
+  kalshiOb: MappingRedisPrefetch["kalshiOb"] = null,
+  ensemblePTrue: number | null = null
 ): Promise<{
   pmRecord: PipelineTradeEv;
   kalshiRecord: PipelineTradeEv;
@@ -173,6 +205,9 @@ async function cacheLookupEvForMapping(
     kalshiOb,
     pmMid,
     kalshiMid,
+    ensemblePTrue,
+    baselinePTrue: ensemblePTrue,
+    marketPrior,
   });
 
   const kalshiRecord = buildPipelineTradeEvFromPricing({
@@ -185,6 +220,9 @@ async function cacheLookupEvForMapping(
     kalshiOb,
     pmMid,
     kalshiMid,
+    ensemblePTrue,
+    baselinePTrue: ensemblePTrue,
+    marketPrior,
   });
 
   if (!pmRecord || !kalshiRecord) {
@@ -202,7 +240,8 @@ async function cacheLookupEvForMapping(
         kalshiOb,
         pmMid,
         kalshiMid,
-      })?.pTrue ?? crossMid;
+        ensemblePTrue,
+      })?.pTrue ?? ensemblePTrue ?? crossMid;
 
     const fallbackPm = buildOkPipelineTradeEv({
       lookupKey: pmKey,
@@ -298,6 +337,14 @@ async function persistMappingPTrue(
     calculatedAt: new Date().toISOString(),
   });
 
+  await appendOddsHistory(tokenId, {
+    ts: new Date().toISOString(),
+    pmMid: opts.pmMid,
+    kalshiMid: opts.kalshiMid,
+    marketPrior: opts.marketPrior,
+    pTrue,
+  });
+
   const cachedLookups = await cacheLookupEvForMapping(
     tokenId,
     kalshiTicker,
@@ -306,7 +353,8 @@ async function persistMappingPTrue(
     opts.marketPrior,
     redisBatch,
     opts.pmOb ?? null,
-    opts.kalshiOb ?? null
+    opts.kalshiOb ?? null,
+    pTrue
   );
 
   const pricingPreview = computePricingPTrue({
@@ -448,23 +496,27 @@ export async function computeEvForMappedPair(
   }
 
   try {
-    const ensemble = await calculatePTrue({
-      marketTitle: input.polymarketTitle || input.kalshiTitle,
-      marketContext: "",
-      marketPrior,
-    });
-
-    const pmRecord = await persistMappingPTrue(db, mapping, ensemble.pTrue, {
+    const pTrueResult = await resolveMappingEnsemblePTrue({
+      tokenId,
+      kalshiTicker,
+      title: input.polymarketTitle || input.kalshiTitle,
       pmMid,
       kalshiMid,
       marketPrior,
       pmOb,
       kalshiOb,
-      sourceType: "ensemble",
-      modelVersion: "pipeline_v1",
-      variance: ensemble.variance,
-      sourceScore: ensemble.sourceScore,
-      logSuffix: "(mapping-time ensemble)",
+    });
+
+    const pmRecord = await persistMappingPTrue(db, mapping, pTrueResult.pTrue, {
+      pmMid,
+      kalshiMid,
+      marketPrior,
+      pmOb,
+      kalshiOb,
+      sourceType: pTrueResult.source,
+      modelVersion: "pipeline_v2",
+      sourceScore: pTrueResult.confidence,
+      logSuffix: `(mapping-time ${pTrueResult.source})`,
     }, redisBatch);
 
     return snapshotFromPmRecord(pmRecord);
@@ -504,7 +556,8 @@ async function seedBaselineEvForMapping(
   marketPrior: number,
   redisBatch: EvPipelineRedisWriteBatch,
   pmOb: MappingRedisPrefetch["pmOb"] = null,
-  kalshiOb: MappingRedisPrefetch["kalshiOb"] = null
+  kalshiOb: MappingRedisPrefetch["kalshiOb"] = null,
+  ensemblePTrue: number | null = null
 ): Promise<PipelineTradeEv | null> {
   const cached = await cacheLookupEvForMapping(
     tokenId,
@@ -514,7 +567,8 @@ async function seedBaselineEvForMapping(
     marketPrior,
     redisBatch,
     pmOb,
-    kalshiOb
+    kalshiOb,
+    ensemblePTrue
   );
 
   const pricingPreview = computePricingPTrue({
@@ -538,9 +592,14 @@ async function seedBaselineEvForMapping(
  */
 export async function processMappedPTrue(
   db: Db,
-  recentMatches: MatchedPair[] = []
+  recentMatches: MatchedPair[] = [],
+  options?: { dbLimit?: number }
 ): Promise<number> {
-  const mappings = await loadMappingsForPTrue(db, recentMatches);
+  const mappings = await loadMappingsForPTrue(
+    db,
+    recentMatches,
+    options?.dbLimit ?? 2000
+  );
   if (mappings.length === 0) return 0;
 
   const anchorStore = createDerivativeAnchorStore();
@@ -591,32 +650,36 @@ export async function processMappedPTrue(
     }
 
     try {
-      const ensemble = await calculatePTrue({
-        marketTitle: mapping.polymarketTitle || mapping.kalshiTitle,
-        marketContext: "",
+      const pTrueResult = await resolveMappingEnsemblePTrue({
+        tokenId,
+        kalshiTicker,
+        title: mapping.polymarketTitle || mapping.kalshiTitle,
+        pmMid,
+        kalshiMid,
         marketPrior,
+        pmOb: prefetch.pmOb,
+        kalshiOb: prefetch.kalshiOb,
       });
 
       if (spec) {
         updateDerivativeAnchorFromPrimary(
           anchorStore,
           spec,
-          ensemble.pTrue,
+          pTrueResult.pTrue,
           marketPrior
         );
       }
 
-      await persistMappingPTrue(db, mapping, ensemble.pTrue, {
+      await persistMappingPTrue(db, mapping, pTrueResult.pTrue, {
         pmMid,
         kalshiMid,
         marketPrior,
         pmOb: prefetch.pmOb,
         kalshiOb: prefetch.kalshiOb,
-        sourceType: "ensemble",
-        modelVersion: "pipeline_v1",
-        variance: ensemble.variance,
-        sourceScore: ensemble.sourceScore,
-        logSuffix: "(ensemble)",
+        sourceType: pTrueResult.source,
+        modelVersion: "pipeline_v2",
+        sourceScore: pTrueResult.confidence,
+        logSuffix: `(${pTrueResult.source})`,
       }, redisBatch);
 
       processed += 1;
@@ -753,7 +816,8 @@ export async function ensureMappedTradeEvLookups(
               marketPrior,
               redisBatch,
               prefetch.pmOb,
-              prefetch.kalshiOb
+              prefetch.kalshiOb,
+              derived.pTrue
             );
             if (cachedPair) cached += 1;
             continue;
@@ -782,7 +846,8 @@ export async function ensureMappedTradeEvLookups(
         marketPrior,
         redisBatch,
         prefetch.pmOb,
-        prefetch.kalshiOb
+        prefetch.kalshiOb,
+        pTrue
       );
 
       if (cachedPair) cached += 1;
@@ -802,4 +867,36 @@ export async function ensureMappedTradeEvLookups(
   }
 
   return cached;
+}
+
+export interface BackfillPTrueOptions {
+  dbLimit?: number;
+  /** Flush lookup cache before recompute. */
+  flushLookups?: boolean | "stale-only";
+}
+
+export interface BackfillPTrueResult {
+  processed: number;
+  flushed?: import("@/lib/evPipeline/redisCache").FlushEvLookupResult;
+}
+
+/**
+ * Recompute p_true + trade EV lookups for DB mappings (Phase 5 backfill).
+ */
+export async function backfillMappedPTrue(
+  db: Db,
+  options: BackfillPTrueOptions = {}
+): Promise<BackfillPTrueResult> {
+  const dbLimit = options.dbLimit ?? 5000;
+  let flushed: BackfillPTrueResult["flushed"];
+
+  if (options.flushLookups) {
+    const { flushEvLookupCache } = await import("@/lib/evPipeline/redisCache");
+    flushed = await flushEvLookupCache({
+      staleOnly: options.flushLookups === "stale-only",
+    });
+  }
+
+  const processed = await processMappedPTrue(db, [], { dbLimit });
+  return { processed, flushed };
 }

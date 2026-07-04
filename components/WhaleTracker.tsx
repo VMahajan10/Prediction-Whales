@@ -18,6 +18,9 @@ import type { WhaleTrade } from "@/lib/whaleTrades";
 import { inferMarketCategory } from "@/lib/marketCategory";
 import { formatEvPercent } from "@/lib/crossMarketEvDisplay";
 import {
+  resolvePipelineDisplayEv,
+} from "@/lib/evPipeline/tradeEvRecord";
+import {
   isPairedPipelineTrade,
   TradeArbitrageSection,
 } from "@/components/ArbitrageBoxSpreadMatrix";
@@ -56,61 +59,66 @@ function formatStake(size: number): string {
 function precomputedEvPercent(
   trade: WhaleTrade,
   pipelineData: PipelineTradeEv | null | undefined
-): number | null {
-  if (pipelineData?.status === "ok") {
-    const fromPipeline =
-      pipelineData.averageEv ??
-      pipelineData.netEvPercent ??
-      pipelineData.grossEvPercent;
-    if (fromPipeline != null && Number.isFinite(fromPipeline)) {
-      return fromPipeline;
-    }
+): { netEvPercent: number; lowConfidence: boolean } | null {
+  const fromPipeline = resolvePipelineDisplayEv(pipelineData);
+  if (fromPipeline) {
+    return {
+      netEvPercent: fromPipeline.netEvPercent,
+      lowConfidence: fromPipeline.lowConfidence,
+    };
   }
 
   const fromTrade =
-    trade.averageEv ?? trade.netEvPercent ?? trade.grossEvPercent ?? null;
+    trade.netEvPercent ?? trade.grossEvPercent ?? trade.averageEv ?? null;
   if (fromTrade != null && Number.isFinite(fromTrade)) {
-    return fromTrade;
+    return { netEvPercent: fromTrade, lowConfidence: false };
   }
 
   return null;
 }
 
-function formatEvPercentDisplay(netEvPercent: number): {
+function formatEvPercentDisplay(
+  netEvPercent: number,
+  lowConfidence = false
+): {
   value: string;
   valueClass: string;
 } {
   const normalized = Object.is(netEvPercent, -0) ? 0 : netEvPercent;
   const isPositive = normalized > 0;
   const formatted = `${isPositive ? "+" : ""}${normalized.toFixed(1)}%`;
+  const value = lowConfidence ? `~${formatted}` : formatted;
   const valueClass = isPositive
     ? "text-emerald-500 font-semibold"
     : normalized < 0
       ? "text-rose-500 font-semibold"
       : "text-pulse-label";
 
-  return { value: formatted, valueClass };
+  return { value, valueClass };
 }
 
 function resolveAvgEvDisplay(
   trade: WhaleTrade,
   pipelineData: PipelineTradeEv | null | undefined,
   hasLookupKey: boolean
-): { value: string; valueClass: string } {
+): { value: string; valueClass: string; lowConfidence: boolean } {
   if (!hasLookupKey) {
-    return { value: "N/A", valueClass: "text-pulse-label" };
+    return { value: "N/A", valueClass: "text-pulse-label", lowConfidence: false };
   }
 
   if (pipelineData?.status === "unmapped") {
-    return { value: "—", valueClass: "text-pulse-label" };
+    return { value: "—", valueClass: "text-pulse-label", lowConfidence: false };
   }
 
-  const evPercent = precomputedEvPercent(trade, pipelineData);
-  if (evPercent != null) {
-    return formatEvPercentDisplay(evPercent);
+  const ev = precomputedEvPercent(trade, pipelineData);
+  if (ev != null) {
+    return {
+      ...formatEvPercentDisplay(ev.netEvPercent, ev.lowConfidence),
+      lowConfidence: ev.lowConfidence,
+    };
   }
 
-  return { value: "—", valueClass: "text-pulse-label" };
+  return { value: "—", valueClass: "text-pulse-label", lowConfidence: false };
 }
 
 function AvgEvStatCell({
@@ -123,6 +131,11 @@ function AvgEvStatCell({
       <p className="pulse-label text-pulse-label">Avg. EV</p>
       <p className={`mt-1 text-sm font-bold ${avgEv.valueClass}`}>
         {avgEv.value}
+        {avgEv.lowConfidence ? (
+          <span className="ml-1 text-[9px] font-semibold uppercase text-amber-400/90">
+            est
+          </span>
+        ) : null}
       </p>
     </div>
   );
@@ -160,10 +173,10 @@ function ExpandedEvBreakdown({
 }) {
   if (!isPairedPipelineTrade(pipelineData)) return null;
 
-  const evPercent = precomputedEvPercent(trade, pipelineData);
+  const ev = precomputedEvPercent(trade, pipelineData);
   const evLabel =
-    evPercent != null && Number.isFinite(evPercent)
-      ? formatEvPercent(evPercent)
+    ev != null && Number.isFinite(ev.netEvPercent)
+      ? formatEvPercent(ev.netEvPercent)
       : avgEv.value;
 
   return (

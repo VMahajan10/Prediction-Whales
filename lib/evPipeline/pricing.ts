@@ -4,15 +4,16 @@ import {
   normalizePmTokenId,
   pipelineMappingPairKey,
 } from "@/lib/evPipeline/crossAssetLookup";
+import {
+  computeTradeEvDisplay,
+} from "@/lib/evPipeline/computeTradeEv";
+import { resolvePTrueSync } from "@/lib/evPipeline/pTrueEnsembleResolver";
+import type { PricingMode } from "@/lib/evPipeline/pTrueTypes";
 import type { CachedOrderBookMid } from "@/lib/evPipeline/redisCache";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
-import {
-  normalizeIncomingTradePrice,
-  sanitizeEvPercent,
-  toEvDisplayPercent,
-} from "@/lib/evPipeline/tradeEvRecord";
+import { normalizeIncomingTradePrice } from "@/lib/evPipeline/tradeEvRecord";
 
-export type PricingMode = "paired_cross" | "standalone_resting" | "exchange_consensus";
+export type { PricingMode } from "@/lib/evPipeline/pTrueTypes";
 
 export interface TradeEvPricingInput {
   mappingPairKey: string | null;
@@ -27,6 +28,12 @@ export interface TradeEvPricingInput {
   tokenId?: string | null;
   kalshiTicker?: string | null;
   lookupKey: string;
+  /** Ensemble p_true from calculatePTrue / true_probabilities when OB mids are incomplete. */
+  ensemblePTrue?: number | null;
+  /** Last-known fair-value baseline (mapping cache / true_probabilities) when ensemble is not inlined. */
+  baselinePTrue?: number | null;
+  /** Cross-venue prior used when only one resting mid is available. */
+  marketPrior?: number | null;
 }
 
 export interface TradeEvPricingResult {
@@ -39,6 +46,10 @@ export interface TradeEvPricingResult {
   pmMid: number | null;
   kalshiMid: number | null;
   pricingMode: PricingMode;
+  pTrueSource?: import("@/lib/evPipeline/pTrueTypes").PTrueSource;
+  pTrueConfidence?: number;
+  pTrueLowConfidence?: boolean;
+  evFormulaVersion?: string;
 }
 
 /** Resting touch mid from a cached order-book snapshot. */
@@ -100,10 +111,123 @@ function platformRestingMid(
   return platform === "polymarket" ? pmResting : kalshiResting;
 }
 
+function isFiniteProb(value: number | null | undefined): value is number {
+  return value != null && Number.isFinite(value);
+}
+
+export function resolveMarketPrior(
+  pmMid: number | null,
+  kalshiMid: number | null,
+  explicit?: number | null
+): number {
+  if (isFiniteProb(explicit)) return explicit;
+  if (pmMid != null && kalshiMid != null) return (pmMid + kalshiMid) / 2;
+  if (pmMid != null) return pmMid;
+  if (kalshiMid != null) return kalshiMid;
+  return 0.5;
+}
+
+const PROB_COMPARE_EPS = 1e-6;
+
+/** Resting mid on the trade's venue, or whichever single leg is available for paired markets. */
+export function resolveSingleVenueMid(
+  platform: EvPlatform,
+  priced: { pmMid: number | null; kalshiMid: number | null },
+  platformMid: number | null
+): number | null {
+  return platformMid ?? priced.pmMid ?? priced.kalshiMid ?? null;
+}
+
+function resolveEnsembleFromInput(input: {
+  ensemblePTrue?: number | null;
+  baselinePTrue?: number | null;
+}): number | null {
+  if (isFiniteProb(input.ensemblePTrue)) return input.ensemblePTrue;
+  if (isFiniteProb(input.baselinePTrue)) return input.baselinePTrue;
+  return null;
+}
+
+function isIdentityTrap(
+  pricedPTrue: number,
+  singleVenueMid: number | null
+): boolean {
+  return (
+    singleVenueMid != null &&
+    Math.abs(pricedPTrue - singleVenueMid) <= PROB_COMPARE_EPS
+  );
+}
+
 /**
- * Hierarchical p_true resolver:
- * 1. Paired (mappingPairKey) → liquidity-weighted cross-venue mid
- * 2. Standalone → resting mid on the trade's venue
+ * Fair-value baseline for directional EV across all pricing modes.
+ * Prefers ensemble/cache inputs, then non-touch priced.pTrue, then exchange mid.
+ */
+export function resolveFairValueBaseline(
+  input: Pick<
+    TradeEvPricingInput,
+    "ensemblePTrue" | "baselinePTrue" | "exchangeMid"
+  >,
+  priced: {
+    pTrue: number;
+    pmMid: number | null;
+    kalshiMid: number | null;
+  },
+  singleVenueMid: number | null
+): number | null {
+  const ensemble = resolveEnsembleFromInput(input);
+  if (ensemble != null) return ensemble;
+
+  const identityTrap =
+    isFiniteProb(priced.pTrue) && isIdentityTrap(priced.pTrue, singleVenueMid);
+
+  if (!identityTrap && isFiniteProb(priced.pTrue)) {
+    if (singleVenueMid == null) return priced.pTrue;
+    if (Math.abs(priced.pTrue - singleVenueMid) > PROB_COMPARE_EPS) {
+      return priced.pTrue;
+    }
+  }
+
+  if (input.exchangeMid != null && Number.isFinite(input.exchangeMid)) {
+    return input.exchangeMid;
+  }
+
+  if (singleVenueMid == null && isFiniteProb(priced.pTrue)) {
+    return priced.pTrue;
+  }
+
+  return null;
+}
+
+/**
+ * Directional edge: fair baseline minus the available venue mid (or market prior).
+ */
+export function computeDirectionalNetEvPercent(
+  fairBaseline: number,
+  venueMid: number | null,
+  marketPrior: number
+): number {
+  const referenceMarket = venueMid ?? marketPrior;
+  const breakdown = computeTradeEvDisplay({
+    pTrue: fairBaseline,
+    pMarketFallback: referenceMarket,
+    platform: "polymarket",
+  });
+  return breakdown.netEvPercent;
+}
+
+/**
+ * EV vs the best available reference price when paired OB data is partial.
+ * Prefers the trade venue mid, then the cross-venue prior.
+ */
+export function computeEnsembleBackedNetEvPercent(
+  ensemblePTrue: number,
+  platformMid: number | null,
+  marketPrior: number
+): number {
+  return computeDirectionalNetEvPercent(ensemblePTrue, platformMid, marketPrior);
+}
+
+/**
+ * Hierarchical p_true resolver — delegates to the ensemble resolver (never null).
  */
 export function computePricingPTrue(input: {
   mappingPairKey: string | null;
@@ -113,80 +237,61 @@ export function computePricingPTrue(input: {
   pmMid?: number | null;
   kalshiMid?: number | null;
   exchangeMid?: number | null;
-}):
-  | {
-      pTrue: number;
-      pmMid: number | null;
-      kalshiMid: number | null;
-      pricingMode: PricingMode;
-    }
-  | null {
-  const pmResting =
-    restingMidFromOrderBook(input.pmOb) ?? input.pmMid ?? null;
-  const kalshiResting =
-    restingMidFromOrderBook(input.kalshiOb) ?? input.kalshiMid ?? null;
-
-  if (input.mappingPairKey) {
-    const pTrue = liquidityWeightedCrossMid(
-      input.pmOb,
-      input.kalshiOb,
-      pmResting,
-      kalshiResting
-    );
-    if (pTrue == null) return null;
-    return {
-      pTrue,
-      pmMid: pmResting,
-      kalshiMid: kalshiResting,
-      pricingMode: "paired_cross",
-    };
-  }
-
-  const standalone = platformRestingMid(
-    input.platform,
-    pmResting,
-    kalshiResting
-  );
-
-  if (
-    !input.mappingPairKey &&
-    input.platform === "polymarket" &&
-    input.exchangeMid != null &&
-    Number.isFinite(input.exchangeMid)
-  ) {
-    return {
-      pTrue: input.exchangeMid,
-      pmMid: pmResting,
-      kalshiMid: kalshiResting,
-      pricingMode: "exchange_consensus",
-    };
-  }
-
-  if (standalone == null) return null;
+  ensemblePTrue?: number | null;
+  baselinePTrue?: number | null;
+  executionPrice?: number | null;
+  marketPrior?: number | null;
+}): {
+  pTrue: number;
+  pmMid: number | null;
+  kalshiMid: number | null;
+  pricingMode: PricingMode;
+  pTrueSource: import("@/lib/evPipeline/pTrueTypes").PTrueSource;
+  pTrueConfidence: number;
+} {
+  const resolved = resolvePTrueSync({
+    mappingPairKey: input.mappingPairKey,
+    platform: input.platform,
+    pmOb: input.pmOb,
+    kalshiOb: input.kalshiOb,
+    pmMid: input.pmMid,
+    kalshiMid: input.kalshiMid,
+    exchangeMid: input.exchangeMid,
+    ensemblePTrue: input.ensemblePTrue,
+    baselinePTrue: input.baselinePTrue,
+    executionPrice: input.executionPrice,
+    marketPrior: input.marketPrior,
+  });
 
   return {
-    pTrue: standalone,
-    pmMid: pmResting,
-    kalshiMid: kalshiResting,
-    pricingMode: "standalone_resting",
+    pTrue: resolved.pTrue,
+    pmMid: resolved.pmMid,
+    kalshiMid: resolved.kalshiMid,
+    pricingMode: resolved.pricingMode,
+    pTrueSource: resolved.source,
+    pTrueConfidence: resolved.confidence,
   };
 }
 
-/** Unified EV: (pTrue − executionPrice) × 100 display units. */
+/** Unified EV display percent via canonical binary_true_ev_v1 formula. */
 export function computeNetEvPercentFromExecution(
   pTrue: number,
-  executionPrice: number
+  executionPrice: number,
+  platform: EvPlatform = "polymarket"
 ): number {
-  return toEvDisplayPercent(pTrue - executionPrice);
+  return computeTradeEvDisplay({
+    pTrue,
+    executionPrice,
+    platform,
+  }).netEvPercent;
 }
 
 /**
- * Full trade EV pricing — paired cross-mid or standalone resting baseline,
- * always anchored to execution price when provided.
+ * Full trade EV pricing — always returns a result via the ensemble resolver.
  */
 export function computeTradeEvPricing(
   input: TradeEvPricingInput
-): TradeEvPricingResult | null {
+): TradeEvPricingResult {
   const executionPrice = normalizeIncomingTradePrice(input.executionPrice) ?? null;
   const tokenId = normalizePmTokenId(input.tokenId);
   const kalshiTicker = normalizeKalshiTicker(input.kalshiTicker);
@@ -196,7 +301,7 @@ export function computeTradeEvPricing(
       ? pipelineMappingPairKey(tokenId, kalshiTicker)
       : null);
 
-  const priced = computePricingPTrue({
+  const pTrueResult = resolvePTrueSync({
     mappingPairKey,
     platform: input.platform,
     pmOb: input.pmOb,
@@ -204,57 +309,46 @@ export function computeTradeEvPricing(
     pmMid: input.pmMid,
     kalshiMid: input.kalshiMid,
     exchangeMid: input.exchangeMid,
+    ensemblePTrue: input.ensemblePTrue,
+    baselinePTrue: input.baselinePTrue,
+    executionPrice: input.executionPrice,
+    marketPrior: input.marketPrior,
   });
-
-  if (!priced) return null;
 
   const platformMid = platformRestingMid(
     input.platform,
-    priced.pmMid,
-    priced.kalshiMid
+    pTrueResult.pmMid,
+    pTrueResult.kalshiMid
   );
-  const pMarket = executionPrice ?? platformMid ?? priced.pTrue;
 
-  let netEvPercent: number;
-  if (executionPrice != null) {
-    netEvPercent = computeNetEvPercentFromExecution(
-      priced.pTrue,
-      executionPrice
-    );
-  } else if (
-    priced.pricingMode === "paired_cross" &&
-    priced.pmMid != null &&
-    priced.kalshiMid != null
-  ) {
-    netEvPercent = toEvDisplayPercent(
-      Math.abs(priced.pmMid - priced.kalshiMid)
-    );
-  } else {
-    netEvPercent = 0;
-  }
-
-  const netEv = priced.pTrue - pMarket;
-  const grossEv = netEv;
-  const grossEvPercent = netEvPercent;
+  const evDisplay = computeTradeEvDisplay({
+    pTrue: pTrueResult.pTrue,
+    executionPrice,
+    platform: input.platform,
+    pMarketFallback: platformMid ?? pTrueResult.marketPrior,
+  });
 
   return {
-    pTrue: priced.pTrue,
-    pMarket,
-    netEvPercent: sanitizeEvPercent(netEvPercent),
-    netEv: sanitizeEvPercent(netEv),
-    grossEv: sanitizeEvPercent(grossEv),
-    grossEvPercent: sanitizeEvPercent(grossEvPercent),
-    pmMid: priced.pmMid,
-    kalshiMid: priced.kalshiMid,
-    pricingMode: priced.pricingMode,
+    pTrue: pTrueResult.pTrue,
+    pMarket: evDisplay.pMarket,
+    netEvPercent: evDisplay.netEvPercent,
+    netEv: evDisplay.netEv,
+    grossEv: evDisplay.grossEv,
+    grossEvPercent: evDisplay.grossEvPercent,
+    pmMid: pTrueResult.pmMid,
+    kalshiMid: pTrueResult.kalshiMid,
+    pricingMode: pTrueResult.pricingMode,
+    pTrueSource: pTrueResult.source,
+    pTrueConfidence: pTrueResult.confidence,
+    pTrueLowConfidence: pTrueResult.lowConfidence,
+    evFormulaVersion: evDisplay.formula,
   };
 }
 
 export function buildPipelineTradeEvFromPricing(
   input: TradeEvPricingInput
-): PipelineTradeEv | null {
+): PipelineTradeEv {
   const pricing = computeTradeEvPricing(input);
-  if (!pricing) return null;
 
   const tokenId = normalizePmTokenId(input.tokenId);
   const kalshiTicker = normalizeKalshiTicker(input.kalshiTicker);
@@ -278,6 +372,11 @@ export function buildPipelineTradeEvFromPricing(
     grossEv: pricing.grossEv,
     netEvPercent: pricing.netEvPercent,
     grossEvPercent: pricing.grossEvPercent,
+    averageEv: pricing.netEvPercent,
+    pTrueSource: pricing.pTrueSource,
+    pTrueConfidence: pricing.pTrueConfidence,
+    pTrueLowConfidence: pricing.pTrueLowConfidence,
+    evFormulaVersion: pricing.evFormulaVersion,
   };
 }
 
@@ -309,9 +408,10 @@ export function applyExecutionPricingToTradeEv(
     executionPrice: input.executionPrice,
     tokenId,
     kalshiTicker,
+    ensemblePTrue: input.ensemblePTrue ?? record.pTrue ?? null,
+    baselinePTrue: input.baselinePTrue ?? record.pTrue ?? null,
+    marketPrior: input.marketPrior,
   });
-
-  if (!priced) return { ...record, key: lookupKey };
 
   return {
     ...record,
@@ -328,5 +428,10 @@ export function applyExecutionPricingToTradeEv(
     grossEv: priced.grossEv,
     netEvPercent: priced.netEvPercent,
     grossEvPercent: priced.grossEvPercent,
+    averageEv: priced.netEvPercent,
+    pTrueSource: priced.pTrueSource,
+    pTrueConfidence: priced.pTrueConfidence,
+    pTrueLowConfidence: priced.pTrueLowConfidence,
+    evFormulaVersion: priced.evFormulaVersion,
   };
 }

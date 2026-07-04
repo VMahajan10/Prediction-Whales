@@ -7,9 +7,19 @@ import {
   type ParsedGameKey,
 } from "@/lib/crossMarketEv";
 import {
-  entriesToMap,
-  getCrossMarketEvIndex,
-} from "@/lib/crossMarketEvIndexStore";
+  getEnrichedConsensusIndex,
+} from "@/lib/evPipeline/consensusIndexBuilder";
+import {
+  buildLooseParsedGameKey,
+  fuzzyTeamTokenFromLabel,
+  isSportsMarketProbe,
+  parseGameFromPmSlug,
+  parseGenericPmGameSlug,
+  parseVsTitleTeams,
+  probeMentionsTeamToken,
+  resolveOutcomePmFromSuffix,
+  slugifyTeamToken,
+} from "@/lib/evPipeline/sportsSlugParse";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 import { inferMarketCategory } from "@/lib/marketCategory";
 import {
@@ -20,9 +30,6 @@ import { findGameInIndex, fuzzyCountryNameToPm, gamesReferToSameMatch, pmCodeToC
 import { normalizePmTeamCode, pmCodeToKalshi, pmTeamCodesEquivalent } from "@/lib/teamCodes";
 
 const GAMMA_API = "https://gamma-api.polymarket.com";
-
-const PM_GAME_SLUG =
-  /^fifwc-([a-z]+)-([a-z]+)-(\d{4}-\d{2}-\d{2})(?:-(.+))?$/i;
 
 const VS_TITLE =
   /\b(.+?)\s+vs\.?\s+(.+?)(?:\?|$)/i;
@@ -105,26 +112,19 @@ function normalizedOutcomeFromIndexEntry(
 }
 
 function parseGameFromTitle(title: string): ParsedGameKey | null {
+  const vsLoose = parseVsTitleTeams(title);
+  if (vsLoose) {
+    return buildLooseParsedGameKey(vsLoose.teamA, vsLoose.teamB, "");
+  }
+
   const vs = title.match(VS_TITLE);
   if (!vs) return null;
 
-  const teamA = fuzzyCountryNameToPm(vs[1]);
-  const teamB = fuzzyCountryNameToPm(vs[2]);
+  const teamA = fuzzyCountryNameToPm(vs[1]) ?? fuzzyTeamTokenFromLabel(vs[1]);
+  const teamB = fuzzyCountryNameToPm(vs[2]) ?? fuzzyTeamTokenFromLabel(vs[2]);
   if (!teamA || !teamB) return null;
 
-  const kalshiA = pmCodeToKalshi(teamA);
-  const kalshiB = pmCodeToKalshi(teamB);
-  if (!kalshiA || !kalshiB) return null;
-
-  return {
-    date: new Date().toISOString().slice(0, 10),
-    kalshiTeamA: kalshiA,
-    kalshiTeamB: kalshiB,
-    pmTeamA: teamA,
-    pmTeamB: teamB,
-    kickoffEpochSec: null,
-    kickoffKnown: false,
-  };
+  return buildLooseParsedGameKey(teamA, teamB, "");
 }
 
 function resolveGameContext(params: {
@@ -147,9 +147,9 @@ function resolveGameContext(params: {
 
   if (params.index && (title || slug)) {
     const probe = `${slug ?? ""} ${title ?? ""}`.toLowerCase();
-    const slugMatch = slug?.match(PM_GAME_SLUG);
-    const slugTeams = slugMatch
-      ? [slugMatch[1], slugMatch[2]].map((code) => normalizePmTeamCode(code))
+    const generic = slug ? parseGenericPmGameSlug(slug) : null;
+    const slugTeams = generic
+      ? [generic.pmTeamA, generic.pmTeamB]
       : null;
 
     for (const entry of Array.from(params.index.values())) {
@@ -164,8 +164,8 @@ function resolveGameContext(params: {
         indexTeams.includes(slugTeams[1]);
 
       const probeAligned =
-        probeMentionsPmTeam(probe, entry.game.pmTeamA, entry.label) &&
-        probeMentionsPmTeam(probe, entry.game.pmTeamB, entry.label);
+        probeMentionsTeamToken(probe, entry.game.pmTeamA, [entry.label]) &&
+        probeMentionsTeamToken(probe, entry.game.pmTeamB, [entry.label]);
 
       if (slugAligned || probeAligned) {
         return entry.game;
@@ -377,31 +377,35 @@ function parseSlugGameAndOutcome(slug: string): {
     };
   }
 
-  const m = slug.match(PM_GAME_SLUG);
-  if (!m) return null;
+  const generic = parseGenericPmGameSlug(slug);
+  if (!generic) return null;
 
-  const [, pmA, pmB, date, suffix] = m;
-  const kalshiA = pmCodeToKalshi(pmA);
-  const kalshiB = pmCodeToKalshi(pmB);
-  if (!kalshiA || !kalshiB) return null;
+  const game = buildLooseParsedGameKey(
+    generic.pmTeamA,
+    generic.pmTeamB,
+    generic.date
+  );
 
-  const game: ParsedGameKey = {
-    date,
-    kalshiTeamA: kalshiA,
-    kalshiTeamB: kalshiB,
-    pmTeamA: pmA,
-    pmTeamB: pmB,
-    kickoffEpochSec: null,
-    kickoffKnown: false,
-  };
-
-  const token = (suffix ?? "").trim().toLowerCase();
+  const token = generic.suffix;
   let outcome: OutcomeSide | null = null;
   if (token === "draw" || token === "tie") outcome = "draw";
-  else if (pmTeamCodesEquivalent(token, pmA)) outcome = "team_a";
-  else if (pmTeamCodesEquivalent(token, pmB)) outcome = "team_b";
+  else if (token && pmTeamCodesEquivalent(token, generic.pmTeamA)) {
+    outcome = "team_a";
+  } else if (token && pmTeamCodesEquivalent(token, generic.pmTeamB)) {
+    outcome = "team_b";
+  } else if (token && isPropOutcomeLabel(token)) {
+    outcome = syntheticOutcomeForProp(normalizeOutcomeLabel(token));
+  }
 
-  return { game, outcome, outcomePm: token || null };
+  return {
+    game,
+    outcome,
+    outcomePm: resolveOutcomePmFromSuffix(
+      token,
+      generic.pmTeamA,
+      generic.pmTeamB
+    ),
+  };
 }
 
 function indexToGameMap(
@@ -418,10 +422,38 @@ function resolveMatchIdFromTitle(
   index: Map<string, OutcomeBooks>,
   title: string
 ): string | null {
+  const vsLoose = parseVsTitleTeams(title);
+  if (vsLoose) {
+    const gameIndex = indexToGameMap(index);
+    const today = new Date().toISOString().slice(0, 10);
+    const game = findGameInIndex(gameIndex, today, vsLoose.teamA, vsLoose.teamB, {
+      dateToleranceDays: 14,
+    });
+    if (game) {
+      const probe = title.toLowerCase();
+      let outcome: OutcomeSide | null = null;
+      if (/\b(draw|tie)\b/i.test(probe)) outcome = "draw";
+      else if (
+        probeMentionsTeamToken(probe, game.pmTeamA) &&
+        !probeMentionsTeamToken(probe, game.pmTeamB)
+      ) {
+        outcome = "team_a";
+      } else if (
+        probeMentionsTeamToken(probe, game.pmTeamB) &&
+        !probeMentionsTeamToken(probe, game.pmTeamA)
+      ) {
+        outcome = "team_b";
+      }
+      if (outcome) return outcomeMatchId(game, outcome);
+    }
+  }
+
   const vs = title.match(VS_TITLE);
   if (vs) {
-    const teamA = fuzzyCountryNameToPm(vs[1]);
-    const teamB = fuzzyCountryNameToPm(vs[2]);
+    const teamA =
+      fuzzyCountryNameToPm(vs[1]) ?? fuzzyTeamTokenFromLabel(vs[1]);
+    const teamB =
+      fuzzyCountryNameToPm(vs[2]) ?? fuzzyTeamTokenFromLabel(vs[2]);
     if (teamA && teamB) {
       const gameIndex = indexToGameMap(index);
       const today = new Date().toISOString().slice(0, 10);
@@ -489,24 +521,7 @@ function getOpposingOutcome(outcome: OutcomeSide): OutcomeSide | null {
 function parseGameFromSlug(slug: string): ParsedGameKey | null {
   const parsed = parseSlugGameAndOutcome(slug);
   if (parsed) return parsed.game;
-
-  const m = slug.match(PM_GAME_SLUG);
-  if (!m) return null;
-
-  const [, pmA, pmB, date] = m;
-  const kalshiA = pmCodeToKalshi(pmA);
-  const kalshiB = pmCodeToKalshi(pmB);
-  if (!kalshiA || !kalshiB) return null;
-
-  return {
-    date,
-    kalshiTeamA: kalshiA,
-    kalshiTeamB: kalshiB,
-    pmTeamA: pmA,
-    pmTeamB: pmB,
-    kickoffEpochSec: null,
-    kickoffKnown: false,
-  };
+  return parseGameFromPmSlug(slug);
 }
 
 function resolveOutcomeSideForGame(
@@ -517,11 +532,17 @@ function resolveOutcomeSideForGame(
   if (!trimmed) return null;
   if (/\b(draw|tie)\b/i.test(trimmed)) return "draw";
 
-  const teamPm = fuzzyCountryNameToPm(trimmed);
+  const teamPm =
+    fuzzyCountryNameToPm(trimmed) ?? fuzzyTeamTokenFromLabel(trimmed);
   if (!teamPm) return null;
 
   if (pmTeamCodesEquivalent(game.pmTeamA, teamPm)) return "team_a";
   if (pmTeamCodesEquivalent(game.pmTeamB, teamPm)) return "team_b";
+
+  const token = slugifyTeamToken(trimmed);
+  if (token && pmTeamCodesEquivalent(game.pmTeamA, token)) return "team_a";
+  if (token && pmTeamCodesEquivalent(game.pmTeamB, token)) return "team_b";
+
   return null;
 }
 
@@ -773,10 +794,10 @@ function resolveSportsbookForPmOutcome(
 }
 
 function isSportsSlugOrTitle(slug?: string, title?: string | null): boolean {
-  const probe = `${slug ?? ""} ${title ?? ""}`;
-  if (inferMarketCategory(probe) === "SPORTS") return true;
-  if (slug && PM_GAME_SLUG.test(slug)) return true;
-  if (/\b(over|under|o\/u|total|spread)\b/i.test(probe)) return true;
+  if (isSportsMarketProbe(slug, title)) return true;
+  if (inferMarketCategory(`${slug ?? ""} ${title ?? ""}`) === "SPORTS") {
+    return true;
+  }
   return false;
 }
 
@@ -902,8 +923,7 @@ export async function lookupExchangeConsensusBaseline(params: {
     });
   }
 
-  const cached = await getCrossMarketEvIndex();
-  const index = entriesToMap(cached.entries);
+  const index = await getEnrichedConsensusIndex();
 
   let pmOutcome = resolvePmTokenOutcome({
     slug,

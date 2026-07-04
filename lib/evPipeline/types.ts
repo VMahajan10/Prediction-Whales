@@ -86,6 +86,18 @@ export interface PipelineTradeEvInput {
 
 export type PipelineTradeEvStatus = "ok" | "unmapped" | "error";
 
+/** Provenance for the winning p_true tier (see pTrueEnsembleResolver). */
+export type PTrueSource =
+  | "cross_venue_ob"
+  | "standalone_ob"
+  | "sportsbook_consensus"
+  | "cached_ensemble"
+  | "computed_ensemble"
+  | "rag_ensemble"
+  | "derivative_anchor"
+  | "execution_price"
+  | "universal_prior";
+
 export interface PipelineTradeEv {
   key: string;
   status: PipelineTradeEvStatus;
@@ -105,6 +117,14 @@ export interface PipelineTradeEv {
   pmMid?: number | null;
   /** Cached Kalshi resting mid used by pricing engine. */
   kalshiMid?: number | null;
+  /** Which tier supplied pTrue (ok status). */
+  pTrueSource?: PTrueSource | null;
+  /** 0–1 confidence score for pTrue estimate. */
+  pTrueConfidence?: number | null;
+  /** True when estimate used universal_prior or execution_price only. */
+  pTrueLowConfidence?: boolean;
+  /** EV formula version used for netEvPercent. */
+  evFormulaVersion?: string | null;
 }
 
 /** Shared frontend/API lookup keys for batch trade EV. */
@@ -167,10 +187,9 @@ export function isResolvedPipelineTradeEv(
   status: "ok";
   netEvPercent: number;
   pTrue: number;
-  pMarket: number;
 } {
   const evPercent =
-    ev?.averageEv ?? ev?.netEvPercent ?? ev?.grossEvPercent ?? null;
+    ev?.netEvPercent ?? ev?.grossEvPercent ?? ev?.averageEv ?? null;
   return (
     ev != null &&
     ev.status === "ok" &&

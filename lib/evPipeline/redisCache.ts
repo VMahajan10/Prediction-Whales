@@ -212,6 +212,9 @@ export const evRedisKeys = {
   pipelineMeta: () => `${EV_REDIS_PREFIX}:pipeline:last_run`,
   /** Batch lookup cache — key suffix is pm:{tokenId} or kalshi:{ticker}. */
   tradeEvLookup: (lookupKey: string) => `${EV_REDIS_PREFIX}:lookup:${lookupKey}`,
+  /** Time-series implied prob snapshots for RAG context. */
+  oddsHistory: (polymarketTokenId: string) =>
+    `${EV_REDIS_PREFIX}:rag:odds:${polymarketTokenId.toLowerCase()}`,
 } as const;
 
 let redis: Redis | null = null;
@@ -820,4 +823,113 @@ export async function writePipelineMeta(meta: PipelineRunMeta): Promise<void> {
       err instanceof Error ? err.message : err
     );
   }
+}
+
+const REDIS_SCAN_PAGE_SIZE = 200;
+const REDIS_DELETE_CHUNK_SIZE = 200;
+
+/** SCAN keys under the EV Redis namespace (Upstash-compatible). */
+export async function scanEvRedisKeys(
+  match: string,
+  limit = 10_000
+): Promise<string[]> {
+  const client = getRedis();
+  if (!client) return [];
+
+  const keys: string[] = [];
+  let cursor = 0;
+
+  try {
+    do {
+      const [nextCursor, found] = await client.scan(cursor, {
+        match,
+        count: REDIS_SCAN_PAGE_SIZE,
+      });
+      cursor = Number(nextCursor);
+      keys.push(...found);
+      if (keys.length >= limit) break;
+    } while (cursor !== 0);
+  } catch (err) {
+    console.warn(
+      "[ev/redis] scanEvRedisKeys failed:",
+      err instanceof Error ? err.message : err
+    );
+  }
+
+  return keys.slice(0, limit);
+}
+
+export async function deleteEvRedisKeys(keys: string[]): Promise<number> {
+  const client = getRedis();
+  if (!client || keys.length === 0) return 0;
+
+  let deleted = 0;
+  try {
+    for (let i = 0; i < keys.length; i += REDIS_DELETE_CHUNK_SIZE) {
+      const chunk = keys.slice(i, i + REDIS_DELETE_CHUNK_SIZE);
+      await client.del(...chunk);
+      deleted += chunk.length;
+    }
+  } catch (err) {
+    console.warn(
+      "[ev/redis] deleteEvRedisKeys failed:",
+      err instanceof Error ? err.message : err
+    );
+  }
+
+  return deleted;
+}
+
+export interface FlushEvLookupResult {
+  scanned: number;
+  deleted: number;
+  stale: number;
+}
+
+/**
+ * Flush trade EV lookup cache keys (`ev:v1:lookup:*`).
+ * When staleOnly=true, deletes entries failing the Phase 4 display contract.
+ */
+export async function flushEvLookupCache(options?: {
+  staleOnly?: boolean;
+  scanLimit?: number;
+}): Promise<FlushEvLookupResult> {
+  const pattern = `${EV_REDIS_PREFIX}:lookup:*`;
+  const keys = await scanEvRedisKeys(pattern, options?.scanLimit ?? 5000);
+  if (keys.length === 0) {
+    return { scanned: 0, deleted: 0, stale: 0 };
+  }
+
+  if (!options?.staleOnly) {
+    const deleted = await deleteEvRedisKeys(keys);
+    return { scanned: keys.length, deleted, stale: 0 };
+  }
+
+  const { isStaleEvLookupPayload } = await import(
+    "@/lib/evPipeline/tradeEvRecord"
+  );
+  const staleKeys: string[] = [];
+
+  for (let i = 0; i < keys.length; i += REDIS_SCAN_PAGE_SIZE) {
+    const chunk = keys.slice(i, i + REDIS_SCAN_PAGE_SIZE);
+    const batch = await execRedisReadPipeline(chunk);
+    for (const key of chunk) {
+      const raw = batch.get(key) as PipelineTradeEv | undefined;
+      if (raw && isStaleEvLookupPayload(raw)) {
+        staleKeys.push(key);
+      }
+    }
+  }
+
+  const deleted = await deleteEvRedisKeys(staleKeys);
+  return { scanned: keys.length, deleted, stale: staleKeys.length };
+}
+
+/** Delete all keys under `ev:v1:*` (order books, mappings, lookups, p_true, etc.). */
+export async function flushAllEvRedisKeys(
+  scanLimit = 20_000
+): Promise<FlushEvLookupResult> {
+  const keys = await scanEvRedisKeys(`${EV_REDIS_PREFIX}:*`, scanLimit);
+  const deleted = await deleteEvRedisKeys(keys);
+  return { scanned: keys.length, deleted, stale: 0 };
 }

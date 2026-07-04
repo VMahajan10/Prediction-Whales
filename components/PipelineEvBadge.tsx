@@ -2,7 +2,10 @@
 
 import { formatEvPercent } from "@/lib/crossMarketEvDisplay";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
-import { isResolvedPipelineTradeEv } from "@/lib/evPipeline/types";
+import {
+  pipelineEvTooltip,
+  resolvePipelineDisplayEv,
+} from "@/lib/evPipeline/tradeEvRecord";
 
 interface PipelineEvBadgeProps {
   ev: PipelineTradeEv | null | undefined;
@@ -19,23 +22,31 @@ function badgeClasses(netEvPercent: number): string {
   return "border-slate-600/50 bg-slate-800/60 text-slate-400";
 }
 
+function evLabel(netEvPercent: number, lowConfidence: boolean): string {
+  const formatted = formatEvPercent(netEvPercent);
+  return lowConfidence ? `~${formatted}` : formatted;
+}
+
 export default function PipelineEvBadge({
   ev,
   className = "",
 }: PipelineEvBadgeProps) {
-  if (!isResolvedPipelineTradeEv(ev)) return null;
+  const display = resolvePipelineDisplayEv(ev);
+  if (!display) return null;
 
-  const netEvPercent = ev.averageEv ?? ev.netEvPercent;
-  const label = formatEvPercent(netEvPercent);
-  const pMarket = ev.pMarket ?? 0;
-  const title = `AI pipeline EV · p_true ${(ev.pTrue * 100).toFixed(1)}¢ vs market ${(pMarket * 100).toFixed(1)}¢`;
+  const label = evLabel(display.netEvPercent, display.lowConfidence);
 
   return (
     <span
-      className={`inline-flex shrink-0 items-center rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${badgeClasses(netEvPercent)} ${className}`}
-      title={title}
+      className={`inline-flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${badgeClasses(display.netEvPercent)} ${className}`}
+      title={pipelineEvTooltip(ev!, display)}
     >
-      {label} EV
+      <span>{label} EV</span>
+      {display.lowConfidence ? (
+        <span className="rounded bg-amber-500/20 px-1 text-[8px] font-bold text-amber-200/90">
+          EST
+        </span>
+      ) : null}
     </span>
   );
 }
@@ -44,24 +55,28 @@ export function PipelineEvInline({
   ev,
   className = "",
 }: PipelineEvBadgeProps) {
-  if (!isResolvedPipelineTradeEv(ev)) return null;
+  const display = resolvePipelineDisplayEv(ev);
+  if (!display) return null;
 
-  const netEvPercent = ev.averageEv ?? ev.netEvPercent;
-  const positive = netEvPercent > 0;
-  const negative = netEvPercent < -0.05;
+  const positive = display.netEvPercent > 0;
+  const negative = display.netEvPercent < -0.05;
   const color = positive
     ? "text-green-400 font-semibold"
     : negative
       ? "text-red-400/80"
       : "text-slate-400";
-  const pMarket = ev.pMarket ?? 0;
 
   return (
     <span
-      className={`text-[11px] ${color} ${className}`}
-      title={`AI pipeline · p_true ${(ev.pTrue * 100).toFixed(1)}¢ vs ${(pMarket * 100).toFixed(1)}¢`}
+      className={`inline-flex items-center gap-1 text-[11px] ${color} ${className}`}
+      title={pipelineEvTooltip(ev!, display)}
     >
-      {formatEvPercent(netEvPercent)} EV
+      <span>{evLabel(display.netEvPercent, display.lowConfidence)} EV</span>
+      {display.lowConfidence ? (
+        <span className="text-[9px] font-semibold uppercase text-amber-300/80">
+          est
+        </span>
+      ) : null}
     </span>
   );
 }

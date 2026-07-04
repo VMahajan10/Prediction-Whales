@@ -1,7 +1,7 @@
+import type { EvPlatform } from "@/lib/finance/evEngine";
 import {
-  calculateTrueEV,
-  type EvPlatform,
-} from "@/lib/finance/evEngine";
+  computeTradeEvDisplay,
+} from "@/lib/evPipeline/computeTradeEv";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import {
   normalizeKalshiTicker,
@@ -42,10 +42,134 @@ export function fallbackNetEvPercent(pTrue: number, pMarket: number): number {
   return toEvDisplayPercent(pTrue - pMarket);
 }
 
-/** Coerce -0 to 0 so UI truthiness checks behave correctly. */
+/** Coerce signed-zero to +0 for display fields. Preserves negative EV percentages. */
 export function sanitizeEvPercent(value: number): number {
-  if (Object.is(value, -0) || value === 0) return 0;
+  if (Object.is(value, -0)) return 0;
   return value;
+}
+
+/** Probability-unit deltas (grossEv / netEv) — only normalize signed-zero. */
+export function sanitizeProbDelta(value: number): number {
+  if (Object.is(value, -0)) return 0;
+  return value;
+}
+
+/**
+ * Prefer netEvPercent for card display — averageEv can be a stale zero from cache
+ * while netEvPercent still carries the signed edge.
+ */
+export function coalesceDisplayEvPercent(
+  ev:
+    | Pick<PipelineTradeEv, "netEvPercent" | "grossEvPercent" | "averageEv">
+    | null
+    | undefined
+): number | null {
+  if (!ev) return null;
+  for (const value of [ev.netEvPercent, ev.grossEvPercent, ev.averageEv]) {
+    if (value != null && Number.isFinite(value)) {
+      return sanitizeEvPercent(value);
+    }
+  }
+  return null;
+}
+
+/** Client display bundle — single source for badge / whale feed EV cells. */
+export function resolvePipelineDisplayEv(
+  ev: PipelineTradeEv | null | undefined
+): {
+  netEvPercent: number;
+  lowConfidence: boolean;
+  pTrue: number;
+  pMarket: number | null;
+  pTrueSource: PipelineTradeEv["pTrueSource"];
+} | null {
+  if (ev?.status !== "ok" || ev.pTrue == null || !Number.isFinite(ev.pTrue)) {
+    return null;
+  }
+  const netEvPercent = coalesceDisplayEvPercent(ev);
+  if (netEvPercent == null) return null;
+
+  return {
+    netEvPercent,
+    lowConfidence: ev.pTrueLowConfidence ?? false,
+    pTrue: ev.pTrue,
+    pMarket: ev.pMarket ?? ev.pmMid ?? ev.kalshiMid ?? null,
+    pTrueSource: ev.pTrueSource ?? null,
+  };
+}
+
+export function pipelineEvTooltip(
+  ev: PipelineTradeEv,
+  display?: ReturnType<typeof resolvePipelineDisplayEv>
+): string {
+  const row = display ?? resolvePipelineDisplayEv(ev);
+  if (!row) return "AI pipeline EV";
+
+  const parts = [
+    `p_true ${(row.pTrue * 100).toFixed(1)}¢`,
+    row.pMarket != null
+      ? `market ${(row.pMarket * 100).toFixed(1)}¢`
+      : null,
+    row.pTrueSource ? `source: ${row.pTrueSource}` : null,
+    row.lowConfidence ? "low-confidence estimate" : null,
+    ev.evFormulaVersion ? `formula: ${ev.evFormulaVersion}` : null,
+  ].filter(Boolean);
+
+  return `AI pipeline EV · ${parts.join(" · ")}`;
+}
+
+/** Final client/API payload — numeric EV fields aligned with coalesceDisplayEvPercent. */
+export function sealClientTradeEvPayload(
+  item: PipelineTradeEv,
+  lookupKey?: string
+): PipelineTradeEv {
+  const key = lookupKey ?? item.key;
+  const normalized = normalizePipelineTradeEv(item, key) ?? item;
+  const sealed = strictApiTradeEvPayload(normalized, key);
+
+  if (sealed.status === "ok" && sealed.pTrue != null) {
+    const display = coalesceDisplayEvPercent(sealed);
+    if (display == null) {
+      console.warn(
+        `[ev/trades] contract violation: status ok with p_true but no display EV (${key})`
+      );
+    }
+  }
+
+  return sealed;
+}
+
+/**
+ * Stale Redis/API lookup — averageEv stuck at 0 while signed netEvPercent exists,
+ * or p_true present without any displayable EV.
+ */
+export function isStaleEvLookupPayload(
+  ev: PipelineTradeEv | null | undefined
+): boolean {
+  if (!ev || ev.status !== "ok") return false;
+  const display = coalesceDisplayEvPercent(ev);
+  const staleZeroAverage =
+    ev.averageEv === 0 &&
+    display != null &&
+    display !== 0 &&
+    Math.abs(display) > 1e-9;
+  const missingDisplay = ev.pTrue != null && display == null;
+  return staleZeroAverage || missingDisplay;
+}
+
+/** Estimate display EV% from cached p_true vs trade price or market reference. */
+export function deriveEvPercentFromPTrue(
+  pTrue: number,
+  tradePrice?: number | null,
+  pMarket?: number | null
+): number | null {
+  if (!Number.isFinite(pTrue)) return null;
+  const execution = normalizeIncomingTradePrice(tradePrice);
+  const reference =
+    execution ??
+    (pMarket != null && Number.isFinite(pMarket) ? pMarket : null);
+  if (reference == null) return null;
+  return fallbackNetEvPercent(pTrue, reference);
 }
 
 /**
@@ -63,21 +187,25 @@ export function strictApiTradeEvPayload(
     return { ...item, key, status: "ok" };
   }
 
+  const platform: EvPlatform =
+    item.kalshiTicker && !item.tokenId ? "kalshi" : "polymarket";
   const pMarket =
     readOptionalNumber(item.pMarket) ?? DEFAULT_P_MARKET_FALLBACK;
-  const calculatedEvPercent = sanitizeEvPercent(
-    fallbackNetEvPercent(pTrue, pMarket)
-  );
-  const calculatedNetEv = sanitizeEvPercent(pTrue - pMarket);
+  const evDisplay = computeTradeEvDisplay({
+    pTrue,
+    executionPrice: pMarket,
+    platform,
+    pMarketFallback: pMarket,
+  });
 
   let netEvPercent = sanitizeEvPercent(
-    item.netEvPercent ?? calculatedEvPercent
+    item.netEvPercent ?? evDisplay.netEvPercent
   );
   let grossEvPercent = sanitizeEvPercent(
-    item.grossEvPercent ?? calculatedEvPercent
+    item.grossEvPercent ?? evDisplay.grossEvPercent
   );
-  let netEv = sanitizeEvPercent(item.netEv ?? calculatedNetEv);
-  let grossEv = sanitizeEvPercent(item.grossEv ?? calculatedNetEv);
+  let netEv = sanitizeProbDelta(item.netEv ?? evDisplay.netEv);
+  let grossEv = sanitizeProbDelta(item.grossEv ?? evDisplay.grossEv);
 
   return {
     ...item,
@@ -90,6 +218,7 @@ export function strictApiTradeEvPayload(
     grossEv,
     grossEvPercent,
     averageEv: netEvPercent,
+    evFormulaVersion: evDisplay.formula,
   };
 }
 
@@ -141,12 +270,10 @@ export function normalizePipelineTradeEv(
 
   let netEv =
     readOptionalNumber(raw.netEv) ??
-    readOptionalNumber((raw as Record<string, unknown>).net_ev) ??
-    0;
+    readOptionalNumber((raw as Record<string, unknown>).net_ev);
   let grossEv =
     readOptionalNumber(raw.grossEv) ??
-    readOptionalNumber((raw as Record<string, unknown>).gross_ev) ??
-    0;
+    readOptionalNumber((raw as Record<string, unknown>).gross_ev);
   let grossEvPercent =
     readOptionalNumber(raw.grossEvPercent) ??
     readOptionalNumber((raw as Record<string, unknown>).gross_ev_percent);
@@ -171,8 +298,14 @@ export function normalizePipelineTradeEv(
 
   if (pTrue != null) {
     const resolvedPMarket = pMarket ?? DEFAULT_P_MARKET_FALLBACK;
-    const calculatedEvPercent = fallbackNetEvPercent(pTrue, resolvedPMarket);
-    const calculatedNetEv = pTrue - resolvedPMarket;
+    const platform: EvPlatform =
+      kalshiTicker && !tokenId ? "kalshi" : "polymarket";
+    const evDisplay = computeTradeEvDisplay({
+      pTrue,
+      executionPrice: resolvedPMarket,
+      platform,
+      pMarketFallback: resolvedPMarket,
+    });
 
     return strictApiTradeEvPayload(
       {
@@ -185,10 +318,14 @@ export function normalizePipelineTradeEv(
         pMarket: resolvedPMarket,
         pmMid,
         kalshiMid,
-        grossEv: grossEv || calculatedNetEv,
-        netEv: netEv || calculatedNetEv,
-        grossEvPercent: grossEvPercent ?? calculatedEvPercent,
-        netEvPercent: netEvPercent ?? calculatedEvPercent,
+        grossEv: grossEv ?? evDisplay.grossEv,
+        netEv: netEv ?? evDisplay.netEv,
+        grossEvPercent: grossEvPercent ?? evDisplay.grossEvPercent,
+        netEvPercent: netEvPercent ?? evDisplay.netEvPercent,
+        pTrueSource: raw.pTrueSource ?? undefined,
+        pTrueConfidence: raw.pTrueConfidence ?? undefined,
+        pTrueLowConfidence: raw.pTrueLowConfidence ?? undefined,
+        evFormulaVersion: raw.evFormulaVersion ?? evDisplay.formula,
       },
       key
     );
@@ -204,8 +341,8 @@ export function normalizePipelineTradeEv(
     pMarket,
     pmMid,
     kalshiMid,
-    grossEv,
-    netEv,
+    grossEv: grossEv ?? 0,
+    netEv: netEv ?? 0,
     grossEvPercent: grossEvPercent ?? null,
     netEvPercent: netEvPercent ?? null,
   };
@@ -228,36 +365,12 @@ export function buildOkPipelineTradeEv(params: {
       ? pipelineMappingPairKey(normalizedTokenId, normalizedKalshiTicker)
       : null;
 
-  let grossEv = pTrue - pMarket;
-  let netEv = grossEv;
-  let grossEvPercent = fallbackNetEvPercent(pTrue, pMarket);
-  let netEvPercent = grossEvPercent;
-
-  try {
-    const breakdown = calculateTrueEV(pTrue, pMarket, platform);
-    grossEv = breakdown.grossEv;
-    netEv = breakdown.netEv;
-    grossEvPercent = toEvDisplayPercent(breakdown.grossEv);
-    netEvPercent = toEvDisplayPercent(breakdown.netEv);
-  } catch {
-    // Keep simple fallback math above.
-  }
-
-  if (!Number.isFinite(netEvPercent)) {
-    netEvPercent = sanitizeEvPercent(fallbackNetEvPercent(pTrue, pMarket));
-  }
-  if (!Number.isFinite(grossEvPercent)) {
-    grossEvPercent = sanitizeEvPercent(fallbackNetEvPercent(pTrue, pMarket));
-  }
-
-  if (netEvPercent === 0) {
-    console.log("⚠️ [Backend Zero EV]", {
-      pmMid: pMarket,
-      kalshiMid: undefined,
-      pTrue,
-      netEvPercent,
-    });
-  }
+  const evDisplay = computeTradeEvDisplay({
+    pTrue,
+    executionPrice: pMarket,
+    platform,
+    pMarketFallback: pMarket,
+  });
 
   return {
     key: lookupKey,
@@ -267,9 +380,11 @@ export function buildOkPipelineTradeEv(params: {
     mappingPairKey,
     pTrue,
     pMarket,
-    grossEv: sanitizeEvPercent(grossEv),
-    netEv: sanitizeEvPercent(netEv),
-    grossEvPercent: sanitizeEvPercent(grossEvPercent),
-    netEvPercent: sanitizeEvPercent(netEvPercent),
+    grossEv: sanitizeProbDelta(evDisplay.grossEv),
+    netEv: sanitizeProbDelta(evDisplay.netEv),
+    grossEvPercent: sanitizeEvPercent(evDisplay.grossEvPercent),
+    netEvPercent: sanitizeEvPercent(evDisplay.netEvPercent),
+    averageEv: sanitizeEvPercent(evDisplay.netEvPercent),
+    evFormulaVersion: evDisplay.formula,
   };
 }

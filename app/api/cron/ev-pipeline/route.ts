@@ -18,7 +18,9 @@ export const maxDuration = 300;
  *
  * Stages (see lib/evPipeline/pipeline.ts):
  * 1. ingestOrderBooks  — Redis cache PM/Kalshi mids (10s TTL)
- * 2. matchMarkets      — upsert market_mappings (string + vector + LLM)
+ * 2. matchMarkets           — upsert market_mappings (string + vector + LLM)
+ * 2.5 refreshConsensusIndex — rebuild sportsbook consensus + prop alias keys
+ * 2.75 ingestRagContext    — warm similar-market index + odds history for RAG
  * 3. computePTrue      — insert true_probabilities + cache p_true
  * 4. computeTraderEv   — upsert trader_ev_analytics + cache wallet rollups
  */

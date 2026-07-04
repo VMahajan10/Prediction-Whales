@@ -7,7 +7,10 @@ import {
   getCopySignalsAndVerdict,
   type TrackRecordCopyContext,
 } from "@/lib/copyBetSignal";
-import { isResolvedPipelineTradeEv } from "@/lib/evPipeline/types";
+import {
+  coalesceDisplayEvPercent,
+  resolvePipelineDisplayEv,
+} from "@/lib/evPipeline/tradeEvRecord";
 import { getPolymarketTradeUrl, type MarketSummary, type TradeSummary } from "@/lib/polymarket";
 import { resolveCrossMarketEvForTrade } from "@/lib/resolveTradeCrossMarketEv";
 import { useCrossMarketEvIndex } from "@/lib/useCrossMarketEvIndex";
@@ -73,7 +76,8 @@ export default function CopyBetSignal({
 
   const resolvedTradeEvPercent = useMemo(() => {
     if (tradeEvPercentProp != null) return tradeEvPercentProp;
-    if (isResolvedPipelineTradeEv(pipelineEv)) return pipelineEv.netEvPercent;
+    const pipelineDisplay = resolvePipelineDisplayEv(pipelineEv);
+    if (pipelineDisplay) return pipelineDisplay.netEvPercent;
     const source = tradeEvSource ?? "polymarket";
     const slug = tradeEvSlug ?? trade.slug;
     const ticker = tradeEvTicker;
@@ -94,6 +98,8 @@ export default function CopyBetSignal({
   }, [
     tradeEvPercentProp,
     pipelineEv?.netEvPercent,
+    pipelineEv?.grossEvPercent,
+    pipelineEv?.averageEv,
     tradeEvSource,
     tradeEvSlug,
     trade.slug,
@@ -104,7 +110,9 @@ export default function CopyBetSignal({
 
   const effectiveNetEv =
     tradeNetEv ??
-    (isResolvedPipelineTradeEv(pipelineEv) ? pipelineEv.netEv : null);
+    (resolvePipelineDisplayEv(pipelineEv)
+      ? pipelineEv!.netEv
+      : null);
 
   const isSell = trade.side === "SELL";
   const { signals: copySignals, verdict: copyVerdict } = getCopySignalsAndVerdict(

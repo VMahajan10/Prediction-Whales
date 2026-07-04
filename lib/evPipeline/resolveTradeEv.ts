@@ -1,9 +1,6 @@
-import { desc, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { getDb, isDatabaseEnabled } from "@/lib/crossmarket/store/db";
-import {
-  marketMappings,
-  trueProbabilities,
-} from "@/lib/crossmarket/store/schema";
+import { marketMappings } from "@/lib/crossmarket/store/schema";
 import type { EvPlatform } from "@/lib/finance/evEngine";
 import {
   enrichPipelineEvInputFromMapping,
@@ -14,7 +11,14 @@ import {
 import {
   applyExecutionPricingToTradeEv,
   buildPipelineTradeEvFromPricing,
+  resolveMarketPrior,
 } from "@/lib/evPipeline/pricing";
+import { buildPipelineTradeEvFromPTrue } from "@/lib/evPipeline/computeTradeEv";
+import {
+  canResolvePTrueAsset,
+  resolvePTrue,
+} from "@/lib/evPipeline/pTrueEnsembleResolver";
+import { resolveEnsemblePTrue } from "@/lib/evPipeline/ensemblePTrue";
 import { lookupExchangeConsensusBaseline } from "@/lib/evPipeline/exchangeConsensusArb";
 import {
   cacheTradeEvLookup,
@@ -30,6 +34,7 @@ import {
 } from "@/lib/evPipeline/redisCache";
 import { computeEvForMappedPair } from "@/lib/evPipeline/computeMappedEv";
 import {
+  coalesceDisplayEvPercent,
   DEFAULT_P_MARKET_FALLBACK,
   normalizeIncomingTradePrice,
   normalizePipelineTradeEv,
@@ -73,11 +78,127 @@ export function createUnmappedPipelineTradeEv(
     pMarket: null,
     pmMid: null,
     kalshiMid: null,
+    pTrueSource: null,
+    pTrueConfidence: null,
+    pTrueLowConfidence: false,
+    evFormulaVersion: null,
   };
 }
 
+/** Always returns status ok with numeric pTrue/EV when asset identity exists. */
+export async function createLowConfidencePipelineTradeEv(
+  key: string,
+  item: PipelineTradeEvInput,
+  mapping?: CachedMapping | null
+): Promise<PipelineTradeEv> {
+  const tokenId = normalizePmTokenId(item.tokenId);
+  const kalshiTicker = normalizeKalshiTicker(item.kalshiTicker);
+  const platform: EvPlatform =
+    item.source === "kalshi" ? "kalshi" : "polymarket";
+  const mappingPairKey =
+    tokenId && kalshiTicker
+      ? pipelineMappingPairKey(tokenId, kalshiTicker)
+      : null;
+
+  const books = await loadOrderBookContext(tokenId, kalshiTicker);
+  const exchangeMid = await resolveSportsExchangeMid(
+    item,
+    tokenId,
+    mappingPairKey,
+    books
+  );
+
+  const pTrueResult = await resolvePTrue({
+    mappingPairKey,
+    platform,
+    tokenId,
+    kalshiTicker,
+    pmOb: books.pmOb,
+    kalshiOb: books.kalshiOb,
+    pmMid: books.pmMid,
+    kalshiMid: books.kalshiMid,
+    exchangeMid,
+    executionPrice: item.tradePrice,
+    ensemblePTrue:
+      mapping?.pTrue != null && Number.isFinite(mapping.pTrue)
+        ? mapping.pTrue
+        : null,
+    fetchEnsemble: true,
+    fetchExchangeConsensus: platform === "polymarket" && exchangeMid == null,
+    computeRagIfMissing:
+      mapping?.pTrue == null || !Number.isFinite(mapping.pTrue),
+  });
+
+  return attachAverageEvField(
+    buildPipelineTradeEvFromPTrue(key, pTrueResult, {
+      platform,
+      tokenId,
+      kalshiTicker,
+      mappingPairKey,
+      executionPrice: item.tradePrice,
+    })
+  );
+}
+
+const STALE_FALLBACK_PROB_EPS = 1e-6;
+
+export interface IsFullyComputedTradeEvContext {
+  executionPrice?: number | null;
+}
+
+function resolvedExecutionPrice(
+  raw: number | null | undefined
+): number | null {
+  if (raw == null) return null;
+  return normalizeIncomingTradePrice(raw) ?? null;
+}
+
+function isZeroEvPercent(value: number | null | undefined): boolean {
+  if (value == null || !Number.isFinite(value)) return false;
+  return Object.is(value, -0) || value === 0;
+}
+
+/** Hard-default payloads where fair value collapsed to the market mid without book data. */
+export function isStaleFallbackZeroPayload(
+  payload: PipelineTradeEv
+): boolean {
+  const netEv = payload.netEvPercent ?? payload.averageEv ?? null;
+  if (!isZeroEvPercent(netEv)) return false;
+
+  const lacksBookMids = payload.pmMid == null && payload.kalshiMid == null;
+  const pTrue = payload.pTrue;
+  const pMarket = payload.pMarket;
+  const collapsedFairValue =
+    pTrue != null &&
+    pMarket != null &&
+    Number.isFinite(pTrue) &&
+    Number.isFinite(pMarket) &&
+    Math.abs(pTrue - pMarket) <= STALE_FALLBACK_PROB_EPS;
+
+  return lacksBookMids || collapsedFairValue;
+}
+
+/**
+ * Zero-EV cache rows without execution context should be repriced — mirrors
+ * resolvePipelineTradeEv's cached-zero rejection.
+ */
+export function shouldBypassStaleEvCacheHit(
+  payload: PipelineTradeEv | null | undefined,
+  context: IsFullyComputedTradeEvContext = {}
+): boolean {
+  if (!payload || payload.status !== "ok") return false;
+
+  const netEv = payload.netEvPercent ?? payload.averageEv ?? null;
+  if (!isZeroEvPercent(netEv)) return false;
+
+  if (resolvedExecutionPrice(context.executionPrice) != null) return false;
+
+  return true;
+}
+
 export function isFullyComputedTradeEv(
-  payload: PipelineTradeEv | null | undefined
+  payload: PipelineTradeEv | null | undefined,
+  context: IsFullyComputedTradeEvContext = {}
 ): payload is PipelineTradeEv & {
   status: "ok";
   netEvPercent: number;
@@ -85,32 +206,44 @@ export function isFullyComputedTradeEv(
   averageEv: number;
   pTrue: number;
 } {
-  return (
-    payload != null &&
-    payload.status === "ok" &&
-    payload.netEvPercent != null &&
-    Number.isFinite(payload.netEvPercent) &&
-    payload.pTrue != null &&
-    Number.isFinite(payload.pTrue)
-  );
+  if (
+    payload == null ||
+    payload.status !== "ok" ||
+    payload.netEvPercent == null ||
+    !Number.isFinite(payload.netEvPercent) ||
+    payload.pTrue == null ||
+    !Number.isFinite(payload.pTrue)
+  ) {
+    return false;
+  }
+
+  const netEv = payload.netEvPercent ?? payload.averageEv ?? null;
+  if (!isZeroEvPercent(netEv)) return true;
+
+  const executionPrice = resolvedExecutionPrice(context.executionPrice);
+  if (executionPrice != null) return true;
+
+  if (isStaleFallbackZeroPayload(payload)) return false;
+
+  // Align with resolvePipelineTradeEv — reject cached 0% when not trade-anchored.
+  return false;
 }
 
 export function attachAverageEvField(
   payload: PipelineTradeEv
 ): PipelineTradeEv {
   if (payload.status !== "ok") return payload;
-  const averageEv =
-    payload.averageEv ??
-    payload.netEvPercent ??
-    payload.grossEvPercent ??
-    null;
+  const displayEv = coalesceDisplayEvPercent(payload);
   const grossEvPercent =
-    payload.grossEvPercent ?? payload.netEvPercent ?? averageEv;
+    payload.grossEvPercent ??
+    payload.netEvPercent ??
+    displayEv;
   return {
     ...payload,
-    averageEv,
+    averageEv: displayEv,
     grossEvPercent,
     grossEv: payload.grossEv ?? payload.netEv ?? 0,
+    netEvPercent: payload.netEvPercent ?? displayEv,
   };
 }
 
@@ -120,7 +253,7 @@ export function buildTradeEvFromCachedMapping(
   item: PipelineTradeEvInput
 ): PipelineTradeEv | null {
   const netEvPercent =
-    mapping.netEvPercent ?? mapping.averageEv ?? mapping.grossEvPercent;
+    mapping.netEvPercent ?? mapping.grossEvPercent ?? mapping.averageEv;
   if (netEvPercent == null || !Number.isFinite(netEvPercent)) return null;
   if (mapping.pTrue == null || !Number.isFinite(mapping.pTrue)) return null;
 
@@ -142,7 +275,7 @@ export function buildTradeEvFromCachedMapping(
     pMarket: null,
     netEvPercent,
     grossEvPercent: mapping.grossEvPercent ?? netEvPercent,
-    averageEv: mapping.averageEv ?? netEvPercent,
+    averageEv: netEvPercent ?? mapping.averageEv,
     netEv: 0,
     pmMid: null,
     kalshiMid: null,
@@ -225,6 +358,23 @@ export async function loadMappingForTradeEv(
   return null;
 }
 
+async function loadEnsemblePricingContext(
+  tokenId: string | null,
+  books: OrderBookContext,
+  mapping?: CachedMapping | null
+): Promise<{ ensemblePTrue: number | null; marketPrior: number }> {
+  const ensemblePTrue =
+    mapping?.pTrue != null && Number.isFinite(mapping.pTrue)
+      ? mapping.pTrue
+      : await resolveEnsemblePTrue(tokenId);
+  const marketPrior = resolveMarketPrior(
+    books.pmMid,
+    books.kalshiMid,
+    null
+  );
+  return { ensemblePTrue, marketPrior };
+}
+
 /** Standalone / cache-miss pricing using resting order-book baseline + execution price. */
 export function buildDynamicBaselineTradeEv(
   searchKey: string,
@@ -257,25 +407,7 @@ export function buildDynamicBaselineTradeEv(
     kalshiMid: executionPrice ?? DEFAULT_P_MARKET_FALLBACK,
   });
 
-  if (priced) return attachAverageEvField(priced);
-
-  const fallbackPrice = executionPrice ?? DEFAULT_P_MARKET_FALLBACK;
-  return attachAverageEvField({
-    key: searchKey,
-    status: "ok",
-    tokenId,
-    kalshiTicker,
-    mappingPairKey: null,
-    pMarket: fallbackPrice,
-    pTrue: fallbackPrice,
-    pmMid: platform === "polymarket" ? fallbackPrice : null,
-    kalshiMid: platform === "kalshi" ? fallbackPrice : null,
-    grossEv: 0,
-    netEv: 0,
-    grossEvPercent: 0,
-    netEvPercent: 0,
-    averageEv: 0,
-  });
+  return attachAverageEvField(priced);
 }
 
 async function syncComputePricingEv(
@@ -305,7 +437,13 @@ async function syncComputePricingEv(
   const exchangeMid = await resolveSportsExchangeMid(
     enriched,
     tokenId,
-    mappingPairKey
+    mappingPairKey,
+    books
+  );
+  const { ensemblePTrue, marketPrior } = await loadEnsemblePricingContext(
+    tokenId,
+    books,
+    mapping
   );
 
   const priced = buildPipelineTradeEvFromPricing({
@@ -320,39 +458,13 @@ async function syncComputePricingEv(
     kalshiMid: books.kalshiMid,
     exchangeMid,
     executionPrice: enriched.tradePrice,
+    ensemblePTrue,
+    baselinePTrue: ensemblePTrue,
+    marketPrior,
   });
-
-  if (priced) {
-    const result = attachAverageEvField(
-      finalizePipelineTradeEv(priced, lookupKey)
-    );
-    await cacheTradeEvLookup(lookupKey, result);
-    return result;
-  }
-
-  if (!tokenId) return null;
-
-  const dbPTrue = await latestPTrueFromDb(tokenId);
-  if (dbPTrue == null) return null;
-
-  const fallback = buildPipelineTradeEvFromPricing({
-    lookupKey,
-    platform: enriched.source,
-    tokenId,
-    kalshiTicker,
-    mappingPairKey,
-    pmOb: books.pmOb,
-    kalshiOb: books.kalshiOb,
-    pmMid: books.pmMid ?? dbPTrue,
-    kalshiMid: books.kalshiMid ?? dbPTrue,
-    exchangeMid,
-    executionPrice: enriched.tradePrice,
-  });
-
-  if (!fallback) return null;
 
   const result = attachAverageEvField(
-    finalizePipelineTradeEv(fallback, lookupKey)
+    finalizePipelineTradeEv(priced, lookupKey)
   );
   await cacheTradeEvLookup(lookupKey, result);
   return result;
@@ -443,6 +555,12 @@ function finalizeApiTradeEv(
         mappingPairKey: payload.mappingPairKey ?? null,
         pmMid: payload.pmMid ?? null,
         kalshiMid: payload.kalshiMid ?? null,
+        ensemblePTrue: payload.pTrue,
+        baselinePTrue: payload.pTrue,
+        marketPrior: resolveMarketPrior(
+          payload.pmMid ?? null,
+          payload.kalshiMid ?? null
+        ),
       })
     );
   }
@@ -463,16 +581,32 @@ export async function ensureFullyComputedTradeEv(
     mapping ??
     (await loadMappingForTradeEv(item.tokenId, item.kalshiTicker));
 
+  const executionPrice = resolvedExecutionPrice(item.tradePrice);
+  const finalizeContext: IsFullyComputedTradeEvContext = { executionPrice };
+
   const tryFinalize = (record: PipelineTradeEv | null | undefined) => {
     if (!record) return null;
     const payload = finalizeApiTradeEv(record, lookupKey, item);
-    return isFullyComputedTradeEv(payload) ? payload : null;
+    return isFullyComputedTradeEv(payload, finalizeContext) ? payload : null;
   };
 
-  const localHit = tryFinalize(readLocalTradeEvLookup(lookupKey, item.source));
+  const tryAcceptCacheHit = (
+    record: PipelineTradeEv | null | undefined
+  ): PipelineTradeEv | null => {
+    const finalized = tryFinalize(record);
+    if (!finalized) return null;
+    if (shouldBypassStaleEvCacheHit(finalized, finalizeContext)) {
+      return null;
+    }
+    return finalized;
+  };
+
+  const localHit = tryAcceptCacheHit(
+    readLocalTradeEvLookup(lookupKey, item.source)
+  );
   if (localHit) return localHit;
 
-  const storeHit = tryFinalize(await getTradeEvLookup(lookupKey));
+  const storeHit = tryAcceptCacheHit(await getTradeEvLookup(lookupKey));
   if (storeHit) {
     await cacheTradeEvLookup(lookupKey, storeHit);
     return storeHit;
@@ -510,12 +644,12 @@ export async function ensureFullyComputedTradeEv(
     );
     if (pipelineSynced) return pipelineSynced;
 
-    const retryLocal = tryFinalize(
+    const retryLocal = tryAcceptCacheHit(
       readLocalTradeEvLookup(lookupKey, item.source)
     );
     if (retryLocal) return retryLocal;
 
-    const retryStore = tryFinalize(await getTradeEvLookup(lookupKey));
+    const retryStore = tryAcceptCacheHit(await getTradeEvLookup(lookupKey));
     if (retryStore) return retryStore;
   }
 
@@ -525,26 +659,22 @@ export async function ensureFullyComputedTradeEv(
     );
   }
 
-  return createUnmappedPipelineTradeEv(lookupKey, item);
-}
-
-async function latestPTrueFromDb(tokenId: string): Promise<number | null> {
-  if (!isDatabaseEnabled()) return null;
-  try {
-    const db = getDb();
-    const rows = await db
-      .select({ pTrue: trueProbabilities.pTrue })
-      .from(trueProbabilities)
-      .where(eq(trueProbabilities.polymarketTokenId, tokenId.toLowerCase()))
-      .orderBy(desc(trueProbabilities.calculatedAt))
-      .limit(1);
-    const raw = rows[0]?.pTrue;
-    if (raw == null) return null;
-    const parsed = Number(raw);
-    return Number.isFinite(parsed) ? parsed : null;
-  } catch {
-    return null;
+  if (canResolvePTrueAsset(item)) {
+    const lowConfidence = await createLowConfidencePipelineTradeEv(
+      lookupKey,
+      item,
+      resolvedMapping
+    );
+    const finalized = tryFinalize(lowConfidence);
+    if (finalized) {
+      await cacheTradeEvLookup(lookupKey, finalized);
+      return finalized;
+    }
+    await cacheTradeEvLookup(lookupKey, lowConfidence);
+    return lowConfidence;
   }
+
+  return createUnmappedPipelineTradeEv(lookupKey, item);
 }
 
 async function resolvePmTokenForKalshi(
@@ -570,15 +700,17 @@ async function resolvePmTokenForKalshi(
   }
 }
 
-async function loadOrderBookContext(
-  tokenId: string | null,
-  kalshiTicker: string | null
-): Promise<{
+type OrderBookContext = {
   pmOb: Awaited<ReturnType<typeof getOrderBookMid>>;
   kalshiOb: Awaited<ReturnType<typeof getOrderBookMid>>;
   pmMid: number | null;
   kalshiMid: number | null;
-}> {
+};
+
+async function loadOrderBookContext(
+  tokenId: string | null,
+  kalshiTicker: string | null
+): Promise<OrderBookContext> {
   const [pmOb, kalshiOb] = await Promise.all([
     tokenId
       ? getOrderBookMid(evRedisKeys.orderBookPm(tokenId.toLowerCase()))
@@ -596,6 +728,13 @@ async function loadOrderBookContext(
   };
 }
 
+function hasLiveVenueOrderBook(
+  ob: OrderBookContext["pmOb"],
+  mid: number | null
+): boolean {
+  return ob != null && mid != null && Number.isFinite(mid);
+}
+
 async function enrichInputFromMappingCache(
   input: PipelineTradeEvInput
 ): Promise<PipelineTradeEvInput> {
@@ -609,20 +748,34 @@ async function enrichInputFromMappingCache(
 async function resolveSportsExchangeMid(
   input: PipelineTradeEvInput,
   tokenId: string | null,
-  mappingPairKey: string | null
+  mappingPairKey: string | null,
+  books?: OrderBookContext | null
 ): Promise<number | null> {
-  if (mappingPairKey || !tokenId || input.source !== "polymarket") return null;
+  if (!tokenId || input.source !== "polymarket") return null;
+
+  if (mappingPairKey) {
+    const hasPmOb = hasLiveVenueOrderBook(books?.pmOb ?? null, books?.pmMid ?? null);
+    const hasKalshiOb = hasLiveVenueOrderBook(
+      books?.kalshiOb ?? null,
+      books?.kalshiMid ?? null
+    );
+    if (hasPmOb && hasKalshiOb) {
+      return null;
+    }
+  }
+
   const baseline = await lookupExchangeConsensusBaseline({ tokenId });
   if (!baseline) return null;
   return Math.round(((baseline.yesBid + baseline.yesAsk) / 2) * 10000) / 10000;
 }
 
-function applyPricingToResolvedTrade(
+async function applyPricingToResolvedTrade(
   record: PipelineTradeEv,
   input: PipelineTradeEvInput,
-  books: Awaited<ReturnType<typeof loadOrderBookContext>>,
-  exchangeMid: number | null = null
-): PipelineTradeEv {
+  books: OrderBookContext,
+  exchangeMid: number | null = null,
+  mapping?: CachedMapping | null
+): Promise<PipelineTradeEv> {
   const tokenId = normalizePmTokenId(record.tokenId ?? input.tokenId);
   const kalshiTicker = normalizeKalshiTicker(
     record.kalshiTicker ?? input.kalshiTicker
@@ -632,6 +785,11 @@ function applyPricingToResolvedTrade(
     (tokenId && kalshiTicker
       ? pipelineMappingPairKey(tokenId, kalshiTicker)
       : null);
+  const { ensemblePTrue, marketPrior } = await loadEnsemblePricingContext(
+    tokenId,
+    books,
+    mapping
+  );
 
   return applyExecutionPricingToTradeEv(record, {
     lookupKey: record.key,
@@ -645,6 +803,9 @@ function applyPricingToResolvedTrade(
     executionPrice: input.tradePrice,
     tokenId,
     kalshiTicker,
+    ensemblePTrue: ensemblePTrue ?? record.pTrue ?? null,
+    baselinePTrue: ensemblePTrue ?? record.pTrue ?? null,
+    marketPrior,
   });
 }
 
@@ -671,17 +832,25 @@ export async function resolvePipelineTradeEv(
   const exchangeMid = await resolveSportsExchangeMid(
     enriched,
     tokenId,
-    mappingPairKey
+    mappingPairKey,
+    books
+  );
+  const resolvedMapping = await loadMappingForTradeEv(tokenId, kalshiTicker);
+  const { ensemblePTrue, marketPrior } = await loadEnsemblePricingContext(
+    tokenId,
+    books,
+    resolvedMapping
   );
 
   try {
     const cachedEv = await getTradeEvLookupRedisOnly(key);
     if (cachedEv?.status === "ok") {
-      const priced = applyPricingToResolvedTrade(
+      const priced = await applyPricingToResolvedTrade(
         finalizePipelineTradeEv({ ...cachedEv, key }, key),
         enriched,
         books,
-        exchangeMid
+        exchangeMid,
+        resolvedMapping
       );
       if (
         priced.netEvPercent !== null &&
@@ -711,6 +880,9 @@ export async function resolvePipelineTradeEv(
     kalshiMid: books.kalshiMid,
     exchangeMid,
     executionPrice: enriched.tradePrice,
+    ensemblePTrue,
+    baselinePTrue: ensemblePTrue,
+    marketPrior,
   });
 
   if (priced) {
@@ -723,8 +895,7 @@ export async function resolvePipelineTradeEv(
     return createUnmappedPipelineTradeEv(key, enriched);
   }
 
-  const dbPTrue = await latestPTrueFromDb(tokenId);
-  if (dbPTrue == null) {
+  if (ensemblePTrue == null) {
     return buildDynamicBaselineTradeEv(key, enriched);
   }
 
@@ -736,10 +907,13 @@ export async function resolvePipelineTradeEv(
     mappingPairKey,
     pmOb: books.pmOb,
     kalshiOb: books.kalshiOb,
-    pmMid: books.pmMid ?? dbPTrue,
-    kalshiMid: books.kalshiMid ?? dbPTrue,
+    pmMid: books.pmMid,
+    kalshiMid: books.kalshiMid,
     exchangeMid,
     executionPrice: enriched.tradePrice,
+    ensemblePTrue,
+    baselinePTrue: ensemblePTrue,
+    marketPrior,
   });
 
   if (fallback) {

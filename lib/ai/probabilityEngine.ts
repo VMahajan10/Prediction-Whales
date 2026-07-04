@@ -55,6 +55,19 @@ export interface PTrueResult {
   usedFallback: boolean;
 }
 
+export interface RAGContextChunk {
+  id: string;
+  kind:
+    | "odds_history"
+    | "similar_market"
+    | "order_book"
+    | "sportsbook"
+    | "mapping";
+  title: string;
+  body: string;
+  relevance: number;
+}
+
 export interface CalculatePTrueInput {
   marketTitle: string;
   marketDescription?: string;
@@ -64,6 +77,21 @@ export interface CalculatePTrueInput {
   marketPrior: number;
   /** Optional override baseline signals (otherwise simulated). */
   baselines?: BaselineModelSignal[];
+  /** Structured RAG chunks (formatted into marketContext when present). */
+  ragChunks?: RAGContextChunk[];
+}
+
+/** Format retrieved chunks for LLM sentiment grading. */
+export function formatRagContextForPrompt(chunks: RAGContextChunk[]): string {
+  if (chunks.length === 0) return "";
+  const sorted = [...chunks].sort((a, b) => b.relevance - a.relevance);
+  const sections = sorted.map(
+    (chunk) => `### ${chunk.title} [${chunk.kind}]\n${chunk.body}`
+  );
+  return [
+    "Retrieved market context (directional grading only):",
+    sections.join("\n\n"),
+  ].join("\n\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -483,7 +511,15 @@ export async function calculatePTrue(
 ): Promise<PTrueResult> {
   const marketPrior = clampProbability(input.marketPrior);
 
-  const sentiment = await fetchMarketSentiment(input.marketContext, {
+  const ragPrefix =
+    input.ragChunks && input.ragChunks.length > 0
+      ? formatRagContextForPrompt(input.ragChunks)
+      : "";
+  const gradedContext = [ragPrefix, input.marketContext]
+    .filter((s) => s.trim().length > 0)
+    .join("\n\n");
+
+  const sentiment = await fetchMarketSentiment(gradedContext, {
     title: input.marketTitle,
     description: input.marketDescription,
   });

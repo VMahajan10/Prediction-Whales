@@ -7,12 +7,16 @@ export type MarketCategory =
 
 export type CategoryTone = "sports" | "politics" | "culture" | "default";
 
+const ESPORTS_PROBE =
+  /lol|lec|lcs|lck|lpl|cs2|csgo|valorant|dota|dota2|esports|esport|vct|msi|worlds|blast|iem|esl|major|map\s*\d/i;
+
 export function inferMarketCategory(title: string): MarketCategory {
   const t = title.toLowerCase();
   if (
-    /mlb|marlins|pirates|vs\.|nfl|nba|fifa|world cup|goals|spread|soccer|o\/u|wta|atp|tennis|yankees|dodgers|lakers|celtics/.test(
+    /mlb|marlins|pirates|vs\.|nfl|nba|nhl|mls|fifa|world cup|goals|spread|soccer|o\/u|wta|atp|tennis|yankees|dodgers|lakers|celtics/.test(
       t
-    )
+    ) ||
+    ESPORTS_PROBE.test(t)
   ) {
     return "SPORTS";
   }
@@ -45,6 +49,10 @@ export function inferCategoryBadge(title: string): {
   if (/nfl/.test(t)) return { label: "NFL", tone: "sports" };
   if (/fifa|world cup|soccer/.test(t))
     return { label: "SOCCER", tone: "sports" };
+  if (/lol|lec|lcs|lck|lpl/.test(t))
+    return { label: "ESPORTS", tone: "sports" };
+  if (/cs2|csgo|valorant|dota/.test(t))
+    return { label: "ESPORTS", tone: "sports" };
   if (/congress|house of representatives/.test(t))
     return { label: "CONGRESS", tone: "politics" };
   if (/federal|fed chair|fed rate/.test(t))

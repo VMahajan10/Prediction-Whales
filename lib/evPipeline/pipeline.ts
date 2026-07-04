@@ -26,6 +26,13 @@ import {
   evRedisKeys,
   initGlobalLocalEvCache,
 } from "@/lib/evPipeline/redisCache";
+import { runOrderBookIngest } from "@/lib/evPipeline/orderBookIngest";
+import { refreshConsensusIndex } from "@/lib/evPipeline/consensusIndexBuilder";
+import { ingestRagContext } from "@/lib/ai/rag/ingestRagContext";
+import {
+  collectPipelineCoverageReport,
+  formatPipelineCoverageSummary,
+} from "@/lib/evPipeline/pipelineCoverage";
 
 initGlobalLocalEvCache();
 
@@ -41,6 +48,8 @@ export interface EvPipelineResult {
   stages: {
     ingestOrderBooks: PipelineStageResult;
     matchMarkets: PipelineStageResult;
+    refreshConsensusIndex: PipelineStageResult;
+    ingestRagContext: PipelineStageResult;
     computePTrue: PipelineStageResult;
     computeTraderEv: PipelineStageResult;
   };
@@ -60,11 +69,12 @@ let activeMatchedPairs: MatchedPair[] = [];
 export async function ingestOrderBooks(): Promise<PipelineStageResult> {
   const start = Date.now();
   try {
-    // TODO: enumerate hot token ids from market_mappings + recent whale trades
-    // TODO: fetch Polymarket CLOB best bid/ask + Kalshi /markets/{ticker}
-    // Example write:
-    // await cacheOrderBookMid(evRedisKeys.orderBookPm(tokenId), { bid, ask, mid, ts });
-    return { ok: true, count: 0, ms: elapsed(start) };
+    const result = await runOrderBookIngest();
+    return {
+      ok: true,
+      count: result.totalCached,
+      ms: elapsed(start),
+    };
   } catch (err) {
     return {
       ok: false,
@@ -206,6 +216,55 @@ export async function matchMarkets(): Promise<PipelineStageResult> {
 }
 
 /**
+ * Stage 2.5 — Rebuild sportsbook consensus index with prop-level alias keys.
+ */
+export async function refreshConsensusIndexStage(): Promise<PipelineStageResult> {
+  const start = Date.now();
+  try {
+    const result = await refreshConsensusIndex();
+    console.info(
+      `[ev-pipeline] refreshConsensusIndex entries=${result.entryCount} prop_aliases=${result.propAliasCount}`
+    );
+    return {
+      ok: true,
+      count: result.entryCount + result.propAliasCount,
+      ms: elapsed(start),
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error:
+        err instanceof Error ? err.message : "refreshConsensusIndex failed",
+      ms: elapsed(start),
+    };
+  }
+}
+
+/**
+ * Stage 2.75 — Warm RAG similar-market index + seed odds history from OB mids.
+ */
+export async function ingestRagContextStage(): Promise<PipelineStageResult> {
+  const start = Date.now();
+  try {
+    const result = await ingestRagContext(activeMatchedPairs);
+    console.info(
+      `[ev-pipeline] ingestRagContext similar=${result.similarMarketCount} odds_seeded=${result.oddsHistorySeeded}`
+    );
+    return {
+      ok: true,
+      count: result.similarMarketCount + result.oddsHistorySeeded,
+      ms: elapsed(start),
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "ingestRagContext failed",
+      ms: elapsed(start),
+    };
+  }
+}
+
+/**
  * Stage 3 — pricing-engine p_true + cache trade EV at pm:{tokenId} / kalshi:{ticker}.
  * Ensemble probabilities are persisted to DB; Redis lookup EV uses lib/evPipeline/pricing.ts.
  */
@@ -222,6 +281,16 @@ export async function computePTrue(): Promise<PipelineStageResult> {
     if (computed > 0) {
       console.info(
         `[ev-pipeline] computePTrue processed ${computed} mapped pair(s)`
+      );
+    }
+
+    try {
+      const coverage = await collectPipelineCoverageReport(db);
+      console.info(formatPipelineCoverageSummary(coverage));
+    } catch (coverageErr) {
+      console.warn(
+        "[ev-pipeline] coverage report failed:",
+        coverageErr instanceof Error ? coverageErr.message : coverageErr
       );
     }
 
@@ -273,12 +342,16 @@ export async function runEvPipeline(runId: string): Promise<EvPipelineResult> {
   activeMatchedPairs = [];
   const ingestOrderBooksResult = await ingestOrderBooks();
   const matchMarketsResult = await matchMarkets();
+  const refreshConsensusIndexResult = await refreshConsensusIndexStage();
+  const ingestRagContextResult = await ingestRagContextStage();
   const computePTrueResult = await computePTrue();
   const computeTraderEvResult = await computeTraderEv();
 
   const stages = {
     ingestOrderBooks: ingestOrderBooksResult,
     matchMarkets: matchMarketsResult,
+    refreshConsensusIndex: refreshConsensusIndexResult,
+    ingestRagContext: ingestRagContextResult,
     computePTrue: computePTrueResult,
     computeTraderEv: computeTraderEvResult,
   };
