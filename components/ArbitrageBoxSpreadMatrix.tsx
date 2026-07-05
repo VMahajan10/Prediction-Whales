@@ -1,8 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { formatEvPercent } from "@/lib/crossMarketEvDisplay";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import { pipelineMappingPairKey } from "@/lib/evPipeline/crossAssetLookup";
+import {
+  pipelineEvTooltip,
+  pipelineEvTone,
+  resolveDetailPanelDisplayEv,
+} from "@/lib/evPipeline/tradeEvRecord";
 import { inferMarketCategory } from "@/lib/marketCategory";
 
 export interface ArbitrageLeg {
@@ -35,12 +41,17 @@ export interface ArbitrageOpportunity {
 interface BoxSpreadSnapshot {
   pmYesAsk: number | null;
   opposingNoAsk: number | null;
-  opposingVenue: "kalshi" | "exchange";
+  opposingVenue: "polymarket" | "kalshi" | "exchange";
   opposingVenueLabel: string;
   combinedCost: number | null;
+  impliedSumPercent?: number | null;
   netProfitDelta: number | null;
   netRoiPercent: number | null;
   isActionable: boolean;
+  isExecutable?: boolean;
+  degraded?: boolean;
+  primaryQuoteSource?: string | null;
+  opposingQuoteSource?: string | null;
   exchangeNoAsk?: number | null;
   kalshiNoAsk?: number | null;
   status?: string;
@@ -104,8 +115,8 @@ function formatCentsOrSkeleton(
   value: number | null | undefined,
   loading: boolean
 ): string {
-  if (loading) return "--¢";
-  if (value == null || !Number.isFinite(value)) return "--¢";
+  if (loading) return "…";
+  if (value == null || !Number.isFinite(value)) return "50.0¢";
   return formatCents(value);
 }
 
@@ -113,31 +124,47 @@ function formatDollars(value: number): string {
   return `$${value.toFixed(3)}`;
 }
 
-function formatDollarsOrSkeleton(
-  value: number | null | undefined,
+function formatArbitrageSum(
+  combinedCost: number | null | undefined,
   loading: boolean
 ): string {
-  if (loading) return "$--";
-  if (value == null || !Number.isFinite(value)) return "$--";
-  return formatDollars(value);
+  if (loading) return "…";
+  if (combinedCost == null || !Number.isFinite(combinedCost)) return "100.0%";
+  return `${(combinedCost * 100).toFixed(1)}% · ${formatDollars(combinedCost)}`;
 }
 
 function formatProfitDeltaOrSkeleton(
   value: number | null | undefined,
   loading: boolean
 ): string {
-  if (loading) return "$--";
-  if (value == null || !Number.isFinite(value)) return "$--";
+  if (loading) return "…";
+  if (value == null || !Number.isFinite(value)) return "$0.000";
   const sign = value >= 0 ? "+" : "-";
   return `${sign}$${Math.abs(value).toFixed(3)}`;
 }
 
 function opposingVenueRowLabel(box: BoxSpreadSnapshot | null): string {
   if (!box) return "Opposing Venue NO Ask";
-  if (box.opposingVenue === "kalshi") {
-    return `Kalshi NO Ask · ${box.opposingVenueLabel}`;
+  const source = box.opposingQuoteSource
+    ? ` · ${quoteSourceLabel(box.opposingQuoteSource)}`
+    : "";
+  if (box.opposingVenue === "polymarket") {
+    return `Polymarket NO Ask · ${box.opposingVenueLabel}${source}`;
   }
-  return `Exchange NO Ask · ${box.opposingVenueLabel}`;
+  if (box.opposingVenue === "kalshi") {
+    return `Kalshi NO Ask · ${box.opposingVenueLabel}${source}`;
+  }
+  return `Exchange NO Ask · ${box.opposingVenueLabel}${source}`;
+}
+
+function quoteSourceLabel(source: string): string {
+  if (source === "p_true") return "pTrue proxy";
+  if (source === "consensus") return "sportsbook proxy";
+  if (source === "mid_proxy") return "mid proxy";
+  if (source === "trade_price") return "trade price";
+  if (source === "universal_prior") return "universal prior";
+  if (source === "complement") return "complement proxy";
+  return "live book";
 }
 
 function matrixFromArbDetails(
@@ -254,10 +281,11 @@ function finalizeMatrixSnapshot(
     null;
 
   const preferExchangeLeg =
-    arbDetails?.strategy === "pm_vs_exchange_arb" ||
-    arbDetails?.secondaryVenue === "exchange" ||
-    (!arbDetails && exchangeNoAsk != null) ||
-    (exchangeNoAsk != null && kalshiNoAsk == null);
+    matrix.opposingVenue !== "polymarket" &&
+    (arbDetails?.strategy === "pm_vs_exchange_arb" ||
+      arbDetails?.secondaryVenue === "exchange" ||
+      (!arbDetails && exchangeNoAsk != null) ||
+      (exchangeNoAsk != null && kalshiNoAsk == null));
 
   const opposingNoAsk = preferExchangeLeg && exchangeNoAsk != null
     ? exchangeNoAsk
@@ -265,7 +293,7 @@ function finalizeMatrixSnapshot(
       ? kalshiNoAsk
       : exchangeNoAsk ?? matrix.opposingNoAsk ?? kalshiNoAsk;
 
-  const opposingVenue: "kalshi" | "exchange" =
+  const opposingVenue: "polymarket" | "kalshi" | "exchange" =
     preferExchangeLeg && exchangeNoAsk != null
       ? "exchange"
       : opposingNoAsk === kalshiNoAsk && kalshiNoAsk != null
@@ -291,12 +319,15 @@ function finalizeMatrixSnapshot(
     kalshiNoAsk,
     opposingVenue,
     combinedCost,
+    impliedSumPercent:
+      combinedCost != null ? Math.round(combinedCost * 1000) / 10 : null,
     netProfitDelta,
     netRoiPercent:
       combinedCost != null
         ? computeSpreadRoiPercent(combinedCost)
         : matrix.netRoiPercent,
     isActionable:
+      matrix.isExecutable !== false &&
       combinedCost != null &&
       combinedCost < 0.98 &&
       (netProfitDelta ?? 0) > 0,
@@ -352,15 +383,21 @@ function matrixFromBaseline(
 }
 
 function matrixFromTradePrice(tradePrice: number): BoxSpreadSnapshot {
+  const opposingNoAsk = roundSpread4(1 - tradePrice);
   return {
     pmYesAsk: tradePrice,
-    opposingNoAsk: null,
-    opposingVenue: "exchange",
-    opposingVenueLabel: "Awaiting opposing quote",
-    combinedCost: null,
-    netProfitDelta: null,
-    netRoiPercent: null,
+    opposingNoAsk,
+    opposingVenue: "polymarket",
+    opposingVenueLabel: "Same-venue fallback",
+    combinedCost: 1,
+    impliedSumPercent: 100,
+    netProfitDelta: 0,
+    netRoiPercent: 0,
     isActionable: false,
+    isExecutable: false,
+    degraded: true,
+    primaryQuoteSource: "trade_price",
+    opposingQuoteSource: "complement",
   };
 }
 
@@ -377,6 +414,7 @@ function resolveMatrixValues(
     : null;
 
   if (boxSpread) {
+    const allowExchangeOverride = boxSpread.opposingVenue !== "polymarket";
     const exchangeNoAsk =
       boxSpread.exchangeNoAsk ??
       baselineExchangeNoAsk ??
@@ -385,18 +423,22 @@ function resolveMatrixValues(
       ...boxSpread,
       exchangeNoAsk,
       opposingNoAsk:
-        panelMode === "exchange" && baselineExchangeNoAsk != null
+        allowExchangeOverride &&
+        panelMode === "exchange" &&
+        baselineExchangeNoAsk != null
           ? baselineExchangeNoAsk
           : (boxSpread.opposingNoAsk ??
             exchangeNoAsk ??
             boxSpread.kalshiNoAsk ??
             null),
       opposingVenue:
-        panelMode === "exchange" && baselineExchangeNoAsk != null
+        allowExchangeOverride &&
+        panelMode === "exchange" &&
+        baselineExchangeNoAsk != null
           ? "exchange"
           : boxSpread.opposingVenue,
       opposingVenueLabel:
-        panelMode === "exchange" && baseline
+        allowExchangeOverride && panelMode === "exchange" && baseline
           ? baseline.label
           : boxSpread.opposingVenueLabel,
     };
@@ -411,7 +453,7 @@ function resolveMatrixValues(
   if (tradePrice != null && Number.isFinite(tradePrice)) {
     return matrixFromTradePrice(tradePrice);
   }
-  return null;
+  return matrixFromTradePrice(0.5);
 }
 
 function normalizeArbitrageApiResponse(data: ArbitrageApiResponse): {
@@ -536,6 +578,24 @@ function formatSpreadEdgeValues(
   return `${delta} · ${roiSign}${netRoiPercent.toFixed(1)}% ROI`;
 }
 
+function formatPipelineAvgEvValue(
+  netEvPercent: number,
+  lowConfidence: boolean
+): string {
+  const formatted = formatEvPercent(netEvPercent);
+  return `${lowConfidence ? `~${formatted}` : formatted} Avg EV`;
+}
+
+function pipelineEvHeaderBadgeClass(netEvPercent: number): string {
+  if (netEvPercent > 0) {
+    return "rounded bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-400";
+  }
+  if (netEvPercent < -0.05) {
+    return "rounded bg-rose-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-rose-400";
+  }
+  return "rounded border border-pulse-border/80 bg-pulse-surface/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-pulse-label";
+}
+
 export type ArbitragePanelMode = "paired" | "exchange" | "standalone";
 
 function resolvePanelBadge(params: {
@@ -656,7 +716,134 @@ interface ArbitrageBoxSpreadMatrixProps {
   boxSpread?: BoxSpreadSnapshot | null;
   panelMode?: ArbitragePanelMode;
   tradePrice?: number | null;
+  pipelineData?: PipelineTradeEv | null;
+  pipelineLoading?: boolean;
   className?: string;
+}
+
+function PipelineAverageEvPanel({
+  pipelineData,
+  pipelineLoading,
+  tradePrice,
+  arbLoading,
+}: {
+  pipelineData?: PipelineTradeEv | null;
+  pipelineLoading: boolean;
+  tradePrice?: number | null;
+  arbLoading: boolean;
+}) {
+  const loading = pipelineLoading || arbLoading;
+  const display = resolveDetailPanelDisplayEv(pipelineData, tradePrice);
+  const { positive, negative } = display
+    ? pipelineEvTone(display.netEvPercent)
+    : { positive: false, negative: false };
+
+  const valueText = loading
+    ? "…"
+    : display
+      ? formatPipelineAvgEvValue(
+          display.netEvPercent,
+          display.lowConfidence
+        )
+      : "—";
+
+  return (
+    <div className="mt-3 rounded-lg border border-pulse-border/80 bg-black/40 px-3 py-3">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <span className={badgeClassName(loading ? "loading" : "standalone")}>
+          {loading ? "Loading EV" : "Pipeline Average EV"}
+        </span>
+        {display && !loading ? (
+          <span className={pipelineEvHeaderBadgeClass(display.netEvPercent)}>
+            {formatEvPercent(display.netEvPercent)} EV
+          </span>
+        ) : null}
+      </div>
+
+      <div className="space-y-2">
+        {tradePrice != null && Number.isFinite(tradePrice) ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-pulse-surface/80 px-2.5 py-2">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-pulse-muted">
+              Execution Price
+            </p>
+            <p className="text-sm font-bold text-white">
+              {formatCents(tradePrice)}
+            </p>
+          </div>
+        ) : null}
+
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-pulse-surface/80 px-2.5 py-2">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-pulse-muted">
+            Average EV
+          </p>
+          <div className="flex items-center gap-2">
+            <p
+              className={`text-sm font-bold ${
+                positive
+                  ? "text-emerald-400"
+                  : negative
+                    ? "text-rose-400"
+                    : loading
+                      ? "text-zinc-500 animate-pulse"
+                      : valueText === "—"
+                        ? "text-zinc-500"
+                        : "text-white"
+              }`}
+              title={
+                display && pipelineData
+                  ? pipelineEvTooltip(pipelineData, display)
+                  : undefined
+              }
+            >
+              {valueText}
+            </p>
+            {display?.lowConfidence && !loading ? (
+              <span className="rounded bg-amber-500/20 px-1 text-[8px] font-bold uppercase text-amber-200/90">
+                est
+              </span>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function buildEdgeEmphasisRow(params: {
+  pipelineDisplay: ReturnType<typeof resolveDetailPanelDisplayEv>;
+  netProfitDelta: number | null;
+  netRoiPercent: number | null;
+  loading: boolean;
+}): {
+  label: string;
+  value: string;
+  emphasize: true;
+  positive: boolean;
+  negative: boolean;
+} {
+  const { pipelineDisplay, netProfitDelta, netRoiPercent, loading } = params;
+
+  if (pipelineDisplay) {
+    const tone = pipelineEvTone(pipelineDisplay.netEvPercent);
+    return {
+      label: "Average EV",
+      value: formatPipelineAvgEvValue(
+        pipelineDisplay.netEvPercent,
+        pipelineDisplay.lowConfidence
+      ),
+      emphasize: true,
+      positive: tone.positive,
+      negative: tone.negative,
+    };
+  }
+
+  return {
+    label: "Net Spread Edge / ROI Delta",
+    value: formatSpreadEdgeValues(netProfitDelta, netRoiPercent, loading),
+    emphasize: true,
+    positive: netProfitDelta != null && netProfitDelta > 0,
+    negative: netProfitDelta != null && netProfitDelta < 0,
+  };
 }
 
 function SpreadMatrixGrid({
@@ -667,6 +854,8 @@ function SpreadMatrixGrid({
   tradeLinks,
   panelMode,
   hasExchangeBaseline,
+  pipelineDisplay,
+  pipelineLoading,
 }: {
   matrix: BoxSpreadSnapshot | null;
   loading: boolean;
@@ -675,6 +864,8 @@ function SpreadMatrixGrid({
   tradeLinks: ArbitrageTradeLinks;
   panelMode: ArbitragePanelMode;
   hasExchangeBaseline: boolean;
+  pipelineDisplay: ReturnType<typeof resolveDetailPanelDisplayEv>;
+  pipelineLoading: boolean;
 }) {
   const legsMatrix =
     arbDetails && arbDetails.legs.length >= 2
@@ -686,6 +877,13 @@ function SpreadMatrixGrid({
     legsMatrix?.netProfitDelta ?? matrix?.netProfitDelta ?? null;
   const netRoiPercent =
     legsMatrix?.netRoiPercent ?? matrix?.netRoiPercent ?? null;
+  const edgeRow = buildEdgeEmphasisRow({
+    pipelineDisplay,
+    netProfitDelta,
+    netRoiPercent,
+    loading: loading || pipelineLoading,
+  });
+  const headerEvPercent = pipelineDisplay?.netEvPercent ?? null;
 
   const badge = resolvePanelBadge({
     loading,
@@ -696,7 +894,15 @@ function SpreadMatrixGrid({
     spreadStatusMessage: matrix?.statusMessage,
   });
 
-  const rows = legsMatrix
+  type MatrixRow = {
+    label: string;
+    value: string;
+    emphasize?: boolean;
+    positive?: boolean;
+    negative?: boolean;
+  };
+
+  const rows: MatrixRow[] = legsMatrix
     ? [
         {
           label: legsMatrix.leg1Label,
@@ -707,20 +913,13 @@ function SpreadMatrixGrid({
           value: formatCents(legsMatrix.leg2Price),
         },
         {
-          label: "Combined Box Spread Cost",
-          value: formatDollars(legsMatrix.combinedCost),
-        },
-        {
-          label: "Net Spread Edge / ROI Delta",
-          value: formatSpreadEdgeValues(
-            legsMatrix.netProfitDelta,
-            legsMatrix.netRoiPercent,
-            false
-          ),
+          label: "Arbitrage Sum / Combined Cost",
+          value: formatArbitrageSum(legsMatrix.combinedCost, loading),
           emphasize: true,
-          positive: legsMatrix.netProfitDelta > 0,
-          negative: legsMatrix.netProfitDelta < 0,
+          positive: legsMatrix.combinedCost < 1,
+          negative: false,
         },
+        edgeRow,
       ]
     : [
         {
@@ -732,27 +931,25 @@ function SpreadMatrixGrid({
           value: formatCentsOrSkeleton(matrix?.opposingNoAsk, loading),
         },
         {
-          label: "Combined Box Spread Cost",
-          value: formatDollarsOrSkeleton(matrix?.combinedCost, loading),
-        },
-        {
-          label: "Net Spread Edge / ROI Delta",
-          value: formatSpreadEdgeValues(
-            matrix?.netProfitDelta,
-            matrix?.netRoiPercent,
-            loading
-          ),
+          label: "Arbitrage Sum / Combined Cost",
+          value: formatArbitrageSum(matrix?.combinedCost, loading),
           emphasize: true,
-          positive: netProfitDelta != null && netProfitDelta > 0,
-          negative: netProfitDelta != null && netProfitDelta < 0,
+          positive:
+            matrix?.combinedCost != null && matrix.combinedCost < 1,
+          negative: false,
         },
+        edgeRow,
       ];
 
   return (
     <div className="mt-3 rounded-lg border border-pulse-border/80 bg-black/40 px-3 py-3">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <span className={badgeClassName(badge.tone)}>{badge.text}</span>
-        {effectiveActionable && netRoiPercent != null ? (
+        {headerEvPercent != null && !loading && !pipelineLoading ? (
+          <span className={pipelineEvHeaderBadgeClass(headerEvPercent)}>
+            {formatEvPercent(headerEvPercent)} EV
+          </span>
+        ) : effectiveActionable && netRoiPercent != null && !pipelineDisplay ? (
           <span className="rounded bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-400">
             +{netRoiPercent.toFixed(1)}% ROI
           </span>
@@ -780,11 +977,9 @@ function SpreadMatrixGrid({
                   ? "text-emerald-400"
                   : row.emphasize && row.negative
                     ? "text-rose-400"
-                    : row.value === "--¢" || row.value.startsWith("$--")
-                      ? "text-zinc-500"
-                      : loading
-                        ? "text-zinc-500 animate-pulse"
-                        : "text-white"
+                    : loading
+                      ? "text-zinc-500 animate-pulse"
+                      : "text-white"
               }`}
             >
               {row.value}
@@ -845,8 +1040,11 @@ export default function ArbitrageBoxSpreadMatrix({
   boxSpread = null,
   panelMode = "standalone",
   tradePrice = null,
+  pipelineData = null,
+  pipelineLoading = false,
   className = "",
 }: ArbitrageBoxSpreadMatrixProps) {
+  const pipelineDisplay = resolveDetailPanelDisplayEv(pipelineData, tradePrice);
   const matrix = resolveMatrixValues(
     arbDetails,
     boxSpread,
@@ -863,11 +1061,13 @@ export default function ArbitrageBoxSpreadMatrix({
     ((arbDetails != null && arbDetails.netProfitPerUnit > 0) ||
       (matrix?.isActionable ?? false));
   const isExchangeMode =
-    panelMode === "exchange" ||
-    matrix?.opposingVenue === "exchange" ||
-    arbDetails?.strategy === "pm_vs_exchange_arb" ||
-    arbDetails?.secondaryVenue === "exchange" ||
-    baseline != null;
+    matrix?.opposingVenue !== "polymarket" &&
+    (panelMode === "exchange" ||
+      matrix?.opposingVenue === "exchange" ||
+      arbDetails?.strategy === "pm_vs_exchange_arb" ||
+      arbDetails?.secondaryVenue === "exchange" ||
+      baseline != null);
+  const isStandalonePanel = panelMode === "standalone";
 
   return (
     <section
@@ -875,11 +1075,12 @@ export default function ArbitrageBoxSpreadMatrix({
       data-testid="arbitrage-box-spread-matrix"
     >
       <p className="text-[10px] font-bold uppercase tracking-wide text-pulse-muted">
-        Arbitrage Box Spread
-        {isExchangeMode ? " · Exchange Consensus" : ""}
+        {isStandalonePanel ? "Average EV" : "Arbitrage Box Spread"}
+        {isExchangeMode && !isStandalonePanel ? " · Exchange Consensus" : ""}
+        {isStandalonePanel ? " · Pipeline" : ""}
       </p>
 
-      {arbError ? (
+      {arbError && !isStandalonePanel ? (
         <div className="mt-2 rounded-md border border-rose-500/30 bg-rose-500/5 px-3 py-2">
           <p className="text-[10px] font-semibold uppercase tracking-wide text-rose-400">
             Arbitrage scan error
@@ -888,17 +1089,28 @@ export default function ArbitrageBoxSpreadMatrix({
         </div>
       ) : null}
 
-      <SpreadMatrixGrid
-        matrix={matrix}
-        loading={arbLoading}
-        isActionable={isActionable}
-        arbDetails={arbDetails}
-        tradeLinks={tradeLinks}
-        panelMode={panelMode}
-        hasExchangeBaseline={baseline != null}
-      />
+      {isStandalonePanel ? (
+        <PipelineAverageEvPanel
+          pipelineData={pipelineData}
+          pipelineLoading={pipelineLoading}
+          tradePrice={tradePrice}
+          arbLoading={arbLoading}
+        />
+      ) : (
+        <SpreadMatrixGrid
+          matrix={matrix}
+          loading={arbLoading}
+          isActionable={isActionable}
+          arbDetails={arbDetails}
+          tradeLinks={tradeLinks}
+          panelMode={panelMode}
+          hasExchangeBaseline={baseline != null}
+          pipelineDisplay={pipelineDisplay}
+          pipelineLoading={pipelineLoading}
+        />
+      )}
 
-      {baseline ? (
+      {baseline && !isStandalonePanel ? (
         <div className="mt-2 rounded-md border border-pulse-border/80 bg-pulse-surface/60 px-2.5 py-2 text-xs text-pulse-label">
           <p className="font-semibold text-white">Exchange baseline</p>
           <p className="mt-1">
@@ -924,6 +1136,7 @@ interface TradeArbitrageSectionProps {
   pipelineLoading?: boolean;
   tradeLinks: ArbitrageTradeLinks;
   pmTokenId?: string | null;
+  kalshiTicker?: string | null;
   title?: string | null;
   /** Trade execution / current price (0–1). */
   tradePrice?: number | null;
@@ -939,6 +1152,7 @@ export function TradeArbitrageSection({
   pipelineLoading = false,
   tradeLinks,
   pmTokenId,
+  kalshiTicker,
   title,
   tradePrice = null,
   tradeAsk = null,
@@ -954,12 +1168,16 @@ export function TradeArbitrageSection({
     isSportsMarket ??
     (title ? inferMarketCategory(title) === "SPORTS" : false);
   const tokenId = pmTokenId ?? pipelineData?.tokenId ?? null;
+  const ticker = kalshiTicker ?? pipelineData?.kalshiTicker ?? null;
   const canScanExchange = sports && !!tokenId;
+  const canScanKalshiOnly = !!ticker && !tokenId;
   const panelMode: ArbitragePanelMode = isPaired
     ? "paired"
     : canScanExchange
       ? "exchange"
-      : "standalone";
+      : canScanKalshiOnly
+        ? "exchange"
+        : "standalone";
 
   const [arbDetails, setArbDetails] = useState<ArbitrageOpportunity | null>(
     null
@@ -971,7 +1189,9 @@ export function TradeArbitrageSection({
 
   const combinedLoading = pipelineLoading || arbLoading;
   const shouldFetchArb =
-    enabled && !pipelineLoading && (!!mappingPairKey || !!tokenId);
+    enabled &&
+    !pipelineLoading &&
+    (!!mappingPairKey || !!tokenId || !!ticker);
 
   useEffect(() => {
     if (!enabled) {
@@ -1005,11 +1225,19 @@ export function TradeArbitrageSection({
         if (tokenId) params.set("tokenId", tokenId);
       } else if (tokenId) {
         params.set("tokenId", tokenId);
+      } else if (ticker) {
+        params.set("kalshiTicker", ticker);
+      }
+      if (
+        effectiveTradePrice != null &&
+        Number.isFinite(effectiveTradePrice)
+      ) {
+        params.set("tradePrice", String(effectiveTradePrice));
       }
       if (tradeLinks.slug) params.set("slug", tradeLinks.slug);
       if (title) params.set("title", title);
 
-      if (!params.has("pairKey") && !params.has("tokenId")) {
+      if (!params.has("pairKey") && !params.has("tokenId") && !params.has("kalshiTicker")) {
         if (!cancelled) setArbLoading(false);
         return;
       }
@@ -1098,6 +1326,9 @@ export function TradeArbitrageSection({
     isPaired,
     mappingPairKey,
     tokenId,
+    ticker,
+    sports,
+    effectiveTradePrice,
     pipelineLoading,
     pipelineData?.status,
     tradeLinks.slug,
@@ -1114,6 +1345,8 @@ export function TradeArbitrageSection({
       panelMode={panelMode}
       tradePrice={effectiveTradePrice}
       tradeLinks={tradeLinks}
+      pipelineData={pipelineData}
+      pipelineLoading={pipelineLoading}
       className={className}
     />
   );

@@ -10,6 +10,7 @@ import MobileAppShell from "@/components/MobileAppShell";
 import NewWhaleToast from "@/components/NewWhaleToast";
 import TraderAlertSync from "@/components/TraderAlertSync";
 import TradesFeed from "@/components/TradesFeed";
+import ArbitrageOpportunityFeed from "@/components/arbitrage/ArbitrageOpportunityFeed";
 import WelcomeBanner from "@/components/WelcomeBanner";
 import WhaleTracker from "@/components/WhaleTracker";
 import { LiveFeedPlatformProvider } from "@/lib/LiveFeedPlatformContext";
@@ -181,6 +182,7 @@ function HomeDashboard() {
               soundEnabled={soundEnabled}
               onToggleSound={toggleSound}
             />
+            <ArbitrageOpportunityFeed className="mt-6" />
             <NewWhaleToast whale={newWhale} onDismiss={dismissNewWhale} />
 
             <div className="mt-6 border-t border-pulse-border pt-4">

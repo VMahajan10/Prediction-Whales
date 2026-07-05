@@ -8,6 +8,7 @@ import KalshiAnonymousTradePanel from "@/components/KalshiMarketFlowPanel";
 import KalshiMarketMetrics from "@/components/KalshiMarketMetrics";
 import KalshiOrderBookDepth from "@/components/KalshiOrderBookDepth";
 import CopyBetSignal from "@/components/CopyBetSignal";
+import TradeDetailEvArbMetrics from "@/components/arbitrage/TradeDetailEvArbMetrics";
 import { TradeArbitrageSection } from "@/components/ArbitrageBoxSpreadMatrix";
 import LoadErrorCard from "@/components/LoadErrorCard";
 import TradeDetailSkeleton, {
@@ -636,10 +637,23 @@ export default function KalshiTradeDetailPage() {
         <p className="mb-4 text-sm text-slate-300">
           Price paid: <strong className="text-white">{priceCents}¢</strong>
         </p>
+        <TradeDetailEvArbMetrics
+          pipelineData={pipelineData}
+          pipelineLoading={pipelineLoading}
+          source="kalshi"
+          pmTokenId={pipelineData?.tokenId}
+          kalshiTicker={trade.ticker}
+          tradeOutcomeSide={trade.takerOutcomeSide}
+          tradePrice={price}
+          title={trade.title}
+          baseStakeUsd={size}
+          className="mb-4"
+        />
         <TradeArbitrageSection
           pipelineData={pipelineData}
           pipelineLoading={pipelineLoading}
           pmTokenId={pipelineData?.tokenId}
+          kalshiTicker={trade.ticker}
           title={trade.title}
           tradePrice={price}
           isSportsMarket

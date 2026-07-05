@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CopyBetSignal from "@/components/CopyBetSignal";
 import CrossMarketEvBadge from "@/components/CrossMarketEvBadge";
+import TradeDetailEvArbMetrics from "@/components/arbitrage/TradeDetailEvArbMetrics";
 import { TradeArbitrageSection } from "@/components/ArbitrageBoxSpreadMatrix";
 import BookmarkTraderButton from "@/components/BookmarkTraderButton";
 import LoadErrorCard from "@/components/LoadErrorCard";
@@ -648,10 +649,25 @@ export default function WhaleProfilePage() {
         />
       )}
 
+      <TradeDetailEvArbMetrics
+        pipelineData={pipelineData}
+        pipelineLoading={pipelineLoading}
+        source="polymarket"
+        pmTokenId={pipelineTokenId}
+        kalshiTicker={pipelineData?.kalshiTicker}
+        tradeOutcomeSide={trade.outcome}
+        tradePrice={price}
+        title={trade.title}
+        slug={trade.slug}
+        baseStakeUsd={size}
+        className="mb-4"
+      />
+
       <TradeArbitrageSection
         pipelineData={pipelineData}
         pipelineLoading={pipelineLoading}
         pmTokenId={pipelineTokenId}
+        kalshiTicker={pipelineData?.kalshiTicker}
         title={trade.title}
         tradePrice={price}
         tradeLinks={{

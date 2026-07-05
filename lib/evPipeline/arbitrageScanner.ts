@@ -529,12 +529,17 @@ export type BoxSpreadStatus =
 export interface BoxSpreadSnapshot {
   pmYesAsk: number | null;
   opposingNoAsk: number | null;
-  opposingVenue: "kalshi" | "exchange";
+  opposingVenue: "polymarket" | "kalshi" | "exchange";
   opposingVenueLabel: string;
   combinedCost: number | null;
+  impliedSumPercent?: number | null;
   netProfitDelta: number | null;
   netRoiPercent: number | null;
   isActionable: boolean;
+  isExecutable?: boolean;
+  degraded?: boolean;
+  primaryQuoteSource?: string | null;
+  opposingQuoteSource?: string | null;
   /** Alias for opposingNoAsk when venue is exchange. */
   exchangeNoAsk?: number | null;
   /** Alias for opposingNoAsk when venue is kalshi. */

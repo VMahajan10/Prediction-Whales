@@ -1,4 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { resolveArbitrageDisplay } from "@/lib/arbitrageFinder/displayResolver";
+import {
+  buildNeutralArbitrageSnapshot,
+  type ArbitrageDisplaySnapshot,
+} from "@/lib/arbitrageFinder/displayTypes";
 import {
   normalizeKalshiTicker,
   normalizePmTokenId,
@@ -70,24 +75,6 @@ function pickBestAlert(
 ): ArbitrageOpportunity | null {
   if (!opportunities.length) return null;
   return opportunities[0];
-}
-
-function emptySpreadShell(
-  opposingVenue: "exchange" | "kalshi",
-  opposingVenueLabel: string
-): BoxSpreadSnapshot {
-  return {
-    pmYesAsk: null,
-    opposingNoAsk: null,
-    opposingVenue,
-    opposingVenueLabel,
-    combinedCost: null,
-    netProfitDelta: null,
-    netRoiPercent: null,
-    isActionable: false,
-    exchangeNoAsk: null,
-    kalshiNoAsk: null,
-  };
 }
 
 function spreadQuoteScore(spread: BoxSpreadSnapshot): number {
@@ -178,6 +165,7 @@ async function resolveBoxSpread(params: {
   kalshiTicker?: string;
   slug?: string;
   title?: string;
+  tradePrice?: number | null;
 }): Promise<BoxSpreadSnapshot> {
   const tokenId = params.polymarketTokenId.toLowerCase();
   const ticker = params.kalshiTicker?.toUpperCase();
@@ -211,35 +199,41 @@ async function resolveBoxSpread(params: {
   let spread =
     candidates.sort((a, b) => spreadQuoteScore(b) - spreadQuoteScore(a))[0] ??
     null;
+  const hasCompleteLiveSpread =
+    spread?.pmYesAsk != null &&
+    spread.opposingNoAsk != null &&
+    spread.combinedCost != null;
 
-  if (!spread && baseline) {
-    const exchangeNoAsk = exchangeNoAskFromBaseline(baseline);
-    spread = {
-      pmYesAsk: null,
-      opposingNoAsk: exchangeNoAsk,
-      exchangeNoAsk,
-      opposingVenue: "exchange",
-      opposingVenueLabel: baseline.label,
-      combinedCost: null,
-      netProfitDelta: null,
-      netRoiPercent: null,
-      isActionable: false,
-    };
+  if (!hasCompleteLiveSpread) {
+    const snapshot =
+      (await resolveArbitrageDisplay({
+        source: "polymarket",
+        pmTokenId: tokenId,
+        kalshiTicker: ticker,
+        tradePrice: params.tradePrice,
+        title: params.title,
+        slug: params.slug,
+        prefer: "single_venue",
+      })) ??
+      buildNeutralArbitrageSnapshot({
+        venue: "polymarket",
+        contractId: tokenId,
+        referencePrice: params.tradePrice,
+      });
+    spread = spreadFromDisplaySnapshot(snapshot, ticker);
   }
 
-  if (!spread) {
-    spread = ticker
-      ? emptySpreadShell("kalshi", ticker)
-      : emptySpreadShell("exchange", "Awaiting opposing quote");
-  }
-
-  const statusFields = deriveSpreadStatus(spread, {
-    hasPmOb,
-    hasKalshiOb,
-    hasBaseline,
-    kalshiTicker: ticker,
-  });
-  const resolved: BoxSpreadSnapshot = { ...spread, ...statusFields };
+  const resolved: BoxSpreadSnapshot = hasCompleteLiveSpread
+    ? {
+        ...spread!,
+        ...deriveSpreadStatus(spread!, {
+          hasPmOb,
+          hasKalshiOb,
+          hasBaseline,
+          kalshiTicker: ticker,
+        }),
+      }
+    : spread!;
 
   console.log("[api/ev/arbitrage] resolveBoxSpread", {
     tokenId,
@@ -306,6 +300,9 @@ function spreadPayload(
     kalshiNoAsk:
       spread.opposingVenue === "kalshi" ? spread.opposingNoAsk : spread.kalshiNoAsk ?? null,
     combinedCost,
+    impliedSumPercent:
+      spread.impliedSumPercent ??
+      (combinedCost != null ? Math.round(combinedCost * 1000) / 10 : null),
     netProfitDelta,
     netRoiPercent,
     isActionable:
@@ -325,30 +322,115 @@ function logArbitragePayload(
   console.log(`Arbitrage Endpoint Data Payload (${label}):`, JSON.stringify(payload));
 }
 
+function spreadFromDisplaySnapshot(
+  snapshot: ArbitrageDisplaySnapshot,
+  kalshiTicker?: string | null
+): BoxSpreadSnapshot {
+  const yesLeg =
+    snapshot.legs.find((leg) => leg.side === "YES") ?? snapshot.legs[0];
+  const noLeg =
+    snapshot.legs.find((leg) => leg.side === "NO") ?? snapshot.legs[1];
+  const netProfitDelta =
+    snapshot.combinedCost > 0 ? 1 - snapshot.combinedCost : null;
+  const opposingVenue = noLeg.venue;
+  const opposingVenueLabel =
+    opposingVenue === "polymarket"
+      ? "Same-venue fallback"
+      : opposingVenue === "kalshi"
+        ? (kalshiTicker?.toUpperCase() ?? noLeg.contractId)
+        : "Sportsbook consensus";
+
+  return {
+    pmYesAsk: yesLeg.askPrice,
+    opposingNoAsk: noLeg.askPrice,
+    opposingVenue,
+    opposingVenueLabel,
+    combinedCost: snapshot.combinedCost,
+    impliedSumPercent: snapshot.impliedSumPercent,
+    netProfitDelta,
+    netRoiPercent: snapshot.roiPercent,
+    isActionable: snapshot.isActionable,
+    isExecutable: snapshot.isExecutable,
+    degraded: snapshot.degraded,
+    primaryQuoteSource: yesLeg.source,
+    opposingQuoteSource: noLeg.source,
+    exchangeNoAsk:
+      opposingVenue === "exchange" ? noLeg.askPrice : null,
+    kalshiNoAsk: opposingVenue === "kalshi" ? noLeg.askPrice : null,
+    status: snapshot.degraded ? "PARTIAL_QUOTES" : "OK",
+    statusMessage: snapshot.degraded
+      ? "Estimated same-venue quotes"
+      : snapshot.isActionable
+        ? "Active intra-venue spread"
+        : "Intra-venue spreads are currently efficient",
+  };
+}
+
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
   const pairKey = searchParams.get("pairKey")?.trim();
   const tokenIdParam = normalizePmTokenId(searchParams.get("tokenId"));
+  const kalshiTickerParam = normalizeKalshiTicker(
+    searchParams.get("kalshiTicker")
+  );
   const slug = searchParams.get("slug")?.trim() || undefined;
   const title = searchParams.get("title")?.trim() || undefined;
+  const tradePriceRaw = searchParams.get("tradePrice");
+  const tradePrice =
+    tradePriceRaw != null && Number.isFinite(parseFloat(tradePriceRaw))
+      ? parseFloat(tradePriceRaw)
+      : null;
 
   console.log("Arbitrage API hit. TokenId:", searchParams.get("tokenId"));
   console.log("Arbitrage API Request for token:", tokenIdParam, "pairKey:", pairKey, {
     slug,
     title,
+    kalshiTicker: kalshiTickerParam,
   });
 
-  if (!pairKey && !tokenIdParam) {
+  if (!pairKey && !tokenIdParam && !kalshiTickerParam) {
     return NextResponse.json(
       {
         error:
-          "Provide pairKey (pair:{pmToken}:{KALSHI_TICKER}) or tokenId for sports exchange scan",
+          "Provide pairKey (pair:{pmToken}:{KALSHI_TICKER}), tokenId, or kalshiTicker",
       },
       { status: 400 }
     );
   }
 
   try {
+    if (kalshiTickerParam && !pairKey && !tokenIdParam) {
+      const snapshot =
+        (await resolveArbitrageDisplay({
+          source: "kalshi",
+          kalshiTicker: kalshiTickerParam,
+          title,
+          tradePrice,
+          prefer: "single_venue",
+        })) ??
+        buildNeutralArbitrageSnapshot({
+          venue: "kalshi",
+          contractId: kalshiTickerParam,
+          referencePrice: tradePrice,
+        });
+
+      const spread = spreadFromDisplaySnapshot(snapshot, kalshiTickerParam);
+      const payload = {
+        source: "kalshi",
+        kalshiTicker: kalshiTickerParam,
+        spreadStatus: spread.status ?? "OK",
+        spreadStatusMessage: spread.statusMessage ?? null,
+        boxSpread: spread,
+        spread,
+        opportunities: [],
+        alert: null,
+        arbitrage: null,
+        threshold: MIN_ARBITRAGE_COST_THRESHOLD,
+      };
+      logArbitragePayload("kalshiTicker", payload);
+      return NextResponse.json(payload, { status: 200 });
+    }
+
     if (tokenIdParam && !pairKey) {
       const pmMapping = await getMappingByPm(tokenIdParam);
       const kalshiTicker = pmMapping?.kalshiTicker;
@@ -369,6 +451,7 @@ export async function GET(request: NextRequest) {
           kalshiTicker,
           slug,
           title,
+          tradePrice,
         }),
       ]);
 
@@ -461,6 +544,7 @@ export async function GET(request: NextRequest) {
         kalshiTicker: parsed.kalshiTicker,
         slug,
         title,
+        tradePrice,
       }),
     ]);
     const spread = spreadPayload(boxSpread, baseline);

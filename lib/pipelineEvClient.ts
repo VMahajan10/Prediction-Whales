@@ -11,6 +11,7 @@ import { normalizePipelineTradeEv } from "@/lib/evPipeline/tradeEvRecord";
 import {
   enrichPipelineTradeEvCrossIds,
   indexPipelineTradeEvAliases,
+  pipelineEvLookupAliases,
 } from "@/lib/evPipeline/crossAssetLookup";
 import type { MarketSummary } from "@/lib/polymarket";
 import type { WhaleTrade } from "@/lib/whaleTrades";
@@ -121,6 +122,32 @@ export function pipelineEvKeyForWhale(trade: WhaleTrade): string | null {
   if (trade.source === "kalshi" && trade.ticker) {
     return pipelineEvLookupKeyKalshi(trade.ticker);
   }
+  return null;
+}
+
+/** Resolve pipeline EV from batch index using pm:/kalshi:/pair: aliases. */
+export function resolvePipelineEvForWhale(
+  index: Map<string, PipelineTradeEv>,
+  trade: WhaleTrade
+): PipelineTradeEv | null {
+  const key = pipelineEvKeyForWhale(trade);
+  if (!key) return null;
+
+  const direct = index.get(key);
+  if (direct) return direct;
+
+  const tokenId = trade.source === "polymarket" ? trade.assetId : undefined;
+  const kalshiTicker = trade.source === "kalshi" ? trade.ticker : undefined;
+
+  for (const alias of pipelineEvLookupAliases({
+    key,
+    tokenId: tokenId ?? null,
+    kalshiTicker: kalshiTicker ?? null,
+  })) {
+    const hit = index.get(alias);
+    if (hit) return hit;
+  }
+
   return null;
 }
 

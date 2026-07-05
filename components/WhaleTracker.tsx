@@ -7,7 +7,7 @@ import PlatformFilterToggle from "@/components/PlatformFilterToggle";
 import { useLiveFeedPlatform } from "@/lib/LiveFeedPlatformContext";
 import { liveFeedPlatformLabel } from "@/lib/liveFeedMerge";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
-import { pipelineEvKeyForWhale } from "@/lib/pipelineEvClient";
+import { pipelineEvKeyForWhale, resolvePipelineEvForWhale } from "@/lib/pipelineEvClient";
 import { usePipelineEvForWhales } from "@/lib/usePipelineEvIndex";
 import {
   stashKalshiTradeForNavigation,
@@ -18,12 +18,18 @@ import type { WhaleTrade } from "@/lib/whaleTrades";
 import { inferMarketCategory } from "@/lib/marketCategory";
 import { formatEvPercent } from "@/lib/crossMarketEvDisplay";
 import {
-  resolvePipelineDisplayEv,
+  coalesceDisplayEvPercent,
+  hasAuthoritativePipelineEv,
+  pipelineEvTooltip,
+  pipelineEvTone,
+  resolveDetailPanelDisplayEv,
 } from "@/lib/evPipeline/tradeEvRecord";
 import {
   isPairedPipelineTrade,
   TradeArbitrageSection,
 } from "@/components/ArbitrageBoxSpreadMatrix";
+import ArbitrageDiscrepancyBox from "@/components/arbitrage/ArbitrageDiscrepancyBox";
+import { resolveArbIdentifiersForWhaleTrade } from "@/lib/arbitrageFinder/resolveWhaleArbIdentifiers";
 
 const TOP_WHALE_COUNT = 10;
 
@@ -58,9 +64,10 @@ function formatStake(size: number): string {
 
 function precomputedEvPercent(
   trade: WhaleTrade,
-  pipelineData: PipelineTradeEv | null | undefined
+  pipelineData: PipelineTradeEv | null | undefined,
+  hasLookupKey: boolean
 ): { netEvPercent: number; lowConfidence: boolean } | null {
-  const fromPipeline = resolvePipelineDisplayEv(pipelineData);
+  const fromPipeline = resolveDetailPanelDisplayEv(pipelineData, trade.price);
   if (fromPipeline) {
     return {
       netEvPercent: fromPipeline.netEvPercent,
@@ -68,9 +75,16 @@ function precomputedEvPercent(
     };
   }
 
-  const fromTrade =
-    trade.netEvPercent ?? trade.grossEvPercent ?? trade.averageEv ?? null;
-  if (fromTrade != null && Number.isFinite(fromTrade)) {
+  if (hasLookupKey && !pipelineData) {
+    return null;
+  }
+
+  const fromTrade = coalesceDisplayEvPercent({
+    netEvPercent: trade.netEvPercent ?? null,
+    grossEvPercent: trade.grossEvPercent ?? null,
+    averageEv: trade.averageEv ?? null,
+  });
+  if (fromTrade != null) {
     return { netEvPercent: fromTrade, lowConfidence: false };
   }
 
@@ -84,13 +98,12 @@ function formatEvPercentDisplay(
   value: string;
   valueClass: string;
 } {
-  const normalized = Object.is(netEvPercent, -0) ? 0 : netEvPercent;
-  const isPositive = normalized > 0;
-  const formatted = `${isPositive ? "+" : ""}${normalized.toFixed(1)}%`;
+  const formatted = formatEvPercent(netEvPercent);
   const value = lowConfidence ? `~${formatted}` : formatted;
-  const valueClass = isPositive
+  const { positive, negative } = pipelineEvTone(netEvPercent);
+  const valueClass = positive
     ? "text-emerald-500 font-semibold"
-    : normalized < 0
+    : negative
       ? "text-rose-500 font-semibold"
       : "text-pulse-label";
 
@@ -100,7 +113,8 @@ function formatEvPercentDisplay(
 function resolveAvgEvDisplay(
   trade: WhaleTrade,
   pipelineData: PipelineTradeEv | null | undefined,
-  hasLookupKey: boolean
+  hasLookupKey: boolean,
+  pipelineLoading = false
 ): { value: string; valueClass: string; lowConfidence: boolean } {
   if (!hasLookupKey) {
     return { value: "N/A", valueClass: "text-pulse-label", lowConfidence: false };
@@ -110,7 +124,19 @@ function resolveAvgEvDisplay(
     return { value: "—", valueClass: "text-pulse-label", lowConfidence: false };
   }
 
-  const ev = precomputedEvPercent(trade, pipelineData);
+  if (
+    pipelineLoading &&
+    !hasAuthoritativePipelineEv(pipelineData) &&
+    !resolveDetailPanelDisplayEv(pipelineData, trade.price)
+  ) {
+    return {
+      value: "…",
+      valueClass: "text-zinc-500 animate-pulse",
+      lowConfidence: false,
+    };
+  }
+
+  const ev = precomputedEvPercent(trade, pipelineData, hasLookupKey);
   if (ev != null) {
     return {
       ...formatEvPercentDisplay(ev.netEvPercent, ev.lowConfidence),
@@ -166,14 +192,16 @@ function ExpandedEvBreakdown({
   trade,
   pipelineData,
   avgEv,
+  hasLookupKey,
 }: {
   trade: WhaleTrade;
   pipelineData: PipelineTradeEv | null;
   avgEv: ReturnType<typeof resolveAvgEvDisplay>;
+  hasLookupKey: boolean;
 }) {
   if (!isPairedPipelineTrade(pipelineData)) return null;
 
-  const ev = precomputedEvPercent(trade, pipelineData);
+  const ev = precomputedEvPercent(trade, pipelineData, hasLookupKey);
   const evLabel =
     ev != null && Number.isFinite(ev.netEvPercent)
       ? formatEvPercent(ev.netEvPercent)
@@ -193,12 +221,14 @@ function WhaleFeedCard({
   trade,
   now,
   pipelineData,
+  pipelineLoading,
   expandedCardId,
   setExpandedCardId,
 }: {
   trade: WhaleTrade;
   now: number;
   pipelineData: PipelineTradeEv | null;
+  pipelineLoading: boolean;
   expandedCardId: string | null;
   setExpandedCardId: (id: string | null) => void;
 }) {
@@ -214,8 +244,10 @@ function WhaleFeedCard({
   const avgEv = resolveAvgEvDisplay(
     trade,
     pipelineData,
-    lookupKey != null
+    lookupKey != null,
+    pipelineLoading
   );
+  const arbIds = resolveArbIdentifiersForWhaleTrade(trade, pipelineData);
 
   const cardInner = (
     <article
@@ -310,11 +342,31 @@ function WhaleFeedCard({
               trade={trade}
               pipelineData={pipelineData}
               avgEv={avgEv}
+              hasLookupKey={lookupKey != null}
             />
           ) : null}
+          <ArbitrageDiscrepancyBox
+            source={trade.source === "kalshi" ? "kalshi" : "polymarket"}
+            pmTokenId={arbIds.pmTokenId}
+            kalshiTicker={arbIds.kalshiTicker}
+            tradeOutcomeSide={trade.outcome}
+            tradePrice={trade.price}
+            title={trade.title}
+            slug={trade.slug}
+            baseStakeUsd={trade.usdNotional}
+            compact
+            fullWidth
+            enabled={isExpanded}
+            className="mt-3"
+          />
           <TradeArbitrageSection
             pipelineData={pipelineData}
             pmTokenId={pipelineData?.tokenId ?? trade.assetId}
+            kalshiTicker={
+              trade.source === "kalshi"
+                ? trade.ticker ?? arbIds.kalshiTicker
+                : arbIds.kalshiTicker
+            }
             title={trade.title}
             tradePrice={trade.price}
             isSportsMarket={category === "SPORTS"}
@@ -383,7 +435,8 @@ export default function WhaleTracker({
 }: WhaleTrackerProps) {
   const { platform, setPlatform } = useLiveFeedPlatform();
   const topWhales = whales.slice(0, TOP_WHALE_COUNT);
-  const { index: pipelineEvIndex } = usePipelineEvForWhales(topWhales);
+  const { index: pipelineEvIndex, loading: pipelineLoading } =
+    usePipelineEvForWhales(topWhales);
   const [now, setNow] = useState(() => Date.now());
   const [expandedCardId, setExpandedCardId] = useState<string | null>(null);
 
@@ -440,9 +493,8 @@ export default function WhaleTracker({
                 }
                 trade={trade}
                 now={now}
-                pipelineData={
-                  lookupKey ? pipelineEvIndex.get(lookupKey) ?? null : null
-                }
+                pipelineData={resolvePipelineEvForWhale(pipelineEvIndex, trade)}
+                pipelineLoading={pipelineLoading}
                 expandedCardId={expandedCardId}
                 setExpandedCardId={setExpandedCardId}
               />

@@ -98,6 +98,80 @@ export function resolvePipelineDisplayEv(
   };
 }
 
+export function isStaleZeroAverageEvPayload(
+  ev: Pick<PipelineTradeEv, "netEvPercent" | "grossEvPercent" | "averageEv">
+): boolean {
+  return (
+    ev.averageEv === 0 &&
+    ev.netEvPercent == null &&
+    ev.grossEvPercent == null
+  );
+}
+
+/**
+ * Detail panels + whale card badges — prefer full pipeline bundle, then coalesce
+ * netEvPercent / grossEvPercent / averageEv without requiring status ok.
+ */
+export function hasAuthoritativePipelineEv(
+  ev: PipelineTradeEv | null | undefined
+): boolean {
+  if (!ev) return false;
+  return (
+    (ev.netEvPercent != null && Number.isFinite(ev.netEvPercent)) ||
+    (ev.grossEvPercent != null && Number.isFinite(ev.grossEvPercent))
+  );
+}
+
+export function resolveDetailPanelDisplayEv(
+  ev: PipelineTradeEv | null | undefined,
+  executionPrice?: number | null
+): ReturnType<typeof resolvePipelineDisplayEv> {
+  const resolved = resolvePipelineDisplayEv(ev);
+  if (resolved && !(ev && isStaleZeroAverageEvPayload(ev))) {
+    return resolved;
+  }
+
+  let netEvPercent = coalesceDisplayEvPercent(ev);
+
+  const onlyStaleZeroAverage =
+    ev != null && netEvPercent === 0 && isStaleZeroAverageEvPayload(ev);
+
+  if (
+    ev?.pTrue != null &&
+    Number.isFinite(ev.pTrue) &&
+    (netEvPercent == null ||
+      onlyStaleZeroAverage ||
+      isStaleEvLookupPayload(ev))
+  ) {
+    const derived = deriveEvPercentFromPTrue(
+      ev.pTrue,
+      executionPrice ?? ev.pmMid ?? ev.kalshiMid,
+      ev.pMarket
+    );
+    if (derived != null) netEvPercent = derived;
+  }
+
+  if (netEvPercent == null || !ev) return null;
+
+  return {
+    netEvPercent,
+    lowConfidence: ev.pTrueLowConfidence ?? false,
+    pTrue: ev.pTrue ?? 0,
+    pMarket: ev.pMarket ?? ev.pmMid ?? ev.kalshiMid ?? null,
+    pTrueSource: ev.pTrueSource ?? null,
+  };
+}
+
+export function pipelineEvTone(netEvPercent: number): {
+  positive: boolean;
+  negative: boolean;
+} {
+  return {
+    positive: netEvPercent > 0,
+    negative: netEvPercent < -0.05,
+  };
+}
+
 export function pipelineEvTooltip(
   ev: PipelineTradeEv,
   display?: ReturnType<typeof resolvePipelineDisplayEv>

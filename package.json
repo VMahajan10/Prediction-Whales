@@ -22,7 +22,14 @@
     "backfill:ptrue": "npx tsx --tsconfig tsconfig.json scripts/backfill-ptrue.ts",
     "report:pipeline-coverage": "npx tsx --tsconfig tsconfig.json scripts/pipeline-coverage-report.ts",
     "flush:ev-cache": "npx tsx --tsconfig tsconfig.json scripts/flush-ev-cache.ts",
-    "test:live-ptrue": "npx tsx --tsconfig tsconfig.json scripts/test-live-ptrue-workflow.ts"
+    "test:live-ptrue": "npx tsx --tsconfig tsconfig.json scripts/test-live-ptrue-workflow.ts",
+    "test:arb-phase01": "npx tsx --tsconfig tsconfig.json lib/arbitrageFinder/phase01.test.ts",
+    "test:arb-phase02": "npx tsx --tsconfig tsconfig.json lib/arbitrageFinder/phase02.test.ts",
+    "test:arb-phase04": "npx tsx --tsconfig tsconfig.json lib/arbitrageFinder/phase04.test.ts",
+    "test:arb-phase05": "npx tsx --tsconfig tsconfig.json lib/arbitrageFinder/phase05.test.ts",
+    "test:arb-phase06": "npx tsx --tsconfig tsconfig.json lib/arbitrageFinder/phase06.test.ts",
+    "test:arb-phase07": "npx tsx --tsconfig tsconfig.json lib/arbitrageFinder/phase07.test.ts",
+    "report:arb-coverage": "npx tsx --tsconfig tsconfig.json scripts/arb-coverage-report.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.77",

@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import {
   coalesceDisplayEvPercent,
   pipelineEvTooltip,
+  resolveDetailPanelDisplayEv,
   resolvePipelineDisplayEv,
   sanitizeEvPercent,
   sealClientTradeEvPayload,
@@ -100,6 +101,49 @@ test("resolvePipelineDisplayEv returns null for unmapped payloads", () => {
     }),
     null
   );
+});
+
+test("resolveDetailPanelDisplayEv coalesces netEvPercent without status ok", () => {
+  const display = resolveDetailPanelDisplayEv({
+    key: "pm:pending",
+    status: "ok",
+    tokenId: "tok",
+    kalshiTicker: null,
+    netEvPercent: -1.1,
+    netEv: -0.011,
+    grossEv: -0.011,
+    grossEvPercent: -1.1,
+    averageEv: 0,
+    pTrue: null,
+    pTrueLowConfidence: true,
+    pTrueSource: "universal_prior",
+  });
+  assert.ok(display);
+  assert.equal(display!.netEvPercent, -1.1);
+  assert.equal(display!.lowConfidence, true);
+});
+
+test("resolveDetailPanelDisplayEv derives signed EV from p_true + execution price", () => {
+  const display = resolveDetailPanelDisplayEv(
+    {
+      key: "kalshi:KX-TEST",
+      status: "ok",
+      tokenId: null,
+      kalshiTicker: "KX-TEST",
+      netEvPercent: null,
+      netEv: 0,
+      grossEv: 0,
+      grossEvPercent: null,
+      averageEv: 0,
+      pTrue: 0.45,
+      pMarket: 0.5,
+      pTrueLowConfidence: false,
+      pTrueSource: "universal_prior",
+    },
+    0.456
+  );
+  assert.ok(display);
+  assert.ok(display!.netEvPercent < 0, `expected negative EV, got ${display!.netEvPercent}`);
 });
 
 test("sealClientTradeEvPayload aligns averageEv with netEvPercent", () => {

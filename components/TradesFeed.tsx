@@ -211,26 +211,26 @@ export default function TradesFeed() {
     <div className="flex h-full flex-col">
       <div className="mb-3 flex flex-col gap-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-white">Live Trades</h2>
-          <div className="flex items-center gap-2">
+        <h2 className="text-lg font-semibold text-white">Live Trades</h2>
+        <div className="flex items-center gap-2">
             {polymarketConnected ? (
-              <span className="flex items-center gap-1 text-xs text-green-400">
-                <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
-                </span>
-                Live
+            <span className="flex items-center gap-1 text-xs text-green-400">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
+              </span>
+              Live
                 {kalshiOk && platform !== "polymarket" && (
                   <span className="text-slate-500">+Kalshi</span>
                 )}
-              </span>
-            ) : (
-              <span className="flex items-center gap-1 text-xs text-slate-400">
-                <span className="h-2 w-2 rounded-full bg-slate-500" />
-                Connecting
-              </span>
-            )}
-          </div>
+            </span>
+          ) : (
+            <span className="flex items-center gap-1 text-xs text-slate-400">
+              <span className="h-2 w-2 rounded-full bg-slate-500" />
+              Connecting
+            </span>
+          )}
+        </div>
         </div>
         <PlatformFilterToggle
           value={platform}
