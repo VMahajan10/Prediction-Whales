@@ -12,6 +12,14 @@ const config: CapacitorConfig = {
   server: {
     url: "https://marketpulse-sand-five.vercel.app",
     cleartext: false,
+    androidScheme: "https",
+  },
+  plugins: {
+    SplashScreen: {
+      launchShowDuration: 2000,
+      backgroundColor: "#000000",
+      androidScaleType: "CENTER_CROP",
+    },
   },
 };
 

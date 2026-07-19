@@ -12,6 +12,10 @@
     "cap:sync": "npx cap sync",
     "cap:ios": "npx cap open ios",
     "cap:android": "npx cap open android",
+    "assets:generate": "npx @capacitor/assets generate",
+    "assets:generate:ios": "npx @capacitor/assets generate --ios",
+    "assets:generate:android": "npx @capacitor/assets generate --android",
+    "assets:sync": "npm run assets:generate && npm run cap:sync",
     "db:migrate": "drizzle-kit migrate",
     "db:generate": "drizzle-kit generate",
     "db:studio": "drizzle-kit studio",
@@ -48,6 +52,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",

@@ -14,9 +14,9 @@
 # production
 /build
 
-# capacitor native projects (regenerate with `npx cap add ios/android`)
-/ios
-/android
+# capacitor native projects (tracked; regenerate with `npx cap add ios/android` if needed)
+# /ios
+# /android
 
 # misc
 .DS_Store
@@ -34,3 +34,11 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .vercel
+
+# Native Mobile Building & Signing Exclusions
+android/keystore.properties
+android/keystores/
+android/local.properties
+ios/App/Pods/
+*.jks
+*.keystore

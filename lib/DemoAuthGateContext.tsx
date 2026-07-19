@@ -26,8 +26,10 @@ interface DemoAuthContextValue {
 const DemoAuthContext = createContext<DemoAuthContextValue | null>(null);
 
 export function DemoAuthProvider({ children }: { children: ReactNode }) {
-  const [entered, setEntered] = useState(false);
-  const [checking, setChecking] = useState(true);
+  const [entered, setEntered] = useState(() => hasDemoEntered());
+  const [checking, setChecking] = useState(
+    () => typeof window !== "undefined" && !hasDemoEntered()
+  );
 
   const refresh = useCallback(() => {
     setEntered(hasDemoEntered());

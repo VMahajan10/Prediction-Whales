@@ -15,6 +15,9 @@ interface KalshiCandlestickChartProps {
 
 const HEIGHT = 300;
 const VOL_HEIGHT = 60;
+const VOL_GAP = 10;
+const XAXIS_HEIGHT = 40;
+const SVG_HEIGHT = HEIGHT + VOL_GAP + VOL_HEIGHT + XAXIS_HEIGHT;
 const PAD = { top: 20, right: 20, bottom: 40, left: 56 };
 
 function formatTime(ts: number): string {
@@ -39,7 +42,9 @@ export default function KalshiCandlestickChart({
 }: KalshiCandlestickChartProps) {
   const gradId = useId().replace(/:/g, "");
   const containerRef = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(800);
+  const [width, setWidth] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth : 800
+  );
 
   const chartW = width - PAD.left - PAD.right;
   const priceH = HEIGHT - PAD.top - PAD.bottom;
@@ -97,8 +102,13 @@ export default function KalshiCandlestickChart({
   const maxP = Math.min(1, dataMax + padding);
   const maxVol = Math.max(...points.map((c) => c.volume), 1);
 
-  const minT = points[0].endPeriodTs;
-  const maxT = points[points.length - 1].endPeriodTs;
+  // Include tradeTimestamp in the domain so a trade more recent than the
+  // last candle (or older than the first) still lands inside chartW instead
+  // of projecting off the right/left edge of the plot.
+  const timestamps = points.map((c) => c.endPeriodTs);
+  if (tradeTimestamp != null) timestamps.push(tradeTimestamp);
+  const minT = Math.min(...timestamps);
+  const maxT = Math.max(...timestamps);
   const timeSpan = Math.max(maxT - minT, 3600);
 
   const priceToY = (p: number) =>
@@ -118,8 +128,12 @@ export default function KalshiCandlestickChart({
   const lastX = lineCoords[lineCoords.length - 1]?.x ?? PAD.left + chartW;
   const anchorY = PAD.top + priceH;
 
+  // Clamp defensively: even with tradeTimestamp folded into the time domain
+  // above, this guarantees the marker never renders outside the plot area.
   const tradeX =
-    tradeTimestamp != null ? timeToX(tradeTimestamp) : null;
+    tradeTimestamp != null
+      ? Math.min(Math.max(timeToX(tradeTimestamp), PAD.left), PAD.left + chartW)
+      : null;
   const tradeY =
     tradePrice != null ? priceToY(tradePrice) : null;
 
@@ -128,18 +142,19 @@ export default function KalshiCandlestickChart({
   const youngMarket = points.length <= 3;
 
   return (
-    <div ref={containerRef} className="w-full">
+    <div ref={containerRef} className="relative w-full pb-8">
       {youngMarket && (
         <p className="mb-3 text-xs text-slate-500">
           Young market — limited candlestick history ({points.length} period
           {points.length === 1 ? "" : "s"})
         </p>
       )}
-      <svg
-        width={width}
-        height={HEIGHT + VOL_HEIGHT + 10}
-        className="overflow-visible"
-      >
+      <div className="touch-pan-y">
+        <svg
+          width={width}
+          height={SVG_HEIGHT}
+          className="overflow-visible"
+        >
         <defs>
           <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#14b8a6" stopOpacity="0.25" />
@@ -207,14 +222,20 @@ export default function KalshiCandlestickChart({
         )}
 
         {points.map((c) => {
-          const barW = Math.max(2, chartW / points.length - 2);
-          const x = timeToX(c.endPeriodTs) - barW / 2;
+          // Cap bar width so sparse/young markets (few candles) don't produce
+          // an oversized bar that reads as a stray gray box in the chart.
+          const barW = Math.min(24, Math.max(2, chartW / points.length - 2));
+          const x = Math.min(
+            Math.max(timeToX(c.endPeriodTs) - barW / 2, PAD.left),
+            PAD.left + chartW - barW
+          );
           const volH = (c.volume / maxVol) * VOL_HEIGHT;
+          if (volH <= 0) return null;
           return (
             <rect
               key={c.endPeriodTs}
               x={x}
-              y={HEIGHT + 10 + VOL_HEIGHT - volH}
+              y={HEIGHT + VOL_GAP + VOL_HEIGHT - volH}
               width={barW}
               height={volH}
               fill="#475569"
@@ -230,7 +251,7 @@ export default function KalshiCandlestickChart({
             <text
               key={`${c.endPeriodTs}-${i}`}
               x={timeToX(c.endPeriodTs)}
-              y={HEIGHT + VOL_HEIGHT + 28}
+              y={HEIGHT + VOL_GAP + VOL_HEIGHT + 14}
               textAnchor="middle"
               className="fill-slate-500 text-[10px]"
             >
@@ -238,9 +259,10 @@ export default function KalshiCandlestickChart({
             </text>
           );
         })}
-      </svg>
+        </svg>
+      </div>
 
-      <p className="mt-2 text-xs text-slate-500">
+      <p className="mt-6 text-xs text-slate-500">
         Hourly Yes-probability candlesticks from Kalshi · volume bars below
       </p>
     </div>

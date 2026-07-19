@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import Providers from "./providers";
 import "./globals.css";
@@ -13,6 +13,13 @@ export const metadata: Metadata = {
   description: "Real-time Polymarket intelligence dashboard",
 };
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  viewportFit: "cover",
+};
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -20,7 +27,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={inter.className}>
-      <body className="min-h-screen bg-pulse-bg antialiased">
+      <body className="min-h-screen bg-pulse-bg pt-safe-top antialiased">
         <Providers>{children}</Providers>
       </body>
     </html>

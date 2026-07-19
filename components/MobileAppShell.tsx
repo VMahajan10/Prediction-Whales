@@ -24,10 +24,10 @@ export default function MobileAppShell({
 
   return (
     <div className="mx-auto min-h-screen max-w-md bg-pulse-bg lg:max-w-lg">
-      <div className={showNav ? "pb-24" : ""}>{children}</div>
+      <div className={showNav ? "pb-24 pb-safe-bottom" : ""}>{children}</div>
 
       {showNav && (
-        <nav className="fixed bottom-0 left-1/2 z-50 w-full max-w-md -translate-x-1/2 border-t border-pulse-border bg-black/95 backdrop-blur lg:max-w-lg">
+        <nav className="fixed bottom-0 left-1/2 z-50 w-full max-w-md -translate-x-1/2 border-t border-pulse-border bg-black/95 pb-safe-bottom backdrop-blur lg:max-w-lg">
           <div className="flex items-stretch justify-around px-2 py-2">
             {NAV_ITEMS.map((item) => {
               const active =

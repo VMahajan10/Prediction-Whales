@@ -42,6 +42,10 @@ const config: Config = {
       boxShadow: {
         accent: "0 4px 24px rgba(255, 69, 0, 0.25)",
       },
+      padding: {
+        "safe-top": "env(safe-area-inset-top)",
+        "safe-bottom": "env(safe-area-inset-bottom)",
+      },
     },
   },
   plugins: [],

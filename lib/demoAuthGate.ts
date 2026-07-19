@@ -7,7 +7,19 @@ function dispatchChanged(): void {
   window.dispatchEvent(new CustomEvent(DEMO_AUTH_CHANGED_EVENT));
 }
 
+export function isAppReviewBypassActive(): boolean {
+  if (process.env.NEXT_PUBLIC_APP_REVIEW_MODE === "true") return true;
+
+  if (typeof window === "undefined") return false;
+
+  const token = process.env.NEXT_PUBLIC_APP_REVIEW_BYPASS_TOKEN;
+  if (!token) return false;
+  return new URLSearchParams(window.location.search).get("review") === token;
+}
+
 export function hasDemoEntered(): boolean {
+  if (isAppReviewBypassActive()) return true;
+
   if (typeof window === "undefined") return false;
   try {
     return sessionStorage.getItem(STORAGE_KEY) === "true";
