@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import BookmarkTraderButton from "@/components/BookmarkTraderButton";
 import PlatformFilterToggle from "@/components/PlatformFilterToggle";
@@ -20,16 +21,9 @@ import { formatEvPercent } from "@/lib/crossMarketEvDisplay";
 import {
   coalesceDisplayEvPercent,
   hasAuthoritativePipelineEv,
-  pipelineEvTooltip,
   pipelineEvTone,
   resolveDetailPanelDisplayEv,
 } from "@/lib/evPipeline/tradeEvRecord";
-import {
-  isPairedPipelineTrade,
-  TradeArbitrageSection,
-} from "@/components/ArbitrageBoxSpreadMatrix";
-import ArbitrageDiscrepancyBox from "@/components/arbitrage/ArbitrageDiscrepancyBox";
-import { resolveArbIdentifiersForWhaleTrade } from "@/lib/arbitrageFinder/resolveWhaleArbIdentifiers";
 
 const TOP_WHALE_COUNT = 10;
 
@@ -60,6 +54,27 @@ function traderInitials(trade: WhaleTrade): string {
 
 function formatStake(size: number): string {
   return `$${Math.round(size).toLocaleString("en-US")}`;
+}
+
+function getWhaleTradeDetailHref(trade: WhaleTrade): string | null {
+  if (trade.source === "kalshi") {
+    return trade.ticker != null
+      ? `/trades/kalshi/${encodeURIComponent(trade.id)}?ticker=${encodeURIComponent(trade.ticker)}`
+      : `/trades/kalshi/${encodeURIComponent(trade.id)}`;
+  }
+
+  const tradeKey = trade.transactionHash || trade.id;
+  return tradeKey ? `/trades/${encodeURIComponent(tradeKey)}` : null;
+}
+
+function stashTradeForDetailNavigation(trade: WhaleTrade): void {
+  if (trade.source === "kalshi") {
+    const feedTrade = whaleTradeToKalshiFeedTrade(trade);
+    if (feedTrade) stashKalshiTradeForNavigation(feedTrade);
+    return;
+  }
+
+  stashTradeForNavigation(trade);
 }
 
 function precomputedEvPercent(
@@ -184,62 +199,25 @@ function StatCell({
   );
 }
 
-function fairVenueLabel(trade: WhaleTrade): string {
-  return trade.source === "polymarket" ? "Kalshi" : "Polymarket";
-}
-
-function ExpandedEvBreakdown({
-  trade,
-  pipelineData,
-  avgEv,
-  hasLookupKey,
-}: {
-  trade: WhaleTrade;
-  pipelineData: PipelineTradeEv | null;
-  avgEv: ReturnType<typeof resolveAvgEvDisplay>;
-  hasLookupKey: boolean;
-}) {
-  if (!isPairedPipelineTrade(pipelineData)) return null;
-
-  const ev = precomputedEvPercent(trade, pipelineData, hasLookupKey);
-  const evLabel =
-    ev != null && Number.isFinite(ev.netEvPercent)
-      ? formatEvPercent(ev.netEvPercent)
-      : avgEv.value;
-
-  return (
-    <div className="mt-3 rounded-md border border-pulse-border bg-pulse-surface/60 px-3 py-2.5">
-      <p className={`text-sm font-semibold ${avgEv.valueClass}`}>{evLabel} EV</p>
-      <p className="mt-0.5 text-xs text-zinc-500">
-        vs {fairVenueLabel(trade)} price on the same game
-      </p>
-    </div>
-  );
-}
-
 function WhaleFeedCard({
   trade,
   now,
   pipelineData,
   pipelineLoading,
-  expandedCardId,
-  setExpandedCardId,
 }: {
   trade: WhaleTrade;
   now: number;
   pipelineData: PipelineTradeEv | null;
   pipelineLoading: boolean;
-  expandedCardId: string | null;
-  setExpandedCardId: (id: string | null) => void;
 }) {
+  const router = useRouter();
   const ageSec = secondsAgo(trade.detectedAt, now);
   const isKalshi = trade.source === "kalshi";
   const isBuy = isKalshi ? trade.outcome === "Yes" : trade.side === "BUY";
   const category = inferMarketCategory(trade.title);
   const platform = isKalshi ? "Kalshi" : "Polymarket";
   const lookupKey = pipelineEvKeyForWhale(trade);
-  const isExpanded = expandedCardId === trade.id;
-  const isPaired = isPairedPipelineTrade(pipelineData);
+  const detailHref = getWhaleTradeDetailHref(trade);
 
   const avgEv = resolveAvgEvDisplay(
     trade,
@@ -247,25 +225,33 @@ function WhaleFeedCard({
     lookupKey != null,
     pipelineLoading
   );
-  const arbIds = resolveArbIdentifiersForWhaleTrade(trade, pipelineData);
+
+  const navigateToDetail = () => {
+    if (!detailHref) return;
+    stashTradeForDetailNavigation(trade);
+    router.push(detailHref);
+  };
 
   const cardInner = (
     <article
-      className={`pulse-card cursor-pointer p-4 transition-colors hover:border-pulse-muted ${
-        isExpanded ? "border-pulse-accent/50" : ""
+      className={`pulse-card p-4 transition-colors ${
+        detailHref
+          ? "cursor-pointer hover:border-pulse-accent/40 hover:bg-pulse-surface/40"
+          : ""
       }`}
-      onClick={() =>
-        setExpandedCardId(isExpanded ? null : trade.id)
+      onClick={detailHref ? navigateToDetail : undefined}
+      onKeyDown={
+        detailHref
+          ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                navigateToDetail();
+              }
+            }
+          : undefined
       }
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          setExpandedCardId(isExpanded ? null : trade.id);
-        }
-      }}
-      role="button"
-      tabIndex={0}
-      aria-expanded={isExpanded}
+      role={detailHref ? "link" : undefined}
+      tabIndex={detailHref ? 0 : undefined}
     >
       <div className="mb-3 flex items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
@@ -333,95 +319,24 @@ function WhaleFeedCard({
         <AvgEvStatCell avgEv={avgEv} />
       </div>
 
-      {isExpanded ? (
-        <div onClick={(event) => event.stopPropagation()}>
-          {isPaired ? (
-            <ExpandedEvBreakdown
-              trade={trade}
-              pipelineData={pipelineData}
-              avgEv={avgEv}
-              hasLookupKey={lookupKey != null}
-            />
-          ) : null}
-          <ArbitrageDiscrepancyBox
-            source={trade.source === "kalshi" ? "kalshi" : "polymarket"}
-            pmTokenId={arbIds.pmTokenId}
-            kalshiTicker={arbIds.kalshiTicker}
-            tradeOutcomeSide={trade.outcome}
-            tradePrice={trade.price}
-            title={trade.title}
-            slug={trade.slug}
-            baseStakeUsd={trade.usdNotional}
-            compact
-            fullWidth
-            enabled={isExpanded}
-            className="mt-3"
-          />
-          <TradeArbitrageSection
-            pipelineData={pipelineData}
-            pmTokenId={pipelineData?.tokenId ?? trade.assetId}
-            kalshiTicker={
-              trade.source === "kalshi"
-                ? trade.ticker ?? arbIds.kalshiTicker
-                : arbIds.kalshiTicker
-            }
-            title={trade.title}
-            tradePrice={trade.price}
-            isSportsMarket={category === "SPORTS"}
-            tradeLinks={{
-              eventSlug: trade.eventSlug,
-              slug: trade.slug,
-            }}
-            className="mt-3"
-            enabled={isExpanded}
-          />
+      {detailHref ? (
+        <div
+          className="mt-3 border-t border-pulse-border/60 pt-3"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <Link
+            href={detailHref}
+            onClick={() => stashTradeForDetailNavigation(trade)}
+            className="text-[11px] font-semibold uppercase tracking-wide text-pulse-accent hover:text-white"
+          >
+            View trade details →
+          </Link>
         </div>
       ) : null}
-
-      <div
-        className="mt-3 border-t border-pulse-border/60 pt-3"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <DetailLink trade={trade} />
-      </div>
     </article>
   );
 
   return <li>{cardInner}</li>;
-}
-
-function DetailLink({ trade }: { trade: WhaleTrade }) {
-  const isKalshi = trade.source === "kalshi";
-
-  if (isKalshi) {
-    const feedTrade = whaleTradeToKalshiFeedTrade(trade);
-    const href =
-      trade.ticker != null
-        ? `/trades/kalshi/${encodeURIComponent(trade.id)}?ticker=${encodeURIComponent(trade.ticker)}`
-        : `/trades/kalshi/${encodeURIComponent(trade.id)}`;
-
-    return (
-      <Link
-        href={href}
-        onClick={() => {
-          if (feedTrade) stashKalshiTradeForNavigation(feedTrade);
-        }}
-        className="text-[11px] font-semibold uppercase tracking-wide text-pulse-accent hover:text-white"
-      >
-        View trade details →
-      </Link>
-    );
-  }
-
-  return (
-    <Link
-      href={`/whales/${encodeURIComponent(trade.transactionHash)}`}
-      onClick={() => stashTradeForNavigation(trade)}
-      className="text-[11px] font-semibold uppercase tracking-wide text-pulse-accent hover:text-white"
-    >
-      View trade details →
-    </Link>
-  );
 }
 
 export default function WhaleTracker({
@@ -436,7 +351,6 @@ export default function WhaleTracker({
   const { index: pipelineEvIndex, loading: pipelineLoading } =
     usePipelineEvForWhales(topWhales);
   const [now, setNow] = useState(() => Date.now());
-  const [expandedCardId, setExpandedCardId] = useState<string | null>(null);
 
   useEffect(() => {
     const interval = setInterval(() => setNow(Date.now()), 1000);
@@ -493,8 +407,6 @@ export default function WhaleTracker({
                 now={now}
                 pipelineData={resolvePipelineEvForWhale(pipelineEvIndex, trade)}
                 pipelineLoading={pipelineLoading}
-                expandedCardId={expandedCardId}
-                setExpandedCardId={setExpandedCardId}
               />
             );
           })}

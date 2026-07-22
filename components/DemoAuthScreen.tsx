@@ -187,7 +187,7 @@ export default function DemoAuthScreen({
           </button>
         </div>
 
-        <p className="mt-10 text-center text-sm text-pulse-muted">
+        <div className="mt-10 text-center text-sm text-pulse-muted">
           {isSignup ? (
             <>
               Already have an account?{" "}
@@ -211,7 +211,7 @@ export default function DemoAuthScreen({
               </button>
             </>
           )}
-        </p>
+        </div>
       </div>
     </div>
   );

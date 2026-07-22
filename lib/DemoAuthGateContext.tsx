@@ -26,10 +26,9 @@ interface DemoAuthContextValue {
 const DemoAuthContext = createContext<DemoAuthContextValue | null>(null);
 
 export function DemoAuthProvider({ children }: { children: ReactNode }) {
-  const [entered, setEntered] = useState(() => hasDemoEntered());
-  const [checking, setChecking] = useState(
-    () => typeof window !== "undefined" && !hasDemoEntered()
-  );
+  // Never read sessionStorage/window during SSR or the first client render.
+  const [entered, setEntered] = useState(false);
+  const [checking, setChecking] = useState(true);
 
   const refresh = useCallback(() => {
     setEntered(hasDemoEntered());
