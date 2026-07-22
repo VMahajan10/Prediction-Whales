@@ -20,6 +20,16 @@ function byDetectedDesc(a: WhaleTrade, b: WhaleTrade): number {
   return b.detectedAt - a.detectedAt;
 }
 
+function queueWhaleTweetNotify(whale: WhaleTrade): void {
+  void fetch("/api/whales/notify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(whale),
+  }).catch(() => {
+    // Non-fatal — live feed should continue if tweet queue fails.
+  });
+}
+
 function kalshiTradeToWhale(
   trade: FeedTrade,
   detectedAt: number
@@ -130,14 +140,15 @@ export function useWhaleFeed() {
 
       void resolveAndCacheWallet(t.transactionHash, t.assetId);
 
-      setNewWhale(
-        tradeToWhale(t, {
-          detectedAt,
-          isLive: true,
-          usdNotional: t.usdNotional,
-          source: "polymarket",
-        })
-      );
+      const whale = tradeToWhale(t, {
+        detectedAt,
+        isLive: true,
+        usdNotional: t.usdNotional,
+        source: "polymarket",
+      });
+
+      setNewWhale(whale);
+      queueWhaleTweetNotify(whale);
     }
   }, [liveSocketTrades, backfillLoaded]);
 

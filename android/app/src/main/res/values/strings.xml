@@ -1,7 +1,0 @@
-<?xml version='1.0' encoding='utf-8'?>
-<resources>
-    <string name="app_name">MarketPulse</string>
-    <string name="title_activity_main">MarketPulse</string>
-    <string name="package_name">com.marketpulse.app</string>
-    <string name="custom_url_scheme">com.marketpulse.app</string>
-</resources>

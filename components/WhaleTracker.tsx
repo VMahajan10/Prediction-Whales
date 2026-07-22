@@ -299,17 +299,15 @@ function WhaleFeedCard({
             </p>
           )}
         </div>
-        {!isKalshi && (
-          <div onClick={(event) => event.stopPropagation()}>
-            <BookmarkTraderButton
-              wallet={trade.proxyWallet}
-              txHash={trade.transactionHash}
-              assetId={trade.assetId}
-              trade={trade}
-              size="sm"
-            />
-          </div>
-        )}
+        <div onClick={(event) => event.stopPropagation()}>
+          <BookmarkTraderButton
+            wallet={trade.proxyWallet}
+            txHash={trade.transactionHash}
+            assetId={trade.assetId}
+            trade={trade}
+            size="sm"
+          />
+        </div>
       </div>
 
       <div className="mt-3 flex items-center justify-between gap-2">
