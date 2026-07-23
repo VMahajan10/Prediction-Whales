@@ -65,6 +65,27 @@ export function stashTradeForNavigation(trade: TradeSummary | WhaleTrade): void 
   }
 }
 
+/** Read stashed Polymarket trade without removing it (safe for Strict Mode remounts). */
+export function peekStashedTrade(hash: string): TradeSummary | null {
+  const key = hashKey(hash);
+  const fromMemory = pendingByHash.get(key);
+  if (fromMemory) return fromMemory;
+
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(sessionKey(key));
+    if (!raw) return null;
+    return JSON.parse(raw) as TradeSummary;
+  } catch {
+    return null;
+  }
+}
+
+/** Synchronous first-paint trade for detail navigation from feed / whale cards. */
+export function initialTradeFromStash(hash: string): TradeSummary | null {
+  return peekStashedTrade(hash);
+}
+
 export function consumeStashedTrade(hash: string): TradeSummary | null {
   const key = hashKey(hash);
   const fromMemory = pendingByHash.get(key);

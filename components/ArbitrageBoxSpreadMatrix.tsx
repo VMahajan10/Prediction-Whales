@@ -10,6 +10,10 @@ import {
   resolveDetailPanelDisplayEv,
 } from "@/lib/evPipeline/tradeEvRecord";
 import { inferMarketCategory } from "@/lib/marketCategory";
+import {
+  buildKalshiMarketUrl,
+  buildPolymarketMarketUrl,
+} from "@/lib/platformTradeUrls";
 
 export interface ArbitrageLeg {
   venue: "polymarket" | "kalshi" | "exchange";
@@ -656,27 +660,32 @@ function badgeClassName(tone: ReturnType<typeof resolvePanelBadge>["tone"]): str
   return "rounded border border-pulse-border/80 bg-pulse-surface/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-pulse-label";
 }
 
-function polymarketLegUrl(links: ArbitrageTradeLinks, tokenId: string): string {
-  if (links.eventSlug) {
-    return `https://polymarket.com/event/${links.eventSlug}`;
-  }
-  if (links.slug) {
-    return `https://polymarket.com/event/${links.slug}`;
-  }
-  return `https://polymarket.com/?q=${encodeURIComponent(tokenId)}`;
+function polymarketLegUrl(
+  links: ArbitrageTradeLinks,
+  _tokenId: string,
+  title?: string
+): string {
+  return buildPolymarketMarketUrl({
+    eventSlug: links.eventSlug,
+    slug: links.slug,
+    title,
+  });
 }
 
-function kalshiLegUrl(ticker: string): string {
-  const series = ticker.split("-")[0]?.toLowerCase() ?? ticker.toLowerCase();
-  return `https://kalshi.com/markets/${series}?op_market_ticker=${encodeURIComponent(ticker)}`;
+function kalshiLegUrl(ticker: string, title?: string): string {
+  return buildKalshiMarketUrl({ marketTicker: ticker, title });
 }
 
-function legActionUrl(leg: ArbitrageLeg, links: ArbitrageTradeLinks): string | null {
+function legActionUrl(
+  leg: ArbitrageLeg,
+  links: ArbitrageTradeLinks,
+  title?: string
+): string | null {
   if (leg.venue === "polymarket") {
-    return polymarketLegUrl(links, leg.contractId);
+    return polymarketLegUrl(links, leg.contractId, title);
   }
   if (leg.venue === "kalshi") {
-    return kalshiLegUrl(leg.contractId);
+    return kalshiLegUrl(leg.contractId, title);
   }
   return null;
 }
@@ -710,7 +719,7 @@ export function StandaloneMarketBadge({ className = "" }: { className?: string }
 interface ArbitrageBoxSpreadMatrixProps {
   arbDetails: ArbitrageOpportunity | null;
   arbLoading: boolean;
-  arbError: string | null;
+  arbError?: string | null;
   tradeLinks: ArbitrageTradeLinks;
   baseline?: ExchangeBaselineSnapshot | null;
   boxSpread?: BoxSpreadSnapshot | null;
@@ -718,6 +727,7 @@ interface ArbitrageBoxSpreadMatrixProps {
   tradePrice?: number | null;
   pipelineData?: PipelineTradeEv | null;
   pipelineLoading?: boolean;
+  title?: string | null;
   className?: string;
 }
 
@@ -856,6 +866,7 @@ function SpreadMatrixGrid({
   hasExchangeBaseline,
   pipelineDisplay,
   pipelineLoading,
+  title,
 }: {
   matrix: BoxSpreadSnapshot | null;
   loading: boolean;
@@ -866,6 +877,7 @@ function SpreadMatrixGrid({
   hasExchangeBaseline: boolean;
   pipelineDisplay: ReturnType<typeof resolveDetailPanelDisplayEv>;
   pipelineLoading: boolean;
+  title?: string | null;
 }) {
   const legsMatrix =
     arbDetails && arbDetails.legs.length >= 2
@@ -994,7 +1006,7 @@ function SpreadMatrixGrid({
             Execution legs
           </p>
           {arbDetails.legs.map((leg) => {
-            const href = legActionUrl(leg, tradeLinks);
+            const href = legActionUrl(leg, tradeLinks, title ?? undefined);
             return (
               <div
                 key={`${leg.venue}-${leg.side}`}
@@ -1012,6 +1024,7 @@ function SpreadMatrixGrid({
                       href={href}
                       target="_blank"
                       rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
                       className="rounded border border-emerald-500/50 bg-emerald-500/10 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-emerald-400 transition-colors hover:bg-emerald-500/20"
                     >
                       Trade →
@@ -1042,6 +1055,7 @@ export default function ArbitrageBoxSpreadMatrix({
   tradePrice = null,
   pipelineData = null,
   pipelineLoading = false,
+  title = null,
   className = "",
 }: ArbitrageBoxSpreadMatrixProps) {
   const pipelineDisplay = resolveDetailPanelDisplayEv(pipelineData, tradePrice);
@@ -1103,6 +1117,7 @@ export default function ArbitrageBoxSpreadMatrix({
           isActionable={isActionable}
           arbDetails={arbDetails}
           tradeLinks={tradeLinks}
+          title={title}
           panelMode={panelMode}
           hasExchangeBaseline={baseline != null}
           pipelineDisplay={pipelineDisplay}
@@ -1347,6 +1362,7 @@ export function TradeArbitrageSection({
       tradeLinks={tradeLinks}
       pipelineData={pipelineData}
       pipelineLoading={pipelineLoading}
+      title={title}
       className={className}
     />
   );

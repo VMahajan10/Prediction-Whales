@@ -1,4 +1,4 @@
-import { resolveKalshiTitle } from "@/lib/kalshiTitleResolver";
+import { resolveKalshiTitles } from "@/lib/kalshiTitleResolver";
 
 const KALSHI_TRADES_URL =
   "https://api.elections.kalshi.com/trade-api/v2/markets/trades";
@@ -107,17 +107,15 @@ export async function fetchKalshiTrades(
   }
 
   const raws = (data as { trades: KalshiRawTrade[] }).trades;
-  const titleCache = new Map<string, string>();
+  const tickers = raws.map((raw) => raw.ticker).filter(Boolean);
+  const titleCache = await resolveKalshiTitles(tickers);
   const trades: FeedTrade[] = [];
 
   for (const raw of raws) {
     if (!raw?.trade_id || !raw?.ticker) continue;
 
-    let title = titleCache.get(raw.ticker);
-    if (!title) {
-      title = await resolveKalshiTitle(raw.ticker);
-      titleCache.set(raw.ticker, title);
-    }
+    const title =
+      titleCache.get(raw.ticker) ?? raw.ticker;
 
     const normalized = normalizeKalshiTrade(raw, title, nowEpochSeconds);
     if (normalized) trades.push(normalized);

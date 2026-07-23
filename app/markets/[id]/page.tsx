@@ -18,6 +18,10 @@ import type { Market, TradeSummary } from "@/lib/polymarket";
 import { formatVolumeUsd } from "@/lib/polymarket";
 import { isKalshiMarketTicker } from "@/lib/kalshiDetail";
 import {
+  kalshiUrlFromMarket,
+  polymarketUrlFromMarket,
+} from "@/lib/platformTradeUrls";
+import {
   buyPosition,
   closePosition,
   getOpenPositionForMarket,
@@ -923,13 +927,7 @@ export default function MarketDetailPage() {
               {isPolymarket ? (
                 <div className="space-y-2">
                   <a
-                    href={
-                      market.eventSlug
-                        ? `https://polymarket.com/event/${market.eventSlug}`
-                        : market.slug
-                          ? `https://polymarket.com/event/${market.slug}`
-                          : `https://polymarket.com/markets?q=${encodeURIComponent(market.question)}`
-                    }
+                    href={polymarketUrlFromMarket(market)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-pulse-accent hover:underline"
@@ -937,7 +935,7 @@ export default function MarketDetailPage() {
                     View on Polymarket →
                   </a>
                   <a
-                    href={`https://polymarket.com/markets?q=${encodeURIComponent(market.question)}`}
+                    href={`https://polymarket.com/search?q=${encodeURIComponent(market.question)}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="block text-sm text-slate-400 hover:text-pulse-accent hover:underline"
@@ -947,10 +945,7 @@ export default function MarketDetailPage() {
                 </div>
               ) : isKalshi ? (
                 <a
-                  href={
-                    market.url ??
-                    `https://kalshi.com/markets/${market.id}`
-                  }
+                  href={kalshiUrlFromMarket(market)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-pulse-accent hover:underline"

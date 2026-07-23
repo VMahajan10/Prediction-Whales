@@ -15,7 +15,11 @@ import { TwitterApi } from "twitter-api-v2";
 
 export const dynamic = "force-dynamic";
 
+const COOLDOWN_MS = 15 * 60 * 1000;
+const THROTTLE_MS = 45 * 1000;
+
 interface TweetWhaleTradeBody {
+  tradeId?: string;
   whaleAddress: string;
   amount: number | string;
   marketName: string;
@@ -30,6 +34,52 @@ const TWITTER_CREDENTIAL_KEYS = [
 ] as const;
 
 type TwitterCredentialKey = (typeof TWITTER_CREDENTIAL_KEYS)[number];
+
+const recentPostCooldowns = new Map<string, number>();
+let lastTweetAt = 0;
+
+function pruneCooldowns(now = Date.now()): void {
+  for (const [key, expiresAt] of recentPostCooldowns) {
+    if (expiresAt <= now) recentPostCooldowns.delete(key);
+  }
+}
+
+function buildDedupKeys(payload: TweetWhaleTradeBody): string[] {
+  const keys: string[] = [];
+  const tradeId = payload.tradeId?.trim();
+  if (tradeId) keys.push(`trade:${tradeId}`);
+
+  const whaleAddress = payload.whaleAddress.trim();
+  const marketName = payload.marketName.trim();
+  const side = payload.side.trim();
+  const amount = formatAmount(payload.amount);
+
+  keys.push(`details:${whaleAddress}|${marketName}|${side}|${amount}`);
+
+  const addressLower = whaleAddress.toLowerCase();
+  if (addressLower && addressLower !== "anonymous" && addressLower !== "unknown") {
+    keys.push(`address:${whaleAddress.toLowerCase()}`);
+  }
+
+  return keys;
+}
+
+function findActiveCooldown(keys: string[]): string | null {
+  pruneCooldowns();
+  const now = Date.now();
+  for (const key of keys) {
+    const expiresAt = recentPostCooldowns.get(key);
+    if (expiresAt != null && expiresAt > now) return key;
+  }
+  return null;
+}
+
+function registerCooldown(keys: string[]): void {
+  const expiresAt = Date.now() + COOLDOWN_MS;
+  for (const key of keys) {
+    recentPostCooldowns.set(key, expiresAt);
+  }
+}
 
 function isAuthorized(request: NextRequest): boolean {
   const configuredSecret = process.env.BOT_API_SECRET;
@@ -120,6 +170,11 @@ Position: ${payload.side} ($${amountStr})
 #WhaleTracker #Crypto`;
 }
 
+function isRateLimitError(error: unknown): boolean {
+  const apiError = error as { code?: number; status?: number };
+  return apiError?.code === 429 || apiError?.status === 429;
+}
+
 export async function POST(request: NextRequest) {
   if (!isAuthorized(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -127,7 +182,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = (await request.json()) as Partial<TweetWhaleTradeBody>;
-    const { whaleAddress, amount, marketName, side } = body;
+    const { tradeId, whaleAddress, amount, marketName, side } = body;
 
     if (
       !whaleAddress?.trim() ||
@@ -144,6 +199,41 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const payload: TweetWhaleTradeBody = {
+      tradeId: tradeId?.trim(),
+      whaleAddress: whaleAddress.trim(),
+      amount,
+      marketName: marketName.trim(),
+      side: side.trim(),
+    };
+
+    const dedupKeys = buildDedupKeys(payload);
+    const activeCooldownKey = findActiveCooldown(dedupKeys);
+    if (activeCooldownKey) {
+      console.log(
+        "[api/tweet-whale-trade] Skipping duplicate tweet (cooldown active):",
+        activeCooldownKey
+      );
+      return NextResponse.json({
+        skipped: true,
+        reason: "Cooldown active",
+      });
+    }
+
+    const now = Date.now();
+    const elapsedSinceLastTweet = now - lastTweetAt;
+    if (lastTweetAt > 0 && elapsedSinceLastTweet < THROTTLE_MS) {
+      const retryAfterMs = THROTTLE_MS - elapsedSinceLastTweet;
+      console.warn(
+        `[api/tweet-whale-trade] Throttled: last tweet ${elapsedSinceLastTweet}ms ago; retry in ${retryAfterMs}ms`
+      );
+      return NextResponse.json({
+        skipped: true,
+        reason: "Throttle active",
+        retryAfterMs,
+      });
+    }
+
     const credentialCheck = validateTwitterCredentials();
     if (!credentialCheck.ok) {
       return NextResponse.json(
@@ -156,17 +246,15 @@ export async function POST(request: NextRequest) {
     }
 
     const client = createTwitterOAuthClient(credentialCheck);
-    const text = formatTweet({
-      whaleAddress: whaleAddress.trim(),
-      amount,
-      marketName: marketName.trim(),
-      side: side.trim(),
-    });
+    const text = formatTweet(payload);
 
     logMaskedCredentials();
     console.log("[api/tweet-whale-trade] Posting tweet via OAuth 1.0a readWrite client");
 
     const { data } = await client.readWrite.v2.tweet(text);
+
+    registerCooldown(dedupKeys);
+    lastTweetAt = Date.now();
 
     return NextResponse.json({
       success: true,
@@ -174,6 +262,15 @@ export async function POST(request: NextRequest) {
       text: data.text,
     });
   } catch (error) {
+    if (isRateLimitError(error)) {
+      console.warn("[api/tweet-whale-trade] X rate limit reached (429)");
+      return NextResponse.json({
+        success: false,
+        rateLimited: true,
+        message: "X Rate limit reached. Waiting for reset.",
+      });
+    }
+
     const apiError = error as {
       code?: number;
       data?: unknown;

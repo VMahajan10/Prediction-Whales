@@ -1,31 +1,29 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CopyBetSignal from "@/components/CopyBetSignal";
 import CrossMarketEvBadge from "@/components/CrossMarketEvBadge";
 import TradeDetailEvArbMetrics from "@/components/arbitrage/TradeDetailEvArbMetrics";
-import { TradeArbitrageSection } from "@/components/ArbitrageBoxSpreadMatrix";
 import LoadErrorCard from "@/components/LoadErrorCard";
-import MarketPriceChart from "@/components/MarketPriceChart";
 import TradeDetailSkeleton, {
   EnrichmentSkeleton,
 } from "@/components/TradeDetailSkeleton";
-import WhaleTrackRecord from "@/components/WhaleTrackRecord";
 import {
   fetchWithTimeout,
   isFetchTimeoutError,
 } from "@/lib/fetchWithTimeout";
 import { getCachedWhaleTrade } from "@/lib/whaleCache";
-import { consumeStashedTrade } from "@/lib/tradeNavigationStore";
+import {
+  initialTradeFromStash,
+} from "@/lib/tradeNavigationStore";
 import type { MarketSummary, TradeSummary } from "@/lib/polymarket";
 import { formatVolumeUsd } from "@/lib/polymarket";
 import {
   findMarketForTrade,
-  findRelatedTrades,
   findSocketTradeByHash,
-  findTradeByHash,
   socketTradeToTradeSummary,
   truncateTxHash,
 } from "@/lib/whaleProfile";
@@ -51,7 +49,28 @@ import {
   TRADE_TIERS,
 } from "@/lib/tradeDetail";
 
+const MarketPriceChart = dynamic(() => import("@/components/MarketPriceChart"), {
+  loading: () => <EnrichmentSkeleton rows={4} />,
+});
+
+const TradeArbitrageSection = dynamic(
+  () =>
+    import("@/components/ArbitrageBoxSpreadMatrix").then(
+      (mod) => mod.TradeArbitrageSection
+    ),
+  { loading: () => <EnrichmentSkeleton rows={2} /> }
+);
+
+const WhaleTrackRecord = dynamic(() => import("@/components/WhaleTrackRecord"), {
+  loading: () => <EnrichmentSkeleton rows={3} />,
+});
+
 const NEARBY_MIN_SIZE = 50;
+
+function readInstantTrade(hash: string): TradeSummary | null {
+  if (!hash || typeof window === "undefined") return null;
+  return initialTradeFromStash(hash) ?? getCachedWhaleTrade(hash);
+}
 
 function SizeBar({ filled }: { filled: number }) {
   return (
@@ -72,6 +91,7 @@ export default function TradeDetailPage() {
   const params = useParams();
   const hash = typeof params.hash === "string" ? params.hash : "";
   const { trades: socketTrades } = usePolymarketSocketContext();
+  const socketTradesRef = useRef(socketTrades);
 
   const [trade, setTrade] = useState<TradeSummary | null>(null);
   const [relatedTrades, setRelatedTrades] = useState<TradeSummary[]>([]);
@@ -86,6 +106,10 @@ export default function TradeDetailPage() {
   const [showAllNearby, setShowAllNearby] = useState(false);
   const [currentProbability, setCurrentProbability] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    socketTradesRef.current = socketTrades;
+  }, [socketTrades]);
 
   const retryLoad = useCallback(() => {
     setLoadError(null);
@@ -188,14 +212,12 @@ export default function TradeDetailPage() {
     const finishLoading = () => setLoading(false);
 
     const instantFromSocket = () => {
-      const wsTrade = findSocketTradeByHash(socketTrades, hash);
+      const wsTrade = findSocketTradeByHash(socketTradesRef.current, hash);
       return wsTrade ? socketTradeToTradeSummary(wsTrade) : null;
     };
 
     const instant =
-      consumeStashedTrade(hash) ??
-      instantFromSocket() ??
-      getCachedWhaleTrade(hash);
+      readInstantTrade(hash) ?? instantFromSocket();
 
     if (instant) {
       setTrade(instant);
@@ -203,81 +225,116 @@ export default function TradeDetailPage() {
       setNotFound(false);
       finishLoading();
       void enrichMarkets(instant, signal);
-      return () => {
-        controller.abort();
-      };
+    } else {
+      setLoading(true);
     }
-
-    setLoading(true);
 
     void (async () => {
       try {
-        const res = await fetchWithTimeout("/api/trades", { signal });
+        const res = await fetchWithTimeout(
+          `/api/trades/${encodeURIComponent(hash)}`,
+          { signal }
+        );
         if (signal.aborted) return;
 
-        const tradesData: { trades?: TradeSummary[] } = await res.json();
+        if (res.status === 404) {
+          if (!instant) {
+            setNotFound(true);
+            setTrade(null);
+            finishLoading();
+          }
+          return;
+        }
+
+        if (!res.ok) {
+          if (!instant) {
+            setLoadError(`Trade data HTTP ${res.status}`);
+            setTrade(null);
+            finishLoading();
+          }
+          return;
+        }
+
+        const data: {
+          trade?: TradeSummary | null;
+          relatedTrades?: TradeSummary[];
+        } = await res.json();
         if (signal.aborted) return;
 
-        const trades = tradesData.trades ?? [];
-        const found = findTradeByHash(trades, hash);
-
+        const found = data.trade ?? null;
         if (found) {
           setTrade(found);
-          setRelatedTrades(findRelatedTrades(trades, found));
+          setRelatedTrades(data.relatedTrades ?? []);
           setCurrentProbability(found.price);
           setNotFound(false);
           finishLoading();
           void enrichMarkets(found, signal);
-        } else {
+        } else if (!instant) {
           setNotFound(true);
           setTrade(null);
           finishLoading();
         }
       } catch (err) {
         if (signal.aborted) return;
-
-        setLoadError(
-          isFetchTimeoutError(err)
-            ? "Trade data timed out after 8 seconds."
-            : "Could not load trade data."
-        );
-        setTrade(null);
-        finishLoading();
+        if (!instant) {
+          setLoadError(
+            isFetchTimeoutError(err)
+              ? "Trade data timed out after 8 seconds."
+              : "Could not load trade data."
+          );
+          setTrade(null);
+          finishLoading();
+        }
       }
     })();
 
     return () => {
       controller.abort();
     };
-  }, [hash, reloadKey, socketTrades, enrichMarkets]);
+  }, [hash, reloadKey, enrichMarkets]);
 
   useEffect(() => {
-    if (!trade?.title) return;
+    if (!matchedMarket) return;
 
-    const fetchCurrentPrice = async () => {
+    const applyQuote = (market: MarketSummary | null | undefined) => {
+      if (market && Number.isFinite(market.probability)) {
+        setCurrentProbability(market.probability);
+      }
+    };
+
+    const refresh = async () => {
       try {
-        const res = await fetch("/api/markets");
+        const endpoint =
+          matchedMarket.source === "kalshi" ? "/api/kalshi" : "/api/markets";
+        const res = await fetch(endpoint);
         const data: { markets?: MarketSummary[] } = await res.json();
-        const needle = trade.title.toLowerCase().slice(0, 20);
-        const matched = data.markets?.find((m) =>
-          m.question?.toLowerCase().includes(needle)
-        );
-        if (matched) {
-          const next =
-            matched.probability != null && Number.isFinite(matched.probability)
-              ? matched.probability
-              : null;
-          if (next != null) setCurrentProbability(next);
+        let updated = data.markets?.find((m) => m.id === matchedMarket.id);
+
+        if (
+          !updated &&
+          trade?.slug &&
+          matchedMarket.source === "polymarket"
+        ) {
+          const slugRes = await fetch(
+            `/api/markets?slug=${encodeURIComponent(trade.slug)}`
+          );
+          if (slugRes.ok) {
+            const slugData: { markets?: MarketSummary[] } =
+              await slugRes.json();
+            updated = slugData.markets?.[0];
+          }
         }
+
+        applyQuote(updated);
       } catch {
         // Keep last known probability on failure
       }
     };
 
-    fetchCurrentPrice();
-    const interval = setInterval(fetchCurrentPrice, 10000);
+    refresh();
+    const interval = setInterval(refresh, 10000);
     return () => clearInterval(interval);
-  }, [trade?.title]);
+  }, [matchedMarket, trade?.slug]);
 
   const visibleNearby = showAllNearby
     ? filteredNearby
@@ -501,11 +558,13 @@ export default function TradeDetailPage() {
         {marketsLoading && !tokenId ? (
           <EnrichmentSkeleton rows={4} />
         ) : tokenId ? (
-          <MarketPriceChart
-            tokenId={tokenId}
-            currentPrice={currentProbability}
-            marketQuestion={trade.title}
-          />
+          <Suspense fallback={<EnrichmentSkeleton rows={4} />}>
+            <MarketPriceChart
+              tokenId={tokenId}
+              currentPrice={currentProbability}
+              marketQuestion={trade.title}
+            />
+          </Suspense>
         ) : (
           <div className="py-8 text-center text-sm text-slate-500">
             Chart unavailable — market data not found
@@ -657,19 +716,21 @@ export default function TradeDetailPage() {
           baseStakeUsd={size}
           className="mb-4"
         />
-        <TradeArbitrageSection
-          pipelineData={pipelineData}
-          pipelineLoading={pipelineLoading}
-          pmTokenId={pipelineTokenId}
-          kalshiTicker={pipelineData?.kalshiTicker}
-          title={trade.title}
-          tradePrice={price}
-          tradeLinks={{
-            eventSlug: trade.eventSlug,
-            slug: trade.slug,
-          }}
-          className="mb-4"
-        />
+        <Suspense fallback={<EnrichmentSkeleton rows={2} />}>
+          <TradeArbitrageSection
+            pipelineData={pipelineData}
+            pipelineLoading={pipelineLoading}
+            pmTokenId={pipelineTokenId}
+            kalshiTicker={pipelineData?.kalshiTicker}
+            title={trade.title}
+            tradePrice={price}
+            tradeLinks={{
+              eventSlug: trade.eventSlug,
+              slug: trade.slug,
+            }}
+            className="mb-4"
+          />
+        </Suspense>
         <p className="mb-4 text-sm leading-relaxed text-slate-300">
           Each share costs {priceCents}¢ and pays $1.00 if correct. That&apos;s
           a <strong className="text-white">{multiplier}x</strong> return on each
@@ -941,13 +1002,15 @@ export default function TradeDetailPage() {
             walletUnavailable={walletResolutionFailed}
           />
 
-          <WhaleTrackRecord
-            proxyWallet={displayWallet}
-            walletUnavailable={walletResolutionFailed}
-            entryPrice={trade.price}
-            currentPrice={currentProbability}
-            betSize={size}
-          />
+          <Suspense fallback={<EnrichmentSkeleton rows={3} />}>
+            <WhaleTrackRecord
+              proxyWallet={displayWallet}
+              walletUnavailable={walletResolutionFailed}
+              entryPrice={trade.price}
+              currentPrice={currentProbability}
+              betSize={size}
+            />
+          </Suspense>
         </>
       )}
 

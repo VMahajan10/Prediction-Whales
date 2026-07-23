@@ -3,6 +3,10 @@
 import { useMemo } from "react";
 import { trackCopyTap } from "@/lib/copyTracking";
 import {
+  buildKalshiMarketUrl,
+  buildPolymarketMarketUrl,
+} from "@/lib/platformTradeUrls";
+import {
   getCopyBetButtonConfig,
   getCopySignalsAndVerdict,
   type TrackRecordCopyContext,
@@ -11,7 +15,7 @@ import {
   coalesceDisplayEvPercent,
   resolvePipelineDisplayEv,
 } from "@/lib/evPipeline/tradeEvRecord";
-import { getPolymarketTradeUrl, type MarketSummary, type TradeSummary } from "@/lib/polymarket";
+import { type MarketSummary, type TradeSummary } from "@/lib/polymarket";
 import { resolveCrossMarketEvForTrade } from "@/lib/resolveTradeCrossMarketEv";
 import { useCrossMarketEvIndex } from "@/lib/useCrossMarketEvIndex";
 import { usePipelineTradeEv } from "@/lib/usePipelineEvIndex";
@@ -126,9 +130,18 @@ export default function CopyBetSignal({
   const verdict = copyVerdict.verdict;
   const actionHref =
     ctaHref ??
-    (platform === "kalshi" && tradeEvTicker
-      ? `https://kalshi.com/markets/${tradeEvTicker.split("-")[0]?.toLowerCase() ?? ""}`
-      : getPolymarketTradeUrl(trade));
+    (platform === "kalshi"
+      ? buildKalshiMarketUrl({
+          marketTicker: tradeEvTicker ?? matchedMarket?.id,
+          title: trade.title,
+          webUrl: matchedMarket?.url,
+        })
+      : buildPolymarketMarketUrl({
+          eventSlug: trade.eventSlug,
+          slug: trade.slug,
+          conditionId: trade.conditionId ?? matchedMarket?.conditionId,
+          title: trade.title,
+        }));
   const buttonConfig = getCopyBetButtonConfig(verdict, trade.side);
 
   const cautionVerdicts = new Set([
@@ -186,9 +199,10 @@ export default function CopyBetSignal({
           href={actionHref}
           target="_blank"
           rel="noopener noreferrer"
-          onClick={() =>
-            trackCopyTap(trade.title ?? "", trade.size ?? 0, verdict)
-          }
+          onClick={(e) => {
+            e.stopPropagation();
+            trackCopyTap(trade.title ?? "", trade.size ?? 0, verdict);
+          }}
           className={`block w-full rounded-xl px-6 py-4 text-center text-lg font-semibold transition-colors ${buttonConfig.className}`}
         >
           {platform === "kalshi" ? "View This Market on Kalshi →" : buttonConfig.text}

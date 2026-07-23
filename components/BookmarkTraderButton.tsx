@@ -10,6 +10,10 @@ interface BookmarkTraderButtonProps {
   wallet?: string;
   txHash?: string;
   assetId?: string;
+  /** Stable bookmark id when no on-chain wallet exists (e.g. Kalshi trades). */
+  bookmarkKey?: string;
+  /** Display label stored with the bookmark entry */
+  label?: string;
   /** When wallet is not yet known, resolve from this trade */
   trade?: TradeSummary | null;
   size?: "sm" | "md";
@@ -44,6 +48,8 @@ export default function BookmarkTraderButton({
   wallet: walletProp,
   txHash,
   assetId,
+  bookmarkKey,
+  label,
   trade,
   size = "md",
   className = "",
@@ -53,7 +59,7 @@ export default function BookmarkTraderButton({
     ? getCachedWhaleTrade(txHash)?.proxyWallet
     : undefined;
   const tradeForResolution = useMemo(() => {
-    if (walletProp || cachedWallet) return null;
+    if (bookmarkKey || walletProp || cachedWallet) return null;
     if (trade) return trade;
     if (txHash) {
       return {
@@ -62,11 +68,12 @@ export default function BookmarkTraderButton({
       } as TradeSummary;
     }
     return null;
-  }, [walletProp, cachedWallet, trade, txHash, assetId]);
+  }, [bookmarkKey, walletProp, cachedWallet, trade, txHash, assetId]);
 
   const { resolvedWallet, walletResolutionFailed } =
     useResolvedWallet(tradeForResolution);
   const effectiveWallet = (
+    bookmarkKey ??
     walletProp ??
     trade?.proxyWallet ??
     cachedWallet ??
@@ -75,8 +82,8 @@ export default function BookmarkTraderButton({
 
   const [pending, setPending] = useState(false);
   const bookmarked = effectiveWallet ? isBookmarked(effectiveWallet) : false;
-  const resolving = !effectiveWallet && !walletResolutionFailed;
-  const disabled = !effectiveWallet;
+  const resolving = !bookmarkKey && !effectiveWallet && !walletResolutionFailed;
+  const disabled = !effectiveWallet || pending;
 
   useEffect(() => {
     if (effectiveWallet) setPending(false);
@@ -94,7 +101,7 @@ export default function BookmarkTraderButton({
   return (
     <button
       type="button"
-      disabled={disabled || pending}
+      disabled={disabled}
       title={title}
       aria-label={title}
       aria-pressed={bookmarked}
@@ -106,24 +113,25 @@ export default function BookmarkTraderButton({
         toggle({
           wallet: effectiveWallet,
           txHash,
+          label,
         });
         setPending(false);
       }}
       className={`inline-flex shrink-0 items-center justify-center rounded-lg border transition-colors ${
-        disabled
+        disabled && !resolving
           ? "cursor-not-allowed border-pulse-border text-pulse-label"
           : bookmarked
             ? "border-pulse-accent/50 bg-pulse-accent/10 text-pulse-accent hover:bg-pulse-accent/20"
             : "border-pulse-border bg-pulse-card text-pulse-muted hover:border-pulse-accent/50 hover:text-pulse-accent"
       } ${dimension} ${className}`}
     >
-      {resolving ? (
-        <span className="h-3.5 w-3.5 animate-pulse rounded-full bg-slate-600" />
-      ) : (
-        <span className={size === "sm" ? "h-4 w-4" : "h-5 w-5"}>
-          <StarIcon filled={bookmarked} />
-        </span>
-      )}
+      <span
+        className={`${size === "sm" ? "h-4 w-4" : "h-5 w-5"} ${
+          resolving ? "animate-pulse opacity-60" : ""
+        }`}
+      >
+        <StarIcon filled={bookmarked} />
+      </span>
     </button>
   );
 }

@@ -5,6 +5,7 @@ import {
   kalshiYesMid,
   type KalshiMarket,
 } from "@/lib/kalshi";
+import { formatKalshiMarketDisplayTitle } from "@/lib/kalshiTitleResolver";
 import type { RawMarket } from "./types";
 
 const PLATFORM_FETCH_TIMEOUT_MS = 8000;
@@ -18,15 +19,30 @@ function toRawMarket(m: KalshiMarket): RawMarket | null {
   const ticker = m.ticker;
   if (!ticker) return null;
 
+  const title =
+    formatKalshiMarketDisplayTitle({
+      ticker,
+      title: typeof m.title === "string" ? m.title : null,
+      yes_sub_title:
+        typeof m.yes_sub_title === "string" ? m.yes_sub_title : null,
+      no_sub_title:
+        typeof m.no_sub_title === "string" ? m.no_sub_title : null,
+      market_type:
+        typeof m.market_type === "string" ? m.market_type : null,
+      mve_selected_legs: Array.isArray(m.mve_selected_legs)
+        ? m.mve_selected_legs
+        : null,
+    }) ?? ticker;
+
   return {
     platform: "kalshi",
     external_id: ticker,
     tier: 1,
-    title: (m.title as string | undefined) ?? ticker,
+    title,
     raw_payload: m as Record<string, unknown>,
     yes_price: kalshiYesMid(m),
     volume: kalshiVolume(m),
-    url: kalshiMarketUrl(ticker),
+    url: kalshiMarketUrl(ticker, title),
     yes_price_kind: "tradeable",
   };
 }

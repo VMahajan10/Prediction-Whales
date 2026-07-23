@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import BookmarkTraderButton from "@/components/BookmarkTraderButton";
 import PlatformFilterToggle from "@/components/PlatformFilterToggle";
@@ -75,6 +74,13 @@ function stashTradeForDetailNavigation(trade: WhaleTrade): void {
   }
 
   stashTradeForNavigation(trade);
+}
+
+function tradeBookmarkKey(trade: WhaleTrade): string | undefined {
+  if (trade.source === "kalshi") {
+    return `kalshi:${trade.id}`;
+  }
+  return undefined;
 }
 
 function precomputedEvPercent(
@@ -210,7 +216,6 @@ function WhaleFeedCard({
   pipelineData: PipelineTradeEv | null;
   pipelineLoading: boolean;
 }) {
-  const router = useRouter();
   const ageSec = secondsAgo(trade.detectedAt, now);
   const isKalshi = trade.source === "kalshi";
   const isBuy = isKalshi ? trade.outcome === "Yes" : trade.side === "BUY";
@@ -226,33 +231,11 @@ function WhaleFeedCard({
     pipelineLoading
   );
 
-  const navigateToDetail = () => {
-    if (!detailHref) return;
-    stashTradeForDetailNavigation(trade);
-    router.push(detailHref);
-  };
+  const cardClassName =
+    "pulse-card block p-4 transition-colors hover:border-pulse-accent/40 hover:bg-pulse-surface/40";
 
-  const cardInner = (
-    <article
-      className={`pulse-card p-4 transition-colors ${
-        detailHref
-          ? "cursor-pointer hover:border-pulse-accent/40 hover:bg-pulse-surface/40"
-          : ""
-      }`}
-      onClick={detailHref ? navigateToDetail : undefined}
-      onKeyDown={
-        detailHref
-          ? (event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                navigateToDetail();
-              }
-            }
-          : undefined
-      }
-      role={detailHref ? "link" : undefined}
-      tabIndex={detailHref ? 0 : undefined}
-    >
+  const cardBody = (
+    <>
       <div className="mb-3 flex items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <span className="rounded bg-pulse-surface px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-pulse-muted">
@@ -262,9 +245,27 @@ function WhaleFeedCard({
             {platform}
           </span>
         </div>
-        <span className="text-[11px] font-medium text-pulse-label">
-          {ageSec}s
-        </span>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="text-[11px] font-medium text-pulse-label">
+            {ageSec}s
+          </span>
+          <div
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+          >
+            <BookmarkTraderButton
+              bookmarkKey={tradeBookmarkKey(trade)}
+              wallet={trade.proxyWallet}
+              txHash={trade.transactionHash || undefined}
+              assetId={trade.assetId}
+              trade={trade}
+              label={traderLabel(trade)}
+              size="sm"
+            />
+          </div>
+        </div>
       </div>
 
       <h3 className="text-sm font-bold uppercase leading-snug tracking-wide text-white">
@@ -284,15 +285,6 @@ function WhaleFeedCard({
               Whale · ≥$500
             </p>
           )}
-        </div>
-        <div onClick={(event) => event.stopPropagation()}>
-          <BookmarkTraderButton
-            wallet={trade.proxyWallet}
-            txHash={trade.transactionHash}
-            assetId={trade.assetId}
-            trade={trade}
-            size="sm"
-          />
         </div>
       </div>
 
@@ -320,23 +312,30 @@ function WhaleFeedCard({
       </div>
 
       {detailHref ? (
-        <div
-          className="mt-3 border-t border-pulse-border/60 pt-3"
-          onClick={(event) => event.stopPropagation()}
-        >
-          <Link
-            href={detailHref}
-            onClick={() => stashTradeForDetailNavigation(trade)}
-            className="text-[11px] font-semibold uppercase tracking-wide text-pulse-accent hover:text-white"
-          >
+        <div className="mt-3 border-t border-pulse-border/60 pt-3">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-pulse-accent">
             View trade details →
-          </Link>
+          </span>
         </div>
       ) : null}
-    </article>
+    </>
   );
 
-  return <li>{cardInner}</li>;
+  return (
+    <li>
+      {detailHref ? (
+        <Link
+          href={detailHref}
+          onClick={() => stashTradeForDetailNavigation(trade)}
+          className={`${cardClassName} cursor-pointer`}
+        >
+          {cardBody}
+        </Link>
+      ) : (
+        <article className={cardClassName}>{cardBody}</article>
+      )}
+    </li>
+  );
 }
 
 export default function WhaleTracker({

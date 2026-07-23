@@ -17,6 +17,10 @@ import {
   type TraderClosedPosition,
   type TraderOpenPosition,
 } from "./traderProfile";
+import {
+  hasDirectPolymarketLink as hasDirectPolymarketLinkFromUrls,
+  polymarketUrlFromTrade,
+} from "@/lib/platformTradeUrls";
 
 const GAMMA_API_BASE = "https://gamma-api.polymarket.com";
 const DATA_API_BASE = "https://data-api.polymarket.com";
@@ -329,19 +333,15 @@ export function computeCategoryStats(
 }
 
 export function getPolymarketTradeUrl(
-  trade: Pick<TradeSummary, "eventSlug" | "slug" | "title">
+  trade: Pick<TradeSummary, "eventSlug" | "slug" | "title" | "conditionId">
 ): string {
-  const eventSlug = trade.eventSlug ?? trade.slug;
-  if (eventSlug) {
-    return `https://polymarket.com/event/${eventSlug}`;
-  }
-  return `https://polymarket.com/markets?q=${encodeURIComponent(trade.title ?? "")}`;
+  return polymarketUrlFromTrade(trade);
 }
 
 export function hasDirectPolymarketLink(
-  trade: Pick<TradeSummary, "eventSlug" | "slug">
+  trade: Pick<TradeSummary, "eventSlug" | "slug" | "conditionId">
 ): boolean {
-  return !!(trade.eventSlug ?? trade.slug);
+  return hasDirectPolymarketLinkFromUrls(trade);
 }
 
 export interface TokenMarketMeta {

@@ -29,6 +29,7 @@ export function whaleTradeToTweetPayload(
   const side = trade.source === "kalshi" ? trade.outcome : trade.side;
 
   return {
+    tradeId: trade.id,
     whaleAddress,
     amount: trade.usdNotional,
     marketName: trade.title,

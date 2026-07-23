@@ -1,4 +1,5 @@
 export interface TweetWhaleTradePayload {
+  tradeId?: string;
   whaleAddress: string;
   amount: number | string;
   marketName: string;

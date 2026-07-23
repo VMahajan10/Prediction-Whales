@@ -26,6 +26,7 @@ import type {
   KalshiTradeDetail,
 } from "@/lib/kalshiDetail";
 import { kalshiYesMidFromMarket } from "@/lib/kalshiDetail";
+import { buildKalshiMarketUrl } from "@/lib/platformTradeUrls";
 import {
   initialKalshiTradeFromStash,
   peekStashedKalshiTrade,
@@ -338,9 +339,14 @@ export default function KalshiTradeDetailPage() {
       : size - liveContracts * currentPrice;
 
   const marketLoading = (loading || enriching) && !market;
-  const kalshiHref =
-    market?.webUrl ??
-    `https://kalshi.com/markets/${trade.ticker.split("-")[0].toLowerCase()}`;
+  const kalshiHref = buildKalshiMarketUrl({
+    marketTicker: trade.ticker,
+    eventTicker: market?.eventTicker,
+    seriesTicker: market?.seriesTicker,
+    seriesTitle: market?.seriesTitle,
+    webUrl: market?.webUrl,
+    title: trade.title,
+  });
 
   return (
     <main className="mx-auto min-h-screen max-w-4xl px-4 py-8 sm:px-6">

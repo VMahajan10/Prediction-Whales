@@ -3,6 +3,7 @@ import {
   positionCostBasis,
   type CategoryStats,
 } from "@/lib/polymarket";
+import { buildPolymarketMarketUrl } from "@/lib/platformTradeUrls";
 
 /** Polymarket closed-positions API max per request. */
 export const CLOSED_POSITIONS_API_LIMIT = 500;
@@ -167,15 +168,15 @@ export function formatResolvedDate(timestamp: number | null): string {
 export function polymarketPositionUrl(position: {
   eventSlug?: string;
   slug?: string;
+  conditionId?: string;
   title: string;
 }): string {
-  if (position.eventSlug) {
-    return `https://polymarket.com/event/${position.eventSlug}`;
-  }
-  if (position.slug) {
-    return `https://polymarket.com/market/${position.slug}`;
-  }
-  return `https://polymarket.com/markets?q=${encodeURIComponent(position.title)}`;
+  return buildPolymarketMarketUrl({
+    eventSlug: position.eventSlug,
+    slug: position.slug,
+    conditionId: position.conditionId,
+    title: position.title,
+  });
 }
 
 export type { CategoryStats };

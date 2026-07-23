@@ -1,6 +1,9 @@
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 import { KALSHI_API } from "@/lib/kalshi";
-import { resolveKalshiTitle } from "@/lib/kalshiTitleResolver";
+import {
+  formatKalshiMarketDisplayTitle,
+  resolveKalshiTitle,
+} from "@/lib/kalshiTitleResolver";
 import type { MarketSummary } from "@/lib/polymarket";
 
 const FETCH_TIMEOUT_MS = 8000;
@@ -263,7 +266,22 @@ export async function fetchKalshiMarketDetail(
   if (!m) return null;
 
   const title =
-    typeof m.title === "string" ? m.title : await resolveKalshiTitle(ticker);
+    formatKalshiMarketDisplayTitle(
+      {
+        ticker: String(m.ticker ?? ticker),
+        title: typeof m.title === "string" ? m.title : null,
+        yes_sub_title:
+          typeof m.yes_sub_title === "string" ? m.yes_sub_title : null,
+        no_sub_title:
+          typeof m.no_sub_title === "string" ? m.no_sub_title : null,
+        market_type:
+          typeof m.market_type === "string" ? m.market_type : null,
+        mve_selected_legs: Array.isArray(m.mve_selected_legs)
+          ? m.mve_selected_legs
+          : null,
+      },
+      null
+    ) ?? (await resolveKalshiTitle(ticker));
   const eventTicker = String(m.event_ticker ?? "");
   const resolvedSeriesTitle = seriesTitle ?? "";
 

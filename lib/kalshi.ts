@@ -1,3 +1,5 @@
+import { buildKalshiMarketUrl } from "@/lib/platformTradeUrls";
+
 const KALSHI_API = "https://api.elections.kalshi.com/trade-api/v2";
 
 const DEFAULT_PAGE_LIMIT = 200;
@@ -39,8 +41,8 @@ export function kalshiYesMid(m: KalshiMarket): number | null {
   return (bid + ask) / 2;
 }
 
-export function kalshiMarketUrl(ticker: string): string {
-  return `https://kalshi.com/markets/${ticker}`;
+export function kalshiMarketUrl(ticker: string, title?: string): string {
+  return buildKalshiMarketUrl({ marketTicker: ticker, title });
 }
 
 async function fetchKalshiMarketsPage(
