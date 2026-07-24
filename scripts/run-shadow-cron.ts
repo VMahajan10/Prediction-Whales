@@ -9,6 +9,9 @@ import { loadEnvFiles } from "./loadEnv";
 import { runXAgentShadowPipeline } from "../lib/x-agent/runShadowPipeline";
 import { disconnectPrisma, getPrisma } from "../lib/prisma";
 
+console.log('[DEBUG] OPENAI_API_KEY present:', Boolean(process.env.OPENAI_API_KEY));
+console.log('[DEBUG] ODDS_API_KEY present:', Boolean(process.env.ODDS_API_KEY));
+
 loadEnvFiles();
 
 const PENDING_QUEUE_STATUSES = [
