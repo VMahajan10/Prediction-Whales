@@ -1,33 +1,22 @@
 /**
- * Shadow x-agent watcher — warms EV pipeline + scans whale trades every 15 minutes.
+ * Single-run shadow cron for CI (GitHub Actions) and manual invocation.
  *
  * Usage:
- *   npm run shadow:watch
- *
- * Env:
- *   DATABASE_URL              — Prisma + pipeline DB stages
- *   SHADOW_CRON_INTERVAL_MS   — default 900000 (15 minutes)
- *   SHADOW_CRON_ONCE          — set to "1" to run a single cycle and exit (CI)
+ *   npx tsx scripts/run-shadow-cron.ts
  */
-import { register } from "tsconfig-paths";
-import { resolve } from "path";
-
-register({
-  baseUrl: resolve(__dirname, ".."),
-  paths: {
-    "@/*": ["./*"],
-    "@kalshi/sdk": ["./lib/kalshi-sdk"],
-  },
-});
-
+import { Pool } from "pg";
+import { PrismaPg } from "@prisma/adapter-pg";
+import { PrismaClient } from "@prisma/client";
 import { loadEnvFiles } from "./loadEnv";
+import { runXAgentShadowPipeline } from "../lib/x-agent/runShadowPipeline";
+import { disconnectPrisma } from "../lib/prisma";
 
 loadEnvFiles();
 
-import { runXAgentShadowPipeline } from "../lib/x-agent/runShadowPipeline";
-import { getPrisma, isPrismaEnabled } from "../lib/prisma";
-
-const DEFAULT_INTERVAL_MS = 15 * 60 * 1000;
+const connectionString = process.env.DATABASE_URL;
+const pool = connectionString ? new Pool({ connectionString }) : null;
+const adapter = pool ? new PrismaPg(pool) : null;
+const prisma = adapter ? new PrismaClient({ adapter }) : null;
 
 const PENDING_QUEUE_STATUSES = [
   "PENDING",
@@ -49,131 +38,51 @@ function formatDuration(ms: number): string {
   return `${minutes}m ${rem}s`;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
-}
-
-function resolveIntervalMs(): number {
-  const raw = process.env.SHADOW_CRON_INTERVAL_MS;
-  if (!raw) return DEFAULT_INTERVAL_MS;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_INTERVAL_MS;
-}
-
-async function countPendingXPostQueue(): Promise<number | null> {
-  if (!isPrismaEnabled()) return null;
-
-  const prisma = getPrisma();
-  if (!prisma) return null;
+async function runCron(): Promise<void> {
+  const startedAt = Date.now();
 
   try {
-    return await prisma.xPostQueue.count({
-      where: { status: { in: [...PENDING_QUEUE_STATUSES] } },
-    });
-  } catch (err) {
-    console.warn(
-      `[${formatTimestamp()}] shadow-cron pending queue count failed:`,
-      err instanceof Error ? err.message : err
+    console.log(
+      `[${formatTimestamp()}] [Shadow Cron] Starting pipeline run...`
     );
-    return null;
-  }
-}
 
-async function runShadowCycle(cycle: number): Promise<void> {
-  const startedAt = new Date();
-  const t0 = Date.now();
+    const result = await runXAgentShadowPipeline();
 
-  console.log(`[${formatTimestamp(startedAt)}] shadow-cron #${cycle} started`);
+    let pendingQueue: number | null = null;
+    if (prisma) {
+      try {
+        pendingQueue = await prisma.xPostQueue.count({
+          where: { status: { in: [...PENDING_QUEUE_STATUSES] } },
+        });
+      } catch (err) {
+        console.warn(
+          `[${formatTimestamp()}] [Shadow Cron] pending queue count failed:`,
+          err instanceof Error ? err.message : err
+        );
+      }
+    }
 
-  let result: Awaited<ReturnType<typeof runXAgentShadowPipeline>> | null = null;
-  let cycleError: string | undefined;
-
-  try {
-    result = await runXAgentShadowPipeline();
-  } catch (err) {
-    cycleError = err instanceof Error ? err.message : String(err);
-    console.error(
-      `[${formatTimestamp()}] shadow-cron #${cycle} error:`,
-      cycleError
-    );
-  }
-
-  const pendingQueue = await countPendingXPostQueue();
-  const durationMs = Date.now() - t0;
-
-  const pendingLabel =
-    pendingQueue == null ? "n/a" : String(pendingQueue);
-
-  if (result) {
+    const durationMs = Date.now() - startedAt;
+    const pendingLabel = pendingQueue == null ? "n/a" : String(pendingQueue);
     const status =
       !result.error && result.whalesFailed === 0 ? "ok" : "partial";
 
     console.log(
-      `[${formatTimestamp()}] shadow-cron #${cycle} finished | duration=${formatDuration(durationMs)} | evPipeline=${result.evPipelineOk ? "ok" : "error"} | whalesFetched=${result.whalesFetched} | whalesProcessed=${result.whalesProcessed} | whalesFailed=${result.whalesFailed} | pendingXPostQueue=${pendingLabel} | status=${status}${result.error ? ` | error=${result.error}` : ""}`
+      `[${formatTimestamp()}] [Shadow Cron] Pipeline run complete. | duration=${formatDuration(durationMs)} | evPipeline=${result.evPipelineOk ? "ok" : "error"} | whalesFetched=${result.whalesFetched} | whalesProcessed=${result.whalesProcessed} | whalesFailed=${result.whalesFailed} | pendingXPostQueue=${pendingLabel} | status=${status}${result.error ? ` | error=${result.error}` : ""}`
     );
-  } else {
-    console.log(
-      `[${formatTimestamp()}] shadow-cron #${cycle} finished | duration=${formatDuration(durationMs)} | pendingXPostQueue=${pendingLabel} | status=error${cycleError ? ` | error=${cycleError}` : ""}`
-    );
+  } catch (error) {
+    console.error("[Shadow Cron] Error executing pipeline:", error);
+    process.exitCode = 1;
+  } finally {
+    if (prisma) {
+      await prisma.$disconnect();
+    }
+    if (pool) {
+      await pool.end();
+    }
+    await disconnectPrisma();
+    process.exit(process.exitCode ?? 0);
   }
 }
 
-async function main(): Promise<void> {
-  if (process.env.SHADOW_CRON_ONCE === "1") {
-    console.log(
-      `[${formatTimestamp()}] shadow-cron single-run mode (SHADOW_CRON_ONCE=1)`
-    );
-    await runShadowCycle(1);
-    return;
-  }
-
-  const intervalMs = resolveIntervalMs();
-
-  console.log(
-    `[${formatTimestamp()}] shadow-cron watching x-agent pipeline | interval=${formatDuration(intervalMs)}`
-  );
-
-  let cycle = 0;
-  let running = true;
-
-  const shutdown = () => {
-    if (!running) return;
-    running = false;
-    console.log(`[${formatTimestamp()}] shadow-cron stopping…`);
-  };
-
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
-
-  while (running) {
-    cycle += 1;
-
-    try {
-      await runShadowCycle(cycle);
-    } catch (err) {
-      console.error(
-        `[${formatTimestamp()}] shadow-cron #${cycle} unhandled:`,
-        err instanceof Error ? err.message : err
-      );
-    }
-
-    if (!running) break;
-
-    console.log(
-      `[${formatTimestamp()}] shadow-cron sleeping ${formatDuration(intervalMs)} until next run`
-    );
-
-    const wakeAt = Date.now() + intervalMs;
-    while (running && Date.now() < wakeAt) {
-      await sleep(Math.min(1000, wakeAt - Date.now()));
-    }
-  }
-}
-
-main().catch((err) => {
-  console.error(
-    `[${formatTimestamp()}] shadow-cron fatal:`,
-    err instanceof Error ? err.message : err
-  );
-  process.exit(1);
-});
+void runCron();

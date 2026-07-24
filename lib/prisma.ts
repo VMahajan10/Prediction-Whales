@@ -34,3 +34,16 @@ export function getPrisma(): PrismaClient | null {
 
   return globalForPrisma.prisma;
 }
+
+/** Close Prisma client and underlying pg pool (for scripts / CI). */
+export async function disconnectPrisma(): Promise<void> {
+  if (globalForPrisma.prisma) {
+    await globalForPrisma.prisma.$disconnect();
+    globalForPrisma.prisma = undefined;
+  }
+
+  if (globalForPrisma.prismaPool) {
+    await globalForPrisma.prismaPool.end();
+    globalForPrisma.prismaPool = undefined;
+  }
+}
