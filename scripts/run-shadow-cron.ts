@@ -1,22 +1,15 @@
 /**
  * Single-run shadow cron for CI (GitHub Actions) and manual invocation.
+ * Runs one pipeline pass, closes DB connections, and exits — no watch loop.
  *
  * Usage:
  *   npx tsx scripts/run-shadow-cron.ts
  */
-import { Pool } from "pg";
-import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaClient } from "@prisma/client";
 import { loadEnvFiles } from "./loadEnv";
 import { runXAgentShadowPipeline } from "../lib/x-agent/runShadowPipeline";
-import { disconnectPrisma } from "../lib/prisma";
+import { disconnectPrisma, getPrisma } from "../lib/prisma";
 
 loadEnvFiles();
-
-const connectionString = process.env.DATABASE_URL;
-const pool = connectionString ? new Pool({ connectionString }) : null;
-const adapter = pool ? new PrismaPg(pool) : null;
-const prisma = adapter ? new PrismaClient({ adapter }) : null;
 
 const PENDING_QUEUE_STATUSES = [
   "PENDING",
@@ -38,8 +31,20 @@ function formatDuration(ms: number): string {
   return `${minutes}m ${rem}s`;
 }
 
+async function shutdown(exitCode: number): Promise<never> {
+  try {
+    await disconnectPrisma();
+  } catch (cleanupError) {
+    console.error("[Shadow Cron] Error during database cleanup:", cleanupError);
+    exitCode = 1;
+  }
+
+  process.exit(exitCode);
+}
+
 async function runCron(): Promise<void> {
   const startedAt = Date.now();
+  let exitCode = 0;
 
   try {
     console.log(
@@ -49,6 +54,7 @@ async function runCron(): Promise<void> {
     const result = await runXAgentShadowPipeline();
 
     let pendingQueue: number | null = null;
+    const prisma = getPrisma();
     if (prisma) {
       try {
         pendingQueue = await prisma.xPostQueue.count({
@@ -72,17 +78,13 @@ async function runCron(): Promise<void> {
     );
   } catch (error) {
     console.error("[Shadow Cron] Error executing pipeline:", error);
-    process.exitCode = 1;
-  } finally {
-    if (prisma) {
-      await prisma.$disconnect();
-    }
-    if (pool) {
-      await pool.end();
-    }
-    await disconnectPrisma();
-    process.exit(process.exitCode ?? 0);
+    exitCode = 1;
   }
+
+  await shutdown(exitCode);
 }
 
-void runCron();
+runCron().catch(async (error) => {
+  console.error("[Shadow Cron] Unhandled error:", error);
+  await shutdown(1);
+});
