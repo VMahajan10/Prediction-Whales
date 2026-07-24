@@ -7,6 +7,7 @@
  * Env:
  *   DATABASE_URL              — Prisma + pipeline DB stages
  *   SHADOW_CRON_INTERVAL_MS   — default 900000 (15 minutes)
+ *   SHADOW_CRON_ONCE          — set to "1" to run a single cycle and exit (CI)
  */
 import { register } from "tsconfig-paths";
 import { resolve } from "path";
@@ -118,6 +119,14 @@ async function runShadowCycle(cycle: number): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  if (process.env.SHADOW_CRON_ONCE === "1") {
+    console.log(
+      `[${formatTimestamp()}] shadow-cron single-run mode (SHADOW_CRON_ONCE=1)`
+    );
+    await runShadowCycle(1);
+    return;
+  }
+
   const intervalMs = resolveIntervalMs();
 
   console.log(

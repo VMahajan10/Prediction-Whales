@@ -80,5 +80,10 @@
     "typescript": "^5",
     "vitest": "^4.1.10",
     "wait-on": "^9.0.10"
+  },
+  "ts-node": {
+    "project": "tsconfig.scripts.json",
+    "transpileOnly": true,
+    "require": ["tsconfig-paths/register"]
   }
 }
