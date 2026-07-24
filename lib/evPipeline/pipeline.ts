@@ -376,8 +376,9 @@ export async function runEvPipeline(runId: string): Promise<EvPipelineResult> {
           .filter(Boolean)
           .join("; ") || null,
       });
-    } catch (err) {
-      console.error("[ev-pipeline] sync_runs write failed:", err);
+    } catch (error) {
+      console.error("[DB WRITE ERROR]", error);
+      throw error;
     }
   }
 

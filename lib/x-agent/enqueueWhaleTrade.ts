@@ -142,22 +142,28 @@ export async function processWhaleTradeForXAgent(
     winRate: registry.whale.winRate,
   });
 
-  const queued = await prisma.xPostQueue.create({
-    data: {
-      id: randomUUID(),
-      walletAddress,
-      tradeId: payload.tradeId,
-      templateFamily: family,
-      copyText,
-      marketSlug: payload.marketSlug,
-      side: eligibility.translation.side,
-      entryCents: payload.entryCents,
-      nowCents: payload.nowCents,
-      stakeNotional: payload.stakeNotional,
-      status: "PENDING_REVIEW",
-      reviewToken: randomUUID(),
-    },
-  });
+  let queued: Awaited<ReturnType<typeof prisma.xPostQueue.create>>;
+  try {
+    queued = await prisma.xPostQueue.create({
+      data: {
+        id: randomUUID(),
+        walletAddress,
+        tradeId: payload.tradeId,
+        templateFamily: family,
+        copyText,
+        marketSlug: payload.marketSlug,
+        side: eligibility.translation.side,
+        entryCents: payload.entryCents,
+        nowCents: payload.nowCents,
+        stakeNotional: payload.stakeNotional,
+        status: "PENDING_REVIEW",
+        reviewToken: randomUUID(),
+      },
+    });
+  } catch (error) {
+    console.error("[DB WRITE ERROR]", error);
+    throw error;
+  }
 
   void dispatchAdminReviewAlert(queued as XPostQueue).catch((err) => {
     console.error("[x-agent/enqueue] admin alert failed", {

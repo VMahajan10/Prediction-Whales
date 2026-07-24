@@ -74,7 +74,13 @@ async function runCron(): Promise<void> {
     const durationMs = Date.now() - startedAt;
     const pendingLabel = pendingQueue == null ? "n/a" : String(pendingQueue);
     const status =
-      !result.error && result.whalesFailed === 0 ? "ok" : "partial";
+      !result.error && result.whalesFailed === 0 && result.evPipelineOk
+        ? "ok"
+        : "partial";
+
+    if (!result.evPipelineOk || result.whalesFailed > 0 || result.error) {
+      exitCode = 1;
+    }
 
     console.log(
       `[${formatTimestamp()}] [Shadow Cron] Pipeline run complete. | duration=${formatDuration(durationMs)} | evPipeline=${result.evPipelineOk ? "ok" : "error"} | whalesFetched=${result.whalesFetched} | whalesProcessed=${result.whalesProcessed} | whalesFailed=${result.whalesFailed} | pendingXPostQueue=${pendingLabel} | status=${status}${result.error ? ` | error=${result.error}` : ""}`

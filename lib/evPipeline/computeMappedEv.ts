@@ -309,24 +309,29 @@ async function persistMappingPTrue(
   const variance = opts.variance ?? 0.05;
   const sourceScore = opts.sourceScore ?? 0.7;
 
-  await db.insert(trueProbabilities).values({
-    mappingId: mapping.id > 0 ? mapping.id : null,
-    polymarketTokenId: tokenId,
-    kalshiTicker,
-    pTrue: fmtProb(pTrue),
-    sourceScore: fmtProb(sourceScore),
-    variance: fmtProb(variance),
-    sourceType: opts.sourceType,
-    modelVersion: opts.modelVersion,
-    contributors: [
-      {
-        source: opts.sourceType,
-        weight: 1,
-        p: pTrue,
-        variance,
-      },
-    ],
-  });
+  try {
+    await db.insert(trueProbabilities).values({
+      mappingId: mapping.id > 0 ? mapping.id : null,
+      polymarketTokenId: tokenId,
+      kalshiTicker,
+      pTrue: fmtProb(pTrue),
+      sourceScore: fmtProb(sourceScore),
+      variance: fmtProb(variance),
+      sourceType: opts.sourceType,
+      modelVersion: opts.modelVersion,
+      contributors: [
+        {
+          source: opts.sourceType,
+          weight: 1,
+          p: pTrue,
+          variance,
+        },
+      ],
+    });
+  } catch (error) {
+    console.error("[DB WRITE ERROR]", error);
+    throw error;
+  }
 
   redisBatch.queuePTrue(tokenId, {
     pTrue,

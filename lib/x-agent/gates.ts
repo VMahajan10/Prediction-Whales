@@ -90,12 +90,9 @@ async function logGateFailure(
       rejectionReason: reason,
       payload: trade,
     });
-  } catch (err) {
-    console.error("[x-agent/gates] failed to write x_post_log", {
-      tradeId: trade.tradeId,
-      reason,
-      error: err instanceof Error ? err.message : err,
-    });
+  } catch (error) {
+    console.error("[DB WRITE ERROR]", error);
+    throw error;
   }
 }
 

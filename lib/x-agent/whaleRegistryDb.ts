@@ -39,24 +39,29 @@ export async function upsertWhaleRegistry(input: {
   const prisma = getPrisma();
   if (!prisma) return null;
 
-  return prisma.whaleRegistry.upsert({
-    where: { walletAddress: address },
-    update: {
-      ...(input.avgStakeNotional != null
-        ? { avgStakeNotional: input.avgStakeNotional }
-        : {}),
-      ...(input.avgEv != null ? { avgEv: input.avgEv } : {}),
-    },
-    create: {
-      walletAddress: address,
-      pseudonym: input.pseudonym ?? formatWalletPseudonym(address),
-      resolvedBetsCount: input.resolvedBetsCount ?? 0,
-      avgEv: input.avgEv ?? 0,
-      winRate: input.winRate ?? 0,
-      avgStakeNotional: input.avgStakeNotional ?? 0,
-      postedCount30d: 0,
-    },
-  });
+  try {
+    return await prisma.whaleRegistry.upsert({
+      where: { walletAddress: address },
+      update: {
+        ...(input.avgStakeNotional != null
+          ? { avgStakeNotional: input.avgStakeNotional }
+          : {}),
+        ...(input.avgEv != null ? { avgEv: input.avgEv } : {}),
+      },
+      create: {
+        walletAddress: address,
+        pseudonym: input.pseudonym ?? formatWalletPseudonym(address),
+        resolvedBetsCount: input.resolvedBetsCount ?? 0,
+        avgEv: input.avgEv ?? 0,
+        winRate: input.winRate ?? 0,
+        avgStakeNotional: input.avgStakeNotional ?? 0,
+        postedCount30d: 0,
+      },
+    });
+  } catch (error) {
+    console.error("[DB WRITE ERROR]", error);
+    throw error;
+  }
 }
 
 export async function ensureWhaleInRegistry(

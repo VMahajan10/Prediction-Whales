@@ -239,8 +239,9 @@ async function persistMatches(
       redisBatch.queueMappingBothWays(cached);
 
       persisted += 1;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Insert failed";
+    } catch (error) {
+      console.error("[DB WRITE ERROR]", error);
+      const message = error instanceof Error ? error.message : "Insert failed";
       failures.push({
         stage: "persist",
         message,
