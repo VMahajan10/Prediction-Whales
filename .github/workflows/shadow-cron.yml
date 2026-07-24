@@ -2,17 +2,12 @@ name: Shadow Cron
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: '*/15 * * * *'
   workflow_dispatch:
 
 jobs:
   shadow-cron:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    env:
-      SHADOW_CRON_ONCE: "1"
-
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -20,8 +15,8 @@ jobs:
       - name: Set up Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: npm
+          node-version: 20
+          cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
@@ -35,7 +30,3 @@ jobs:
         run: npx tsx scripts/run-shadow-cron.ts
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          CRON_SECRET: ${{ secrets.CRON_SECRET }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
-          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
