@@ -336,24 +336,89 @@ export function kalshiLineFromOutcome(outcome: string): number | null {
   return null;
 }
 
+function seriesTickerFromKalshi(ticker: string): string {
+  return ticker.split("-")[0] ?? ticker;
+}
+
+function classifyKalshiContract(contract: NormalizedMarketContract): {
+  kind: SportsMarketKind;
+  line: number | null;
+  outcomeKalshi: string | null;
+} {
+  const parsed = parseKalshiGameTicker(contract.tokenOrTicker);
+  if (parsed) {
+    return {
+      kind: kalshiSeriesKind(parsed.series),
+      line: kalshiLineFromOutcome(parsed.outcomeKalshi),
+      outcomeKalshi: parsed.outcomeKalshi,
+    };
+  }
+
+  const series = seriesTickerFromKalshi(contract.tokenOrTicker);
+  const corpus = `${contract.title} ${contract.tokenOrTicker}`.toLowerCase();
+  const inferred = inferKindFromText(corpus);
+  const kind =
+    kalshiSeriesKind(series) !== "unknown"
+      ? kalshiSeriesKind(series)
+      : inferred;
+
+  return {
+    kind,
+    line: extractLine(corpus),
+    outcomeKalshi: null,
+  };
+}
+
 function kindsCompatible(
   pm: SportsMarketKind,
   kalshi: SportsMarketKind
 ): boolean {
-  if (pm === "unknown" || kalshi === "unknown") return true;
-  if (pm === kalshi) return true;
-  if (pm === "moneyline" && kalshi === "moneyline") return true;
-  return false;
+  if (pm === "unknown" && kalshi === "unknown") return true;
+  if (pm === "unknown" || kalshi === "unknown") return false;
+  return pm === kalshi;
 }
 
-function linesCompatible(pmLine: number | null, kalshiOutcome: string): boolean {
-  const kLine = kalshiLineFromOutcome(kalshiOutcome);
-  if (pmLine == null && kLine == null) return true;
-  if (pmLine == null || kLine == null) {
-    if (kLine == null && /^[A-Z]{3}$/i.test(kalshiOutcome)) return true;
-    return pmLine == null;
-  }
+function linesCompatible(
+  pmKind: SportsMarketKind,
+  kalshiKind: SportsMarketKind,
+  pmLine: number | null,
+  kalshiOutcome: string | null,
+  kalshiLine: number | null = null
+): boolean {
+  if (pmKind !== "total" && kalshiKind !== "total") return true;
+  if (pmKind !== "total" || kalshiKind !== "total") return false;
+
+  const kLine =
+    kalshiLine ??
+    (kalshiOutcome ? kalshiLineFromOutcome(kalshiOutcome) : null);
+  if (pmLine == null || kLine == null) return false;
   return Math.abs(pmLine - kLine) < 0.01;
+}
+
+/**
+ * Sports market-type gate: moneyline/winner ↔ moneyline/winner only;
+ * total/O-U ↔ total with the same line. Unclassified non-sports pairs pass through.
+ */
+export function contractsSportsMarketTypeCompatible(
+  pm: NormalizedMarketContract,
+  kalshi: NormalizedMarketContract
+): boolean {
+  const pmInfo = parsePmSportsContract(pm);
+  const kalshiInfo = classifyKalshiContract(kalshi);
+
+  if (!pmInfo && kalshiInfo.kind === "unknown") return true;
+  if (!pmInfo) return false;
+  if (kalshiInfo.kind === "unknown") return false;
+
+  if (!kindsCompatible(pmInfo.kind, kalshiInfo.kind)) return false;
+
+  return linesCompatible(
+    pmInfo.kind,
+    kalshiInfo.kind,
+    pmInfo.line,
+    kalshiInfo.outcomeKalshi,
+    kalshiInfo.line
+  );
 }
 
 function gamesMatch(pmGame: ParsedGameKey, kalshiGame: ParsedGameKey): boolean {
@@ -395,7 +460,16 @@ export function matchSportsStructurePairs(
 
       const kKind = kalshiSeriesKind(parsed.series);
       if (!kindsCompatible(pmInfo.kind, kKind)) continue;
-      if (!linesCompatible(pmInfo.line, parsed.outcomeKalshi)) continue;
+      if (
+        !linesCompatible(
+          pmInfo.kind,
+          kKind,
+          pmInfo.line,
+          parsed.outcomeKalshi
+        )
+      ) {
+        continue;
+      }
       if (
         !sportsOutcomeLegsAligned(pmInfo, parsed.outcomeKalshi, kKind)
       ) {

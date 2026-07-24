@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runEvPipeline } from "@/lib/evPipeline/pipeline";
 import {
-  acquirePipelineLock,
-  releasePipelineLock,
+  runWithPipelineLock,
   writePipelineMeta,
 } from "@/lib/evPipeline/redisCache";
 
@@ -37,23 +36,27 @@ export async function GET(request: NextRequest) {
   const runId = crypto.randomUUID();
   const startedAt = Date.now();
 
-  const locked = await acquirePipelineLock(runId);
-  if (!locked) {
-    return NextResponse.json(
-      { ok: false, error: "Pipeline already running", runId },
-      { status: 409 },
-    );
-  }
-
   try {
-    const result = await runEvPipeline(runId);
+    const lockResult = await runWithPipelineLock(runId, async () => {
+      const result = await runEvPipeline(runId);
 
-    await writePipelineMeta({
-      runId,
-      finishedAt: new Date().toISOString(),
-      stages: result.stages,
+      await writePipelineMeta({
+        runId,
+        finishedAt: new Date().toISOString(),
+        stages: result.stages,
+      });
+
+      return result;
     });
 
+    if (!lockResult.acquired) {
+      return NextResponse.json(
+        { ok: false, error: "Pipeline already running", runId },
+        { status: 409 },
+      );
+    }
+
+    const result = lockResult.value;
     const allOk = Object.values(result.stages).every((s) => s.ok);
 
     console.log("Pipeline processing complete, sending response...");
@@ -77,8 +80,6 @@ export async function GET(request: NextRequest) {
       },
       { status: 500 },
     );
-  } finally {
-    await releasePipelineLock(runId);
   }
 }
 

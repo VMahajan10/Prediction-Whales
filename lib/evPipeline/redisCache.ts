@@ -135,6 +135,9 @@ export { readLocalTradeEvLookup };
 
 export const EV_REDIS_PREFIX = "ev:v1";
 
+/** Redis EX TTL for `ev:v1:pipeline:lock` (seconds). */
+export const PIPELINE_LOCK_TTL_SEC = 300;
+
 export const EV_REDIS_TTL = {
   /** Order book snapshot — refresh every cron tick (~5–15s). */
   orderBookSec: 10,
@@ -144,8 +147,8 @@ export const EV_REDIS_TTL = {
   mappingSec: 300,
   /** Per-wallet live EV rollup for profile / copy signal. */
   traderLiveSec: 120,
-  /** Cron mutual exclusion lock. */
-  pipelineLockSec: 240,
+  /** Cron mutual exclusion lock — auto-expires after 5 minutes. */
+  pipelineLockSec: PIPELINE_LOCK_TTL_SEC,
   /** Last successful pipeline metadata. */
   pipelineMetaSec: 3600,
 } as const;
@@ -782,7 +785,7 @@ export async function acquirePipelineLock(runId: string): Promise<boolean> {
   try {
     const result = await client.set(evRedisKeys.pipelineLock(), runId, {
       nx: true,
-      ex: EV_REDIS_TTL.pipelineLockSec,
+      ex: PIPELINE_LOCK_TTL_SEC,
     });
     return result === "OK";
   } catch (err) {
@@ -791,6 +794,30 @@ export async function acquirePipelineLock(runId: string): Promise<boolean> {
       err instanceof Error ? err.message : err
     );
     return true;
+  }
+}
+
+export type PipelineLockResult<T> =
+  | { acquired: true; value: T }
+  | { acquired: false };
+
+/**
+ * Acquire the pipeline lock (EX 300), run `fn`, and always release in `finally`.
+ */
+export async function runWithPipelineLock<T>(
+  runId: string,
+  fn: () => Promise<T>
+): Promise<PipelineLockResult<T>> {
+  const locked = await acquirePipelineLock(runId);
+  if (!locked) {
+    return { acquired: false };
+  }
+
+  try {
+    const value = await fn();
+    return { acquired: true, value };
+  } finally {
+    await releasePipelineLock(runId);
   }
 }
 

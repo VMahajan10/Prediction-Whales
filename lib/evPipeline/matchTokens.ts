@@ -1,5 +1,6 @@
 import type { NormalizedMarketContract } from "@/lib/evPipeline/types";
 import { contractsMappingCompatible } from "@/lib/evPipeline/marketCategoryMatch";
+import { contractsSportsMarketTypeCompatible } from "@/lib/evPipeline/sportsStructureMatch";
 import { countryNameToPm } from "@/lib/sportsTeamMatch";
 
 /** Added to raw cosine similarity when token overlap is strong. */
@@ -470,7 +471,8 @@ export function buildAllScoredPairs(
       if (
         polymarket.length > 0 &&
         kalshi.length > 0 &&
-        !contractsMappingCompatible(polymarket[i], kalshi[j])
+        (!contractsMappingCompatible(polymarket[i], kalshi[j]) ||
+          !contractsSportsMarketTypeCompatible(polymarket[i], kalshi[j]))
       ) {
         continue;
       }
@@ -552,7 +554,12 @@ export function greedyMatchFromPairs(
 
     const pm = polymarket[row.pmIndex];
     const km = kalshi[row.kalshiIndex];
-    if (!contractsMappingCompatible(pm, km)) continue;
+    if (
+      !contractsMappingCompatible(pm, km) ||
+      !contractsSportsMarketTypeCompatible(pm, km)
+    ) {
+      continue;
+    }
 
     usedPm.add(row.pmIndex);
     usedKalshi.add(row.kalshiIndex);

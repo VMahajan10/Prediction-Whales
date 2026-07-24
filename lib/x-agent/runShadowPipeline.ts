@@ -2,12 +2,14 @@ import { randomUUID } from "node:crypto";
 import { fetchWhaleBackfill } from "@/lib/polymarket";
 import { runEvPipeline } from "@/lib/evPipeline/pipeline";
 import {
-  acquirePipelineLock,
-  releasePipelineLock,
+  runWithPipelineLock,
   writePipelineMeta,
 } from "@/lib/evPipeline/redisCache";
 import { tradeToWhale } from "@/lib/whaleTrades";
 import { processWhaleTradeForXAgent } from "@/lib/x-agent/enqueueWhaleTrade";
+
+export const EV_PIPELINE_LOCK_HELD_MESSAGE =
+  "EV pipeline lock held — skipped EV warm-up";
 
 export interface XAgentShadowPipelineResult {
   evPipelineOk: boolean;
@@ -26,8 +28,7 @@ export async function runXAgentShadowPipeline(): Promise<XAgentShadowPipelineRes
   let evPipelineOk = false;
   let evError: string | undefined;
 
-  const locked = await acquirePipelineLock(runId);
-  if (locked) {
+  const lockResult = await runWithPipelineLock(runId, async () => {
     try {
       const result = await runEvPipeline(runId);
       await writePipelineMeta({
@@ -36,21 +37,35 @@ export async function runXAgentShadowPipeline(): Promise<XAgentShadowPipelineRes
         stages: result.stages,
       });
 
-      evPipelineOk = Object.values(result.stages).every((stage) => stage.ok);
-      if (!evPipelineOk) {
-        evError = Object.values(result.stages)
-          .filter((stage) => !stage.ok && stage.error)
-          .map((stage) => stage.error)
-          .join("; ");
-      }
+      const ok = Object.values(result.stages).every((stage) => stage.ok);
+      const error = ok
+        ? undefined
+        : Object.values(result.stages)
+            .filter((stage) => !stage.ok && stage.error)
+            .map((stage) => stage.error)
+            .join("; ");
+
+      return { evPipelineOk: ok, evError: error };
     } catch (err) {
-      evError = err instanceof Error ? err.message : String(err);
-    } finally {
-      await releasePipelineLock(runId);
+      return {
+        evPipelineOk: false,
+        evError: err instanceof Error ? err.message : String(err),
+      };
     }
-  } else {
-    evError = "EV pipeline lock held — skipped EV warm-up";
+  });
+
+  if (!lockResult.acquired) {
+    return {
+      evPipelineOk: false,
+      whalesFetched: 0,
+      whalesProcessed: 0,
+      whalesFailed: 0,
+      error: EV_PIPELINE_LOCK_HELD_MESSAGE,
+    };
   }
+
+  evPipelineOk = lockResult.value.evPipelineOk;
+  evError = lockResult.value.evError;
 
   let trades: Awaited<ReturnType<typeof fetchWhaleBackfill>> = [];
 
