@@ -1,6 +1,6 @@
 import type { ParsedGameKey } from "@/lib/crossMarketEv";
 import { fuzzyCountryNameToPm } from "@/lib/sportsTeamMatch";
-import { normalizePmTeamCode, pmCodeToKalshi } from "@/lib/teamCodes";
+import { normalizePmTeamCode, pmCodeToKalshi, pmTeamCodesEquivalent } from "@/lib/teamCodes";
 
 /** PM game slugs: `{league}-{teamA}-{teamB}-{YYYY-MM-DD}[-suffix]`. */
 export const GENERIC_PM_GAME_SLUG =
@@ -130,10 +130,11 @@ export function resolveOutcomePmFromSuffix(
   pmTeamB: string
 ): string | null {
   if (!suffix) return null;
-  const token = suffix.toLowerCase();
+  const token = suffix.toLowerCase().trim();
   if (token === "draw" || token === "tie") return "draw";
-  if (token === pmTeamA || token.includes(pmTeamA)) return pmTeamA;
-  if (token === pmTeamB || token.includes(pmTeamB)) return pmTeamB;
+  if (token === pmTeamA || token === pmTeamB) return token;
+  if (pmTeamCodesEquivalent(token, pmTeamA)) return pmTeamA;
+  if (pmTeamCodesEquivalent(token, pmTeamB)) return pmTeamB;
   return token;
 }
 
@@ -145,14 +146,32 @@ export function probeMentionsTeamToken(
 ): boolean {
   const hay = `${probe} ${extraLabels.join(" ")}`.toLowerCase();
   const code = normalizePmTeamCode(pmCode);
-  if (hay.includes(code)) return true;
+  if (!code) return false;
+
+  const codePattern = new RegExp(
+    `(?:^|[^a-z0-9])${code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:[^a-z0-9]|$)`,
+    "i"
+  );
+  if (codePattern.test(hay)) return true;
 
   const slug = slugifyTeamToken(code);
-  if (slug.length >= 2 && hay.includes(slug)) return true;
+  if (slug.length >= 3) {
+    const slugPattern = new RegExp(
+      `(?:^|[^a-z0-9])${slug.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:[^a-z0-9]|$)`,
+      "i"
+    );
+    if (slugPattern.test(hay)) return true;
+  }
 
   for (const label of extraLabels) {
     const token = slugifyTeamToken(label);
-    if (token.length >= 3 && hay.includes(token)) return true;
+    if (token.length >= 3) {
+      const labelPattern = new RegExp(
+        `(?:^|[^a-z0-9])${token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:[^a-z0-9]|$)`,
+        "i"
+      );
+      if (labelPattern.test(hay)) return true;
+    }
   }
 
   return false;

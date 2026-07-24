@@ -302,13 +302,91 @@ function probeMentionsPmTeam(
   pmCode: string,
   label = ""
 ): boolean {
-  const code = normalizePmTeamCode(pmCode);
-  const hay = `${probe} ${label}`.toLowerCase();
-  if (hay.includes(code)) return true;
-  for (const name of pmCodeToCountryNames(code)) {
-    if (hay.includes(name)) return true;
+  return probeMentionsTeamToken(probe, pmCode, label ? [label] : []);
+}
+
+function isSportsPropContext(
+  slug?: string | null,
+  title?: string | null
+): boolean {
+  if (isSportsSlugOrTitle(slug ?? undefined, title ?? undefined)) return true;
+  const probe = `${slug ?? ""} ${title ?? ""}`.toLowerCase();
+  return /\b(over|under|o\/u|total|spread|btts|goals)\b/.test(probe);
+}
+
+function binaryPlaceholderGame(
+  slug?: string | null,
+  title?: string | null
+): ParsedGameKey {
+  return {
+    date: new Date().toISOString().slice(0, 10),
+    kalshiTeamA: "YES",
+    kalshiTeamB: "NO",
+    pmTeamA: "yes",
+    pmTeamB: "no",
+    kickoffEpochSec: null,
+    kickoffKnown: false,
+  };
+}
+
+function resolveBinaryYesNoOutcome(params: {
+  outcomeName: string;
+  slug?: string | null;
+  title?: string | null;
+}): ResolvedPmOutcome | null {
+  const normalized = normalizeOutcomeLabel(params.outcomeName);
+  if (!PROP_OUTCOMES.has(normalized)) return null;
+  if (isSportsSlugOrTitle(params.slug ?? undefined, params.title ?? undefined)) {
+    return null;
   }
-  return false;
+
+  const game = binaryPlaceholderGame(params.slug, params.title);
+  const outcome = syntheticOutcomeForProp(normalized);
+  const marketKey = slugifyTeamToken(
+    `${params.slug ?? ""}-${params.title ?? "market"}`
+  );
+
+  return {
+    game,
+    outcome,
+    outcomePm: normalized,
+    outcomeLabel: params.outcomeName.trim(),
+    matchId: `binary|${normalized}|${marketKey || "market"}`,
+  };
+}
+
+function resolveDrawOutcome(params: {
+  slug?: string | null;
+  title?: string | null;
+  outcomeName?: string | null;
+  index?: Map<string, OutcomeBooks>;
+}): ResolvedPmOutcome | null {
+  const slug = params.slug?.trim();
+  const title = params.title?.trim();
+  const outcomeName = params.outcomeName?.trim() || null;
+
+  if (slug) {
+    const parsed = parseSlugGameAndOutcome(slug);
+    if (parsed?.outcome === "draw") {
+      return buildResolvedPmOutcome(
+        parsed.game,
+        "draw",
+        outcomeName ?? "Draw"
+      );
+    }
+  }
+
+  const drawProbe = `${outcomeName ?? ""} ${title ?? ""}`.trim();
+  if (!/\b(draw|tie)\b/i.test(drawProbe)) return null;
+
+  const game = resolveGameContext({
+    slug,
+    title,
+    index: params.index,
+  });
+  if (!game) return null;
+
+  return buildResolvedPmOutcome(game, "draw", outcomeName ?? "Draw");
 }
 
 export interface ExchangeConsensusBaseline {
@@ -597,10 +675,14 @@ function resolveOutcomeFromWinTitle(
   title: string,
   game: ParsedGameKey
 ): OutcomeSide | null {
+  if (/\b(?:end|finish|result)(?:\s+\w+){0,6}\s+(?:in\s+)?(?:a\s+)?(?:draw|tie)\b|\b(?:draw|tie)\s*\?/i.test(title)) {
+    return "draw";
+  }
+
   const win = title.match(WIN_TITLE);
   if (!win) return null;
 
-  const teamPm = fuzzyCountryNameToPm(win[1]);
+  const teamPm = fuzzyCountryNameToPm(win[1]) ?? fuzzyTeamTokenFromLabel(win[1]);
   if (!teamPm) return null;
 
   if (pmTeamCodesEquivalent(game.pmTeamA, teamPm)) return "team_a";
@@ -608,7 +690,7 @@ function resolveOutcomeFromWinTitle(
   return null;
 }
 
-/** Resolve the exact PM CLOB outcome (team/draw/prop) for a sports token. */
+/** Resolve the exact PM CLOB outcome (team/draw/prop/binary) for a token. */
 export function resolvePmTokenOutcome(params: {
   slug?: string | null;
   title?: string | null;
@@ -618,16 +700,6 @@ export function resolvePmTokenOutcome(params: {
   const slug = params.slug?.trim();
   const title = params.title?.trim();
   const outcomeName = params.outcomeName?.trim() || null;
-
-  if (outcomeName && isPropOutcomeLabel(outcomeName)) {
-    const fromProp = resolvePropPmOutcome({
-      slug,
-      title,
-      outcomeName,
-      index: params.index,
-    });
-    if (fromProp) return fromProp;
-  }
 
   if (slug && isSportsSlugOrTitle(slug, title)) {
     const parsed = parseSlugGameAndOutcome(slug);
@@ -642,6 +714,14 @@ export function resolvePmTokenOutcome(params: {
 
     const game = parseGameFromSlug(slug);
     if (game) {
+      const fromDraw = resolveDrawOutcome({
+        slug,
+        title,
+        outcomeName,
+        index: params.index,
+      });
+      if (fromDraw) return fromDraw;
+
       if (outcomeName) {
         const fromOutcomeName = resolveOutcomeSideForGame(game, outcomeName);
         if (fromOutcomeName) {
@@ -661,6 +741,24 @@ export function resolvePmTokenOutcome(params: {
         }
       }
     }
+  }
+
+  const fromDraw = resolveDrawOutcome({
+    slug,
+    title,
+    outcomeName,
+    index: params.index,
+  });
+  if (fromDraw) return fromDraw;
+
+  if (outcomeName && isPropOutcomeLabel(outcomeName) && isSportsPropContext(slug, title)) {
+    const fromProp = resolvePropPmOutcome({
+      slug,
+      title,
+      outcomeName,
+      index: params.index,
+    });
+    if (fromProp) return fromProp;
   }
 
   if (outcomeName && title) {
@@ -691,6 +789,15 @@ export function resolvePmTokenOutcome(params: {
         }
       }
     }
+  }
+
+  if (outcomeName) {
+    const fromBinary = resolveBinaryYesNoOutcome({
+      outcomeName,
+      slug,
+      title,
+    });
+    if (fromBinary) return fromBinary;
   }
 
   return null;
@@ -793,7 +900,7 @@ function resolveSportsbookForPmOutcome(
   };
 }
 
-function isSportsSlugOrTitle(slug?: string, title?: string | null): boolean {
+function isSportsSlugOrTitle(slug?: string | null, title?: string | null): boolean {
   if (isSportsMarketProbe(slug, title)) return true;
   if (inferMarketCategory(`${slug ?? ""} ${title ?? ""}`) === "SPORTS") {
     return true;

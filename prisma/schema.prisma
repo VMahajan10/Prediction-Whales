@@ -1,0 +1,199 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["partialIndexes"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// This model contains an index with non-default null sort order and requires additional setup for migrations. Visit https://pris.ly/d/default-index-null-ordering for more info.
+model ev_snapshots {
+  id              BigInt   @id @default(autoincrement())
+  polymarket_id   String
+  polymarket_prob Decimal  @db.Decimal
+  consensus_prob  Decimal  @db.Decimal
+  gap             Decimal  @db.Decimal
+  signal          String
+  contributors    Json
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([polymarket_id, created_at(sort: Desc)], map: "ev_snapshots_polymarket_created_idx")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains an index with non-default null sort order and requires additional setup for migrations. Visit https://pris.ly/d/default-index-null-ordering for more info.
+model market_mappings {
+  id                      BigInt               @id @default(autoincrement())
+  polymarket_token_id     String
+  polymarket_condition_id String?
+  kalshi_ticker           String
+  confidence_score        Float                @db.Real
+  match_method            String
+  embedding_similarity    Float?               @db.Real
+  pm_outcome              String?
+  kalshi_outcome          String?
+  orientation             String               @default("same")
+  market_match_id         BigInt?
+  verified_at             DateTime?            @db.Timestamptz(6)
+  expires_at              DateTime?            @db.Timestamptz(6)
+  created_at              DateTime             @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime             @default(now()) @db.Timestamptz(6)
+  market_matches          market_matches?      @relation(fields: [market_match_id], references: [id], onUpdate: NoAction, map: "market_mappings_market_match_id_market_matches_id_fk")
+  true_probabilities      true_probabilities[]
+
+  @@unique([polymarket_token_id, kalshi_ticker], map: "market_mappings_pm_token_kalshi_unique")
+  @@index([confidence_score(sort: Desc)], map: "market_mappings_confidence_idx")
+  @@index([expires_at])
+  @@index([kalshi_ticker])
+}
+
+model market_matches {
+  id                  BigInt             @id @default(autoincrement())
+  polymarket_id       String
+  normalized_id       BigInt
+  platform            String
+  pm_outcome          String
+  contributor_outcome String
+  orientation         String
+  confidence_tier     String
+  score               Float              @db.Real
+  match_method        String
+  created_at          DateTime           @default(now()) @db.Timestamptz(6)
+  expires_at          DateTime?          @db.Timestamptz(6)
+  market_mappings     market_mappings[]
+  markets_normalized  markets_normalized @relation(fields: [normalized_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "market_matches_normalized_id_markets_normalized_id_fk")
+
+  @@unique([polymarket_id, normalized_id], map: "market_matches_polymarket_normalized_unique")
+  @@index([expires_at])
+  @@index([polymarket_id])
+}
+
+model markets_normalized {
+  id              BigInt                 @id @default(autoincrement())
+  raw_id          BigInt
+  canonical_title String
+  entities        String[]               @default([])
+  resolution_kind String?
+  norm_method     String
+  embedding       Unsupported("vector")?
+  normalized_at   DateTime               @default(now()) @db.Timestamptz(6)
+  market_matches  market_matches[]
+  markets_raw     markets_raw            @relation(fields: [raw_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "markets_normalized_raw_id_markets_raw_id_fk")
+
+  @@index([embedding], map: "markets_normalized_embedding_hnsw_idx")
+}
+
+/// This model contains an index with non-default null sort order and requires additional setup for migrations. Visit https://pris.ly/d/default-index-null-ordering for more info.
+model markets_raw {
+  id                 BigInt               @id @default(autoincrement())
+  platform           String
+  external_id        String
+  tier               Int                  @db.SmallInt
+  title              String
+  raw_payload        Json
+  yes_price          Decimal?             @db.Decimal
+  volume             Decimal?             @db.Decimal
+  url                String?
+  ingested_at        DateTime             @default(now()) @db.Timestamptz(6)
+  markets_normalized markets_normalized[]
+
+  @@unique([platform, external_id], map: "markets_raw_platform_external_id_unique")
+  @@index([platform, ingested_at(sort: Desc)], map: "markets_raw_tier1_platform_ingested_idx", where: raw("(tier = 1)"))
+}
+
+/// This model contains an index with non-default null sort order and requires additional setup for migrations. Visit https://pris.ly/d/default-index-null-ordering for more info.
+model sync_runs {
+  id           BigInt    @id @default(autoincrement())
+  scope        String
+  started_at   DateTime  @default(now()) @db.Timestamptz(6)
+  finished_at  DateTime? @db.Timestamptz(6)
+  status       String
+  counts       Json?
+  error        String?
+  per_platform Json?
+
+  @@index([scope, started_at(sort: Desc)], map: "sync_runs_scope_started_idx")
+  @@index([status])
+}
+
+/// This model contains an index with non-default null sort order and requires additional setup for migrations. Visit https://pris.ly/d/default-index-null-ordering for more info.
+model trader_ev_analytics {
+  id                 BigInt   @id @default(autoincrement())
+  wallet             String
+  platform           String
+  period             String
+  average_ev         Decimal? @db.Decimal
+  total_portfolio_ev Decimal? @db.Decimal
+  trade_count        BigInt   @default(0)
+  closed_trade_count BigInt   @default(0)
+  breakdown          Json?
+  calculated_at      DateTime @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([wallet, platform, period], map: "trader_ev_analytics_wallet_platform_period_unique")
+  @@index([average_ev(sort: Desc)])
+  @@index([wallet, updated_at(sort: Desc)], map: "trader_ev_analytics_wallet_updated_idx")
+}
+
+/// This model contains an index with non-default null sort order and requires additional setup for migrations. Visit https://pris.ly/d/default-index-null-ordering for more info.
+model true_probabilities {
+  id                  BigInt           @id @default(autoincrement())
+  mapping_id          BigInt?
+  polymarket_token_id String
+  kalshi_ticker       String?
+  p_true              Decimal          @db.Decimal
+  source_score        Decimal?         @db.Decimal
+  variance            Decimal?         @db.Decimal
+  source_type         String
+  model_version       String?
+  contributors        Json             @default("[]")
+  calculated_at       DateTime         @default(now()) @db.Timestamptz(6)
+  market_mappings     market_mappings? @relation(fields: [mapping_id], references: [id], onUpdate: NoAction, map: "true_probabilities_mapping_id_market_mappings_id_fk")
+
+  @@index([mapping_id, calculated_at(sort: Desc)], map: "true_probabilities_mapping_calculated_idx")
+  @@index([polymarket_token_id, calculated_at(sort: Desc)], map: "true_probabilities_pm_token_calculated_idx")
+}
+
+model WhaleRegistry {
+  walletAddress     String   @id @map("wallet_address")
+  pseudonym         String
+  resolvedBetsCount Int      @default(0) @map("resolved_bets_count")
+  avgEv             Float    @default(0.0) @map("avg_ev")
+  winRate           Float    @default(0.0) @map("win_rate")
+  avgStakeNotional  Float    @default(0.0) @map("avg_stake_notional")
+  postedCount30d    Int      @default(0) @map("posted_count_30d")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@map("whale_registry")
+}
+
+model XPostQueue {
+  id             String    @id
+  walletAddress  String    @map("wallet_address")
+  tradeId        String    @unique @map("trade_id")
+  templateFamily String    @map("template_family")
+  copyText       String    @map("copy_text")
+  marketSlug     String    @map("market_slug")
+  side           String
+  entryCents     Float     @map("entry_cents")
+  nowCents       Float     @map("now_cents")
+  stakeNotional  Float     @map("stake_notional")
+  status         String    @default("PENDING_REVIEW")
+  reviewToken    String    @unique @map("review_token")
+  scheduledFor   DateTime? @map("scheduled_for")
+  dispatchedAt   DateTime? @map("dispatched_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@map("x_post_queue")
+}
+
+model XPostLog {
+  id       String   @id @default(uuid())
+  queueId  String
+  postedAt DateTime @default(now())
+  xPostId  String?
+  status   String
+}

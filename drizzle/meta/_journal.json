@@ -15,6 +15,13 @@
       "when": 1740700800000,
       "tag": "0003_match_method_test_fallback",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1753334400000,
+      "tag": "0004_x_detection_engine",
+      "breakpoints": true
     }
   ]
 }

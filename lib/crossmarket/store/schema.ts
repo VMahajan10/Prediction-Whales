@@ -2,7 +2,9 @@ import { sql } from "drizzle-orm";
 import {
   bigint,
   bigserial,
+  boolean,
   index,
+  integer,
   jsonb,
   numeric,
   pgTable,
@@ -462,3 +464,119 @@ export type TrueProbabilityInsert = typeof trueProbabilities.$inferInsert;
 
 export type TraderEvAnalytic = typeof traderEvAnalytics.$inferSelect;
 export type TraderEvAnalyticInsert = typeof traderEvAnalytics.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// X Detection Engine — whale registry, post queue, gate audit log
+// ---------------------------------------------------------------------------
+
+export const X_POST_QUEUE_STATUSES = [
+  "PENDING_REVIEW",
+  "APPROVED",
+  "EDITED",
+  "KILLED",
+  "DISPATCHED",
+  "EXPIRED",
+] as const;
+export type XPostQueueStatus = (typeof X_POST_QUEUE_STATUSES)[number];
+
+/** Known whale wallets tracked for X post eligibility and copy generation. */
+export const whaleRegistry = pgTable("whale_registry", {
+  /** Lowercase proxy wallet or platform account id. */
+  walletAddress: text("wallet_address").primaryKey(),
+  pseudonym: text("pseudonym").notNull(),
+  resolvedBetsCount: integer("resolved_bets_count").notNull().default(0),
+  /** Raw EV decimal (e.g. 0.12 = +12%). */
+  avgEv: real("avg_ev").notNull().default(0),
+  /** Win rate decimal (e.g. 0.65 = 65%). */
+  winRate: real("win_rate").notNull().default(0),
+  avgStakeNotional: real("avg_stake_notional").notNull().default(0),
+  postedCount30d: integer("posted_count_30d").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+    .defaultNow()
+    .notNull(),
+});
+
+/** Human-in-the-loop queue for whale trade X posts awaiting review/dispatch. */
+export const xPostQueue = pgTable(
+  "x_post_queue",
+  {
+    /** App-generated CUID/UUID. */
+    id: text("id").primaryKey(),
+    walletAddress: text("wallet_address")
+      .notNull()
+      .references(() => whaleRegistry.walletAddress, { onDelete: "cascade" }),
+    tradeId: text("trade_id").notNull(),
+    templateFamily: text("template_family").notNull(),
+    copyText: text("copy_text").notNull(),
+    marketSlug: text("market_slug").notNull(),
+    side: text("side").notNull(),
+    entryCents: real("entry_cents").notNull(),
+    nowCents: real("now_cents").notNull(),
+    stakeNotional: real("stake_notional").notNull(),
+    status: text("status").notNull().default("PENDING_REVIEW"),
+    reviewToken: text("review_token").notNull(),
+    scheduledFor: timestamp("scheduled_for", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    dispatchedAt: timestamp("dispatched_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    unique("x_post_queue_trade_id_unique").on(table.tradeId),
+    unique("x_post_queue_review_token_unique").on(table.reviewToken),
+    index("x_post_queue_status_scheduled_idx").on(
+      table.status,
+      table.scheduledFor,
+    ),
+    index("x_post_queue_wallet_created_idx").on(
+      table.walletAddress,
+      table.createdAt.desc(),
+    ),
+  ],
+);
+
+/** Append-only audit log for X post gate decisions per trade. */
+export const xPostLog = pgTable(
+  "x_post_log",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    tradeId: text("trade_id").notNull(),
+    gatePassed: boolean("gate_passed").notNull(),
+    rejectionReason: text("rejection_reason"),
+    payload: jsonb("payload").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("x_post_log_trade_id_created_idx").on(
+      table.tradeId,
+      table.createdAt.desc(),
+    ),
+    index("x_post_log_gate_passed_created_idx").on(
+      table.gatePassed,
+      table.createdAt.desc(),
+    ),
+  ],
+);
+
+export type WhaleRegistry = typeof whaleRegistry.$inferSelect;
+export type WhaleRegistryInsert = typeof whaleRegistry.$inferInsert;
+
+export type XPostQueue = typeof xPostQueue.$inferSelect;
+export type XPostQueueInsert = typeof xPostQueue.$inferInsert;
+
+export type XPostLog = typeof xPostLog.$inferSelect;
+export type XPostLogInsert = typeof xPostLog.$inferInsert;

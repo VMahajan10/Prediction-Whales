@@ -428,7 +428,9 @@ export async function runMarketMapping(
       kalshiVectors,
       pmTokens,
       kalshiTokens,
-      cosineSimilarity
+      cosineSimilarity,
+      polymarketMarkets,
+      kalshiMarkets
     );
     const rankedPerPm = bestCandidatePerPm(allPairs);
 

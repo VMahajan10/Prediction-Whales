@@ -3,6 +3,8 @@ import {
   parsePmMoneylineSlug,
   type ParsedGameKey,
 } from "@/lib/crossMarketEv";
+import { contractsMappingCompatible } from "@/lib/evPipeline/marketCategoryMatch";
+import { parseGenericPmGameSlug, buildLooseParsedGameKey } from "@/lib/evPipeline/sportsSlugParse";
 import { countryNameToPm, teamsMatchGame } from "@/lib/sportsTeamMatch";
 import { normalizePmTeamCode, pmCodeToKalshi } from "@/lib/teamCodes";
 import type { MatchedPair, NormalizedMarketContract } from "@/lib/evPipeline/types";
@@ -255,6 +257,33 @@ function parsePmSportsContract(
         outcomeLeg,
       };
     }
+
+    const genericSlug = parseGenericPmGameSlug(slug);
+    if (genericSlug) {
+      const game = buildLooseParsedGameKey(
+        genericSlug.pmTeamA,
+        genericSlug.pmTeamB,
+        genericSlug.date
+      );
+      let kind = inferKindFromText(`${genericSlug.suffix ?? ""} ${corpus}`);
+      if (kind === "unknown" && genericSlug.suffix) {
+        kind = "moneyline";
+      }
+
+      const outcomeLeg = resolvePmOutcomeLeg(
+        contract,
+        game,
+        kind,
+        genericSlug.suffix
+      );
+
+      return {
+        game,
+        kind,
+        line: extractLine(corpus) ?? parseLineFromSlugSuffix(genericSlug.suffix ?? ""),
+        outcomeLeg,
+      };
+    }
   }
 
   const titleGame = parseGameFromTitle(contract.title);
@@ -361,6 +390,7 @@ export function matchSportsStructurePairs(
     if (!pmInfo) continue;
 
     for (const { contract: km, parsed } of kalshiParsed) {
+      if (!contractsMappingCompatible(pm, km)) continue;
       if (!gamesMatch(pmInfo.game, parsed.game)) continue;
 
       const kKind = kalshiSeriesKind(parsed.series);

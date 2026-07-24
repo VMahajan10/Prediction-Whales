@@ -1,4 +1,5 @@
 import type { NormalizedMarketContract } from "@/lib/evPipeline/types";
+import { contractsMappingCompatible } from "@/lib/evPipeline/marketCategoryMatch";
 import { countryNameToPm } from "@/lib/sportsTeamMatch";
 
 /** Added to raw cosine similarity when token overlap is strong. */
@@ -458,12 +459,22 @@ export function buildAllScoredPairs(
   kalshiVectors: number[][],
   pmTokens: ContractTokens[],
   kalshiTokens: ContractTokens[],
-  cosineSimilarity: (a: number[], b: number[]) => number
+  cosineSimilarity: (a: number[], b: number[]) => number,
+  polymarket: NormalizedMarketContract[] = [],
+  kalshi: NormalizedMarketContract[] = []
 ): ScoredCandidatePair[] {
   const pairs: ScoredCandidatePair[] = [];
 
   for (let i = 0; i < pmVectors.length; i++) {
     for (let j = 0; j < kalshiVectors.length; j++) {
+      if (
+        polymarket.length > 0 &&
+        kalshi.length > 0 &&
+        !contractsMappingCompatible(polymarket[i], kalshi[j])
+      ) {
+        continue;
+      }
+
       const raw = cosineSimilarity(pmVectors[i], kalshiVectors[j]);
       const adjusted = adjustSimilarityWithTokens(
         raw,
@@ -539,11 +550,13 @@ export function greedyMatchFromPairs(
     }
     if (usedPm.has(row.pmIndex) || usedKalshi.has(row.kalshiIndex)) continue;
 
+    const pm = polymarket[row.pmIndex];
+    const km = kalshi[row.kalshiIndex];
+    if (!contractsMappingCompatible(pm, km)) continue;
+
     usedPm.add(row.pmIndex);
     usedKalshi.add(row.kalshiIndex);
 
-    const pm = polymarket[row.pmIndex];
-    const km = kalshi[row.kalshiIndex];
     matches.push({
       method: forceMethod ?? row.method,
       pair: {

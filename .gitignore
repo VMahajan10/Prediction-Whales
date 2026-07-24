@@ -42,3 +42,4 @@ android/local.properties
 ios/App/Pods/
 *.jks
 *.keystore
+.env*
