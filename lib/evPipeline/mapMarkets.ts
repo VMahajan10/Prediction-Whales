@@ -7,6 +7,7 @@ import {
   validateMatchMarketsPreflight,
   formatPreflightErrors,
 } from "@/lib/evPipeline/matchMarketsPreflight";
+import { upsertMarketMatchPrisma } from "@/lib/evPipeline/prismaPersist";
 import {
   fetchAndNormalizeMarkets,
   type FetchMarketsOptions,
@@ -148,6 +149,8 @@ async function persistMatches(
           )
         )
         .limit(1);
+
+      await upsertMarketMatchPrisma(match, { mappingId: mappingRow?.id });
 
       const pmContract = pmByToken.get(match.polymarketTokenId.toLowerCase());
       const kalshiContract = kalshiByTicker.get(match.kalshiTicker.toUpperCase());

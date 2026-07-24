@@ -8,7 +8,7 @@ datasource db {
 }
 
 /// This model contains an index with non-default null sort order and requires additional setup for migrations. Visit https://pris.ly/d/default-index-null-ordering for more info.
-model ev_snapshots {
+model EvSnapshot {
   id              BigInt   @id @default(autoincrement())
   polymarket_id   String
   polymarket_prob Decimal  @db.Decimal
@@ -19,6 +19,7 @@ model ev_snapshots {
   created_at      DateTime @default(now()) @db.Timestamptz(6)
 
   @@index([polymarket_id, created_at(sort: Desc)], map: "ev_snapshots_polymarket_created_idx")
+  @@map("ev_snapshots")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -39,7 +40,7 @@ model market_mappings {
   expires_at              DateTime?            @db.Timestamptz(6)
   created_at              DateTime             @default(now()) @db.Timestamptz(6)
   updated_at              DateTime             @default(now()) @db.Timestamptz(6)
-  market_matches          market_matches?      @relation(fields: [market_match_id], references: [id], onUpdate: NoAction, map: "market_mappings_market_match_id_market_matches_id_fk")
+  market_matches          MarketMatch?           @relation(fields: [market_match_id], references: [id], onUpdate: NoAction, map: "market_mappings_market_match_id_market_matches_id_fk")
   true_probabilities      true_probabilities[]
 
   @@unique([polymarket_token_id, kalshi_ticker], map: "market_mappings_pm_token_kalshi_unique")
@@ -48,7 +49,7 @@ model market_mappings {
   @@index([kalshi_ticker])
 }
 
-model market_matches {
+model MarketMatch {
   id                  BigInt             @id @default(autoincrement())
   polymarket_id       String
   normalized_id       BigInt
@@ -67,6 +68,7 @@ model market_matches {
   @@unique([polymarket_id, normalized_id], map: "market_matches_polymarket_normalized_unique")
   @@index([expires_at])
   @@index([polymarket_id])
+  @@map("market_matches")
 }
 
 model markets_normalized {
@@ -78,7 +80,7 @@ model markets_normalized {
   norm_method     String
   embedding       Unsupported("vector")?
   normalized_at   DateTime               @default(now()) @db.Timestamptz(6)
-  market_matches  market_matches[]
+  market_matches  MarketMatch[]
   markets_raw     markets_raw            @relation(fields: [raw_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "markets_normalized_raw_id_markets_raw_id_fk")
 
   @@index([embedding], map: "markets_normalized_embedding_hnsw_idx")

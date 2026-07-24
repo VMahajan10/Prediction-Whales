@@ -34,6 +34,7 @@ import {
   updateDerivativeAnchorFromPrimary,
 } from "@/lib/evPipeline/derivativePTrue";
 import { appendOddsHistory } from "@/lib/ai/rag/oddsHistoryStore";
+import { createEvSnapshotPrisma } from "@/lib/evPipeline/prismaPersist";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -379,6 +380,23 @@ async function persistMappingPTrue(
   console.info(
     `[ev-pipeline] computePTrue ${tokenId} ↔ ${kalshiTicker}: ensemble_p_true=${pTrue.toFixed(4)} pricing_p_true=${displayPTrue.toFixed(4)} pm_mid=${opts.pmMid?.toFixed(4) ?? "—"} kalshi_mid=${opts.kalshiMid?.toFixed(4) ?? "—"} cross_arb=${crossArbPercent.toFixed(1)}% cached_lookups=${cachedLookups ? 2 : 0} ${opts.logSuffix}`
   );
+
+  await createEvSnapshotPrisma({
+    polymarketTokenId: tokenId,
+    pmMid: opts.pmMid,
+    consensusProb: displayPTrue,
+    netEvPercent: cachedLookups?.pmRecord?.netEvPercent ?? null,
+    contributors: [
+      {
+        source: opts.sourceType,
+        weight: 1,
+        p: pTrue,
+        variance,
+        modelVersion: opts.modelVersion,
+        kalshiTicker,
+      },
+    ],
+  });
 
   return cachedLookups?.pmRecord ?? null;
 }
