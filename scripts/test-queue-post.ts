@@ -6,7 +6,7 @@
  */
 import { randomUUID } from "node:crypto";
 import dotenv from "dotenv";
-import { disconnectPrisma, getPrisma, isPrismaEnabled } from "../lib/prisma";
+import { STAKE_FLOOR_USD } from "../lib/x-agent/gateMetrics";
 
 dotenv.config({ path: ".env.local", override: false });
 dotenv.config({ override: false });
@@ -40,7 +40,7 @@ async function main(): Promise<void> {
         side: "YES",
         entryCents: 45,
         nowCents: 52,
-        stakeNotional: 25_000,
+        stakeNotional: STAKE_FLOOR_USD,
         status: "PENDING_REVIEW",
         reviewToken,
       },

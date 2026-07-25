@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createGateSummary,
+  MIN_WALLET_RESOLVED_BETS,
   recordCredibilityFailureBreakdown,
   recordGateMatrixFailures,
 } from "@/lib/x-agent/gateMetrics";
@@ -19,7 +20,7 @@ describe("recordCredibilityFailureBreakdown", () => {
   it("counts resolved bets and avg EV failures independently", () => {
     const metrics = createGateSummary();
     recordCredibilityFailureBreakdown(metrics, {
-      resolvedBetsCount: 99,
+      resolvedBetsCount: MIN_WALLET_RESOLVED_BETS - 1,
       avgEv: 0.01,
     });
 
@@ -54,7 +55,7 @@ describe("recordGateMatrixFailures", () => {
         passesFreshness: true,
         passesSource: true,
       },
-      { resolvedBetsCount: 99, avgEv: 0.04 }
+      { resolvedBetsCount: MIN_WALLET_RESOLVED_BETS - 1, avgEv: 0.04 }
     );
 
     expect(metrics.failedCredibility).toBe(1);

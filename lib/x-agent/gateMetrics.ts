@@ -1,3 +1,10 @@
+/**
+ * Canonical Shadow Cron post-queue gate thresholds and summary metrics.
+ *
+ * Evaluation logic consumes these constants from `lib/x-agent/gates.ts`.
+ * `scripts/run-shadow-cron.ts` prints the matrix via `printGateSummaryBox()`.
+ */
+
 /** Minimum live trade EV as display percent (+3%). */
 export const HIGH_EV_TRADE_THRESHOLD_PCT = 3;
 
@@ -11,10 +18,13 @@ export const MIN_WALLET_AVG_EV_DECIMAL = 0.025;
 export const MIN_WALLET_AVG_EV_THRESHOLD_PCT =
   MIN_WALLET_AVG_EV_DECIMAL * 100;
 
-/** Minimum resolved bets on wallet registry for credibility. */
-export const MIN_WALLET_RESOLVED_BETS = 100;
+/** Minimum resolved bets on wallet registry for credibility (default 100). */
+export const MIN_WALLET_RESOLVED_BETS = (() => {
+  const parsed = Number(process.env.RESOLVED_BETS_FLOOR);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 100;
+})();
 
-/** Minimum trade stake notional (USD) for post-queue gates. */
+/** Minimum trade stake notional (USD) for post-queue gates (default $10K). */
 export const STAKE_FLOOR_USD = (() => {
   const parsed = Number(process.env.STAKE_FLOOR_USD);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 10_000;
@@ -112,14 +122,14 @@ function formatGateFraction(count: number, total: number, width = 5): string {
   return `${countStr} / ${totalStr}`;
 }
 
-function formatStakeFloorLabel(usd: number): string {
-  if (usd >= 1000 && usd % 1000 === 0) return `$${usd / 1000}k`;
-  return `$${usd.toLocaleString("en-US")}`;
+function formatStakeFloorSummaryLabel(usd: number): string {
+  if (usd >= 1000 && usd % 1000 === 0) return `<$${usd / 1000}k`;
+  return `<$${usd.toLocaleString("en-US")}`;
 }
 
 export function printGateSummaryBox(metrics: GateSummary): void {
   const total = metrics.totalEvaluated;
-  const stakeFloorLabel = formatStakeFloorLabel(STAKE_FLOOR_USD);
+  const stakeFloorSummaryLabel = formatStakeFloorSummaryLabel(STAKE_FLOOR_USD);
   const walletEvLabel = `+${MIN_WALLET_AVG_EV_THRESHOLD_PCT}%`;
   const lines = [
     "==================================================",
@@ -127,11 +137,11 @@ export function printGateSummaryBox(metrics: GateSummary): void {
     "==================================================",
     `Total Trades Evaluated:        ${String(total).padStart(5)}`,
     `❌ Failed Trade EV (<3%):        ${formatGateFraction(metrics.failedEvThreshold, total)}`,
-    `❌ Failed Stake Floor (<${stakeFloorLabel}):   ${formatGateFraction(metrics.failedStakeFloor, total)}`,
+    `❌ Failed Stake Floor (${stakeFloorSummaryLabel}):   ${formatGateFraction(metrics.failedStakeFloor, total)}`,
     `❌ Failed Wallet Credibility:    ${formatGateFraction(metrics.failedCredibility, total)}`,
     `   ❌ Failed Credibility (Missing in DB)   ${formatGateFraction(metrics.failedCredibility_NotInRegistry, total)}`,
-    `   ❌ Failed Credibility (Bets < ${MIN_WALLET_RESOLVED_BETS})      ${formatGateFraction(metrics.failedCredibility_ResolvedBets, total)}`,
-    `   ❌ Failed Credibility (AVG EV < ${walletEvLabel})   ${formatGateFraction(metrics.failedCredibility_AvgEv, total)}`,
+    `   ❌ Failed Credibility (Bets < ${MIN_WALLET_RESOLVED_BETS}):      ${formatGateFraction(metrics.failedCredibility_ResolvedBets, total)}`,
+    `   ❌ Failed Credibility (AVG EV < ${walletEvLabel}):   ${formatGateFraction(metrics.failedCredibility_AvgEv, total)}`,
     `❌ Failed Alignment/Mapping:      ${formatGateFraction(metrics.failedLegibilityOrAlignment, total)}`,
     `❌ Failed Freshness (>10m):       ${formatGateFraction(metrics.failedFreshness, total)}`,
     `❌ Failed Kalshi Source:          ${formatGateFraction(metrics.failedKalshiSource, total)}`,

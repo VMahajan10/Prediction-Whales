@@ -5,6 +5,7 @@ import {
   computeWalletCredibilityStats,
   walletMeetsCredibilityCriteria,
 } from "@/lib/x-agent/walletCredibility";
+import { MIN_WALLET_RESOLVED_BETS } from "@/lib/x-agent/gateMetrics";
 
 describe("walletCredibility", () => {
   it("maps closed positions into resolved bets for avgEv", () => {
@@ -41,10 +42,10 @@ describe("walletCredibility", () => {
 
     expect(
       walletMeetsCredibilityCriteria({
-        resolvedBetsCount: 99,
+        resolvedBetsCount: MIN_WALLET_RESOLVED_BETS - 1,
         avgEv: 0.1,
         winRate: 0.7,
-        closedCount: 99,
+        closedCount: MIN_WALLET_RESOLVED_BETS - 1,
       })
     ).toBe(false);
   });

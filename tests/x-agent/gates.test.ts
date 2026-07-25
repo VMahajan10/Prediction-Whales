@@ -3,6 +3,9 @@ import type { WhaleRegistry } from "@/lib/crossmarket/store/schema";
 import {
   evaluateTradeEligibility,
   evaluateTradeGateMatrix,
+  MIN_AVG_EV,
+  MIN_RESOLVED_BETS,
+  MIN_STAKE_NOTIONAL,
   type TradePayload,
 } from "@/lib/x-agent/gates";
 
@@ -10,8 +13,8 @@ function makeWhale(overrides: Partial<WhaleRegistry> = {}): WhaleRegistry {
   return {
     walletAddress: "0xwhale",
     pseudonym: "DeepWallet",
-    resolvedBetsCount: 500,
-    avgEv: 0.031,
+    resolvedBetsCount: MIN_RESOLVED_BETS,
+    avgEv: MIN_AVG_EV + 0.001,
     winRate: 0.62,
     avgStakeNotional: 20_000,
     postedCount30d: 0,
@@ -26,7 +29,7 @@ function makeTrade(overrides: Partial<TradePayload> = {}): TradePayload {
     source: "polymarket",
     tradeId: `trade-${Math.random().toString(36).slice(2, 10)}`,
     walletAddress: "0xwhale",
-    stakeNotional: 25_000,
+    stakeNotional: MIN_STAKE_NOTIONAL,
     timestamp: Math.floor(Date.now() / 1000),
     entryCents: 50,
     nowCents: 52,
@@ -42,7 +45,7 @@ describe("evaluateTradeGateMatrix", () => {
   it("evaluates trade EV and wallet credibility independently", () => {
     const highTradeLowWallet = evaluateTradeGateMatrix({
       trade: makeTrade(),
-      whale: makeWhale({ resolvedBetsCount: 100, avgEv: 0.01 }),
+      whale: makeWhale({ resolvedBetsCount: MIN_RESOLVED_BETS - 1, avgEv: 0.01 }),
       tradeEvPercent: 5,
     });
     expect(highTradeLowWallet.passesEv).toBe(true);
@@ -65,9 +68,9 @@ describe("evaluateTradeGateMatrix", () => {
     const matrix = evaluateTradeGateMatrix({
       trade: makeTrade({
         source: "kalshi",
-        stakeNotional: 9_999,
+        stakeNotional: MIN_STAKE_NOTIONAL - 1,
       }),
-      whale: makeWhale({ resolvedBetsCount: 100, avgEv: 0.01 }),
+      whale: makeWhale({ resolvedBetsCount: MIN_RESOLVED_BETS - 1, avgEv: 0.01 }),
       tradeEvPercent: 1.5,
     });
 
@@ -107,10 +110,10 @@ describe("evaluateTradeEligibility", () => {
     expect(result.matrix.passesSource).toBe(false);
   });
 
-  it("rejects whales with 99 resolved bets", async () => {
+  it("rejects whales below the resolved-bets floor", async () => {
     const result = await evaluateTradeEligibility(
       makeTrade(),
-      makeWhale({ resolvedBetsCount: 99 }),
+      makeWhale({ resolvedBetsCount: MIN_RESOLVED_BETS - 1 }),
       Date.now(),
       { tradeEvPercent: 5 }
     );
@@ -119,10 +122,10 @@ describe("evaluateTradeEligibility", () => {
     expect(result.matrix.passesCredibility).toBe(false);
   });
 
-  it("rejects whales with +2.4% average EV", async () => {
+  it("rejects whales below the wallet avg EV floor", async () => {
     const result = await evaluateTradeEligibility(
       makeTrade(),
-      makeWhale({ avgEv: 0.024 }),
+      makeWhale({ avgEv: MIN_AVG_EV - 0.001 }),
       Date.now(),
       { tradeEvPercent: 5 }
     );
@@ -131,10 +134,10 @@ describe("evaluateTradeEligibility", () => {
     expect(result.matrix.passesCredibility).toBe(false);
   });
 
-  it("passes the whale EV gate at +2.6% average EV", async () => {
+  it("passes the whale EV gate at the avg EV floor", async () => {
     const result = await evaluateTradeEligibility(
       makeTrade(),
-      makeWhale({ avgEv: 0.026 }),
+      makeWhale({ avgEv: MIN_AVG_EV + 0.001 }),
       Date.now(),
       { tradeEvPercent: 5 }
     );
@@ -146,9 +149,9 @@ describe("evaluateTradeEligibility", () => {
     });
   });
 
-  it("rejects trades below the $10,000 stake floor", async () => {
+  it("rejects trades below the stake floor", async () => {
     const result = await evaluateTradeEligibility(
-      makeTrade({ stakeNotional: 9_999 }),
+      makeTrade({ stakeNotional: MIN_STAKE_NOTIONAL - 1 }),
       makeWhale(),
       Date.now(),
       { tradeEvPercent: 5 }
