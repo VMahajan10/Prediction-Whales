@@ -43,12 +43,14 @@ const PENDING_QUEUE_STATUSES = [
 ] as const;
 
 const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
+const KEEP_ALIVE_INTERVAL_MS = 60_000;
 
 type ShadowMode = "daemon" | "batch" | "backfill";
 
 let daemon: ShadowCronDaemon | null = null;
 let summaryTicker: NodeJS.Timeout | null = null;
 let heartbeatTicker: NodeJS.Timeout | null = null;
+let keepAliveTicker: NodeJS.Timeout | null = null;
 let shuttingDown = false;
 
 function formatTimestamp(date = new Date()): string {
@@ -99,6 +101,11 @@ async function shutdown(signal: string, exitCode = 0): Promise<void> {
     heartbeatTicker = null;
   }
 
+  if (keepAliveTicker) {
+    clearInterval(keepAliveTicker);
+    keepAliveTicker = null;
+  }
+
   if (summaryTicker) {
     clearInterval(summaryTicker);
     summaryTicker = null;
@@ -132,6 +139,13 @@ function startHeartbeat(): void {
   }, HEARTBEAT_INTERVAL_MS);
 }
 
+/** Keep Node process alive indefinitely for continuous 24/7 worker. */
+function startKeepAlive(): void {
+  keepAliveTicker = setInterval(() => {
+    // Keep alive ping
+  }, KEEP_ALIVE_INTERVAL_MS);
+}
+
 async function runBatchShadowPipeline(): Promise<XAgentShadowPipelineResult> {
   const liveOptions = parseLiveShadowOptionsFromEnv();
   console.log(
@@ -158,6 +172,7 @@ async function runDaemon(): Promise<void> {
   daemon = await runShadowCronDaemon(options);
   summaryTicker = daemon.startSummaryTicker();
   startHeartbeat();
+  startKeepAlive();
 
   console.log(
     `[${formatTimestamp()}] [Shadow Cron] worker online — listening indefinitely (SIGINT/SIGTERM to stop)`
