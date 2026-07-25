@@ -193,9 +193,14 @@ model XPostQueue {
 }
 
 model XPostLog {
-  id       String   @id @default(uuid())
-  queueId  String
-  postedAt DateTime @default(now())
-  xPostId  String?
-  status   String
+  id              BigInt   @id @default(autoincrement())
+  tradeId         String   @map("trade_id")
+  gatePassed      Boolean  @map("gate_passed")
+  rejectionReason String?  @map("rejection_reason")
+  payload         Json
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([tradeId, createdAt(sort: Desc)], map: "x_post_log_trade_id_created_idx")
+  @@index([gatePassed, createdAt(sort: Desc)], map: "x_post_log_gate_passed_created_idx")
+  @@map("x_post_log")
 }

@@ -5,11 +5,11 @@
  * `scripts/run-shadow-cron.ts` prints the matrix via `printGateSummaryBox()`.
  */
 
-/** Minimum live trade EV as display percent (+3%). */
-export const HIGH_EV_TRADE_THRESHOLD_PCT = 3;
+/** Minimum live trade EV as display percent (+1.5%). */
+export const HIGH_EV_TRADE_THRESHOLD_PCT = 1.5;
 
-/** Minimum live trade EV as decimal (trade.ev >= 0.03). */
-export const MIN_TRADE_EV_DECIMAL = 0.03;
+/** Minimum live trade EV as decimal (trade.ev >= 0.015). */
+export const MIN_TRADE_EV_DECIMAL = 0.015;
 
 /** Minimum wallet historical avg EV from registry (wallet.avgEv >= 0.025). */
 export const MIN_WALLET_AVG_EV_DECIMAL = 0.025;
@@ -24,10 +24,10 @@ export const MIN_WALLET_RESOLVED_BETS = (() => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 100;
 })();
 
-/** Minimum trade stake notional (USD) for post-queue gates (default $10K). */
+/** Minimum trade stake notional (USD) for post-queue gates (default $1,500). */
 export const STAKE_FLOOR_USD = (() => {
   const parsed = Number(process.env.STAKE_FLOOR_USD);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 10_000;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1_500;
 })();
 
 export interface GateSummary {
@@ -239,6 +239,7 @@ export function printGateSummaryBox(
 ): void {
   const total = metrics.totalEvaluated;
   const stakeFloorSummaryLabel = formatStakeFloorSummaryLabel(STAKE_FLOOR_USD);
+  const tradeEvLabel = `+${HIGH_EV_TRADE_THRESHOLD_PCT}%`;
   const walletEvLabel = `+${MIN_WALLET_AVG_EV_THRESHOLD_PCT}%`;
   const rollingLabel =
     options?.rollingWindow != null
@@ -249,7 +250,7 @@ export function printGateSummaryBox(
     `📊 SHADOW CRON FULL GATE-MATRIX SUMMARY${rollingLabel}`,
     "==================================================",
     `Total Trades Evaluated:        ${String(total).padStart(5)}`,
-    `❌ Failed Trade EV (<3%):        ${formatGateFraction(metrics.failedEvThreshold, total)}`,
+    `❌ Failed Trade EV (<${tradeEvLabel}):        ${formatGateFraction(metrics.failedEvThreshold, total)}`,
     `❌ Failed Stake Floor (${stakeFloorSummaryLabel}):   ${formatGateFraction(metrics.failedStakeFloor, total)}`,
     `❌ Failed Wallet Credibility:    ${formatGateFraction(metrics.failedCredibility, total)}`,
     `   ❌ Failed Credibility (Missing in DB)   ${formatGateFraction(metrics.failedCredibility_NotInRegistry, total)}`,

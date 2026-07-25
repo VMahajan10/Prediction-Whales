@@ -56,11 +56,11 @@ describe("evaluateTradeGateMatrix", () => {
     const lowTradeHighWallet = evaluateTradeGateMatrix({
       trade: makeTrade(),
       whale: makeWhale({ resolvedBetsCount: 600, avgEv: 0.04 }),
-      tradeEvPercent: 1.5,
+      tradeEvPercent: 1.0,
     });
     expect(lowTradeHighWallet.passesEv).toBe(false);
     expect(lowTradeHighWallet.passesCredibility).toBe(true);
-    expect(lowTradeHighWallet.tradeEvDecimal).toBe(0.015);
+    expect(lowTradeHighWallet.tradeEvDecimal).toBe(0.01);
     expect(lowTradeHighWallet.walletAvgEv).toBe(0.04);
   });
 
@@ -71,7 +71,7 @@ describe("evaluateTradeGateMatrix", () => {
         stakeNotional: MIN_STAKE_NOTIONAL - 1,
       }),
       whale: makeWhale({ resolvedBetsCount: MIN_RESOLVED_BETS - 1, avgEv: 0.01 }),
-      tradeEvPercent: 1.5,
+      tradeEvPercent: 1.0,
     });
 
     expect(matrix.passesSource).toBe(false);
@@ -85,7 +85,7 @@ describe("evaluateTradeGateMatrix", () => {
     const matrix = evaluateTradeGateMatrix({
       trade: makeTrade(),
       whale: makeWhale(),
-      tradeEvPercent: 3.5,
+      tradeEvPercent: 2.0,
     });
 
     expect(matrix.passesAll).toBe(true);

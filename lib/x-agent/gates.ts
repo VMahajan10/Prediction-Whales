@@ -52,7 +52,7 @@ export interface TradePayload {
 }
 
 export interface TradeGateMatrix {
-  /** Live trade EV from pipeline (trade.ev >= 0.03). */
+  /** Live trade EV from pipeline (trade.ev >= 0.015). */
   passesEv: boolean;
   passesStake: boolean;
   /** Wallet registry track record (resolvedBets >= 100, avgEv >= 0.025). */
@@ -79,7 +79,7 @@ export interface EvaluateTradeGateMatrixInput {
   trade: TradePayload;
   /** Historical wallet registry row — not seeded from the live trade EV. */
   whale?: WhaleRegistry | null;
-  /** Live trade EV as display percent (+3.0 = +3%). */
+  /** Live trade EV as display percent (+1.5 = +1.5%). */
   tradeEvPercent: number | null;
   nowMs?: number;
 }
@@ -307,8 +307,11 @@ async function logGateFailure(
       payload: trade,
     });
   } catch (error) {
-    console.error("[DB WRITE ERROR]", error);
-    throw error;
+    console.warn("[x-agent/gates] x_post_log insert failed (non-fatal)", {
+      tradeId: trade.tradeId,
+      reason,
+      error: error instanceof Error ? error.message : error,
+    });
   }
 }
 
