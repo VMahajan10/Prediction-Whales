@@ -13,6 +13,8 @@ import {
   type TradePayload,
 } from "@/lib/x-agent/gates";
 import {
+  MIN_WALLET_AVG_EV_DECIMAL,
+  MIN_WALLET_RESOLVED_BETS,
   type GateSummary,
   HIGH_EV_TRADE_THRESHOLD_PCT,
   recordQueuedSuccess,
@@ -22,9 +24,9 @@ import { dispatchAdminReviewAlert } from "@/lib/x-agent/notifications";
 import { generateXPostCopy } from "@/lib/x-agent/templates";
 import {
   ensureWhaleInRegistry,
-  findWhaleByWallet,
   normalizeWalletAddress,
 } from "@/lib/x-agent/whaleRegistryDb";
+import { resolveWhaleForCredibilityGate } from "@/lib/x-agent/walletCredibility";
 
 export { HIGH_EV_TRADE_THRESHOLD_PCT } from "@/lib/x-agent/gateMetrics";
 
@@ -117,9 +119,22 @@ export async function processWhaleTradeForXAgent(
     pipelinePmMid = pipelineEv.pMarket ?? null;
   }
 
-  let whaleForGates: Awaited<ReturnType<typeof findWhaleByWallet>> = null;
+  let whaleForGates: Awaited<
+    ReturnType<typeof resolveWhaleForCredibilityGate>
+  >["whale"] = null;
   if (wallet && isPrismaEnabled()) {
-    whaleForGates = await findWhaleByWallet(normalizeWalletAddress(wallet));
+    const credibility = await resolveWhaleForCredibilityGate(wallet);
+    whaleForGates = credibility.whale;
+    if (credibility.source === "polymarket_api") {
+      console.log(
+        "[x-agent/enqueue] wallet credibility hydrated from Polymarket Data API",
+        {
+          wallet: normalizeWalletAddress(wallet),
+          resolvedBetsCount: credibility.stats?.resolvedBetsCount,
+          avgEv: credibility.stats?.avgEv,
+        }
+      );
+    }
   }
 
   const walletAddress = wallet
@@ -156,7 +171,9 @@ export async function processWhaleTradeForXAgent(
   }
 
   const whaleRegistry =
-    whaleForGates != null
+    whaleForGates != null &&
+    whaleForGates.resolvedBetsCount >= MIN_WALLET_RESOLVED_BETS &&
+    whaleForGates.avgEv >= MIN_WALLET_AVG_EV_DECIMAL
       ? { whale: whaleForGates, created: false }
       : await ensureWhaleInRegistry(normalizeWalletAddress(wallet), {
           avgStakeNotional: trade.usdNotional,

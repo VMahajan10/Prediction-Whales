@@ -14,15 +14,41 @@ export function formatWalletPseudonym(wallet: string): string {
 export async function findWhaleByWallet(
   wallet: string
 ): Promise<WhaleRegistry | null> {
+  return findWhaleByWalletCaseInsensitive(wallet);
+}
+
+/** Case-insensitive wallet lookup (normalized + LOWER() fallback). */
+export async function findWhaleByWalletCaseInsensitive(
+  wallet: string
+): Promise<WhaleRegistry | null> {
   const address = normalizeWalletAddress(wallet);
   if (!address || !isPrismaEnabled()) return null;
 
   const prisma = getPrisma();
   if (!prisma) return null;
 
-  return prisma.whaleRegistry.findUnique({
+  const direct = await prisma.whaleRegistry.findUnique({
     where: { walletAddress: address },
   });
+  if (direct) return direct;
+
+  const rows = await prisma.$queryRaw<WhaleRegistry[]>`
+    SELECT
+      wallet_address AS "walletAddress",
+      pseudonym,
+      resolved_bets_count AS "resolvedBetsCount",
+      avg_ev AS "avgEv",
+      win_rate AS "winRate",
+      avg_stake_notional AS "avgStakeNotional",
+      posted_count_30d AS "postedCount30d",
+      created_at AS "createdAt",
+      updated_at AS "updatedAt"
+    FROM whale_registry
+    WHERE LOWER(wallet_address) = ${address}
+    LIMIT 1
+  `;
+
+  return rows[0] ?? null;
 }
 
 export async function upsertWhaleRegistry(input: {
@@ -43,10 +69,14 @@ export async function upsertWhaleRegistry(input: {
     return await prisma.whaleRegistry.upsert({
       where: { walletAddress: address },
       update: {
+        ...(input.resolvedBetsCount != null
+          ? { resolvedBetsCount: input.resolvedBetsCount }
+          : {}),
         ...(input.avgStakeNotional != null
           ? { avgStakeNotional: input.avgStakeNotional }
           : {}),
         ...(input.avgEv != null ? { avgEv: input.avgEv } : {}),
+        ...(input.winRate != null ? { winRate: input.winRate } : {}),
       },
       create: {
         walletAddress: address,
