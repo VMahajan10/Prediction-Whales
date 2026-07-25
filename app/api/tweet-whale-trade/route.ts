@@ -39,9 +39,11 @@ const recentPostCooldowns = new Map<string, number>();
 let lastTweetAt = 0;
 
 function pruneCooldowns(now = Date.now()): void {
-  for (const [key, expiresAt] of recentPostCooldowns) {
-    if (expiresAt <= now) recentPostCooldowns.delete(key);
-  }
+  recentPostCooldowns.forEach((expiresAt, key) => {
+    if (expiresAt <= now) {
+      recentPostCooldowns.delete(key);
+    }
+  });
 }
 
 function buildDedupKeys(payload: TweetWhaleTradeBody): string[] {
