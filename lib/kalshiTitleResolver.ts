@@ -443,7 +443,7 @@ export async function resolveKalshiTitles(
   tickers: string[],
   concurrency = 8
 ): Promise<Map<string, string>> {
-  const unique = [...new Set(tickers.filter(Boolean))];
+  const unique = Array.from(new Set(tickers.filter(Boolean)));
   const result = new Map<string, string>();
   const toFetch: string[] = [];
 
