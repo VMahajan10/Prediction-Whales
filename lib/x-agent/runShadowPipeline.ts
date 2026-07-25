@@ -25,10 +25,10 @@ export interface XAgentShadowPipelineResult {
 }
 
 /**
- * Warm the EV pipeline, then scan recent whale trades and run each through
- * the x-agent EV gate / registry upsert / XPostQueue enqueue path.
+ * Warm the EV pipeline, then scan recent whale trades from the Polymarket Data API
+ * backfill and run each through the x-agent gate path.
  */
-export async function runXAgentShadowPipeline(): Promise<XAgentShadowPipelineResult> {
+export async function runXAgentBackfillShadowPipeline(): Promise<XAgentShadowPipelineResult> {
   const runId = randomUUID();
   const gateSummary = createGateSummary();
   let evPipelineOk = false;
@@ -124,4 +124,9 @@ export async function runXAgentShadowPipeline(): Promise<XAgentShadowPipelineRes
     gateSummary,
     error: evError,
   };
+}
+
+/** @deprecated Use `runXAgentBackfillShadowPipeline` or `runXAgentLiveShadowPipeline`. */
+export async function runXAgentShadowPipeline(): Promise<XAgentShadowPipelineResult> {
+  return runXAgentBackfillShadowPipeline();
 }

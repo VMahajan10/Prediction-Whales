@@ -29,6 +29,7 @@ jobs:
       - name: Run shadow cron
         run: npx tsx scripts/run-shadow-cron.ts
         env:
+          SHADOW_CRON_MODE: backfill
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}

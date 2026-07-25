@@ -37,7 +37,8 @@
     "test": "vitest run",
     "test:x-agent": "vitest run tests/x-agent",
     "test:watch": "vitest",
-    "shadow:watch": "ts-node --transpile-only --project tsconfig.scripts.json scripts/run-shadow-cron.ts"
+    "shadow:watch": "ts-node --transpile-only --project tsconfig.scripts.json scripts/run-shadow-cron.ts",
+    "start:worker": "prisma generate && ts-node scripts/run-shadow-cron.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.77",

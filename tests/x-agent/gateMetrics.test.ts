@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createGateSummary,
   MIN_WALLET_RESOLVED_BETS,
+  RollingGateMatrixTracker,
   recordCredibilityFailureBreakdown,
   recordGateMatrixFailures,
 } from "@/lib/x-agent/gateMetrics";
@@ -61,5 +62,62 @@ describe("recordGateMatrixFailures", () => {
     expect(metrics.failedCredibility).toBe(1);
     expect(metrics.failedCredibility_ResolvedBets).toBe(1);
     expect(metrics.failedCredibility_AvgEv).toBe(0);
+  });
+});
+
+describe("RollingGateMatrixTracker", () => {
+  it("aggregates rolling gate metrics across trades", () => {
+    const rolling = new RollingGateMatrixTracker(2);
+
+    rolling.recordTradeEvaluated();
+    rolling.recordGateMatrixFailures(
+      {
+        passesEv: false,
+        passesStake: true,
+        passesCredibility: true,
+        passesAlignment: true,
+        passesFreshness: true,
+        passesSource: true,
+      },
+      { resolvedBetsCount: 200, avgEv: 0.05 }
+    );
+    rolling.finalizeTrade();
+
+    rolling.recordTradeEvaluated();
+    rolling.recordGateMatrixFailures(
+      {
+        passesEv: true,
+        passesStake: false,
+        passesCredibility: true,
+        passesAlignment: true,
+        passesFreshness: true,
+        passesSource: true,
+      },
+      { resolvedBetsCount: 200, avgEv: 0.05 }
+    );
+    rolling.recordQueuedSuccess();
+    rolling.finalizeTrade();
+
+    rolling.recordTradeEvaluated();
+    rolling.recordGateMatrixFailures(
+      {
+        passesEv: true,
+        passesStake: true,
+        passesCredibility: false,
+        passesAlignment: true,
+        passesFreshness: true,
+        passesSource: true,
+      },
+      { resolvedBetsCount: 10, avgEv: 0.01 }
+    );
+    rolling.finalizeTrade();
+
+    const summary = rolling.aggregate();
+    expect(summary.totalEvaluated).toBe(2);
+    expect(summary.failedEvThreshold).toBe(0);
+    expect(summary.failedStakeFloor).toBe(1);
+    expect(summary.failedCredibility).toBe(1);
+    expect(summary.queuedSuccessfully).toBe(1);
+    expect(rolling.getWindowSize()).toBe(2);
   });
 });

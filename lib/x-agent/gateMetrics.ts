@@ -116,6 +116,112 @@ export function recordQueuedSuccess(metrics: GateSummary): void {
   metrics.queuedSuccessfully += 1;
 }
 
+/** Collects per-trade gate-matrix metrics for rolling-window aggregation. */
+export interface GateMetricsCollector {
+  recordTradeEvaluated(): void;
+  recordGateMatrixFailures(
+    matrix: GateMatrixCounters,
+    whale?: CredibilityGateWhale | null
+  ): void;
+  recordQueuedSuccess(): void;
+  finalizeTrade(): void;
+}
+
+export function createGateSummaryCollector(
+  summary: GateSummary
+): GateMetricsCollector {
+  return {
+    recordTradeEvaluated: () => recordTradeEvaluated(summary),
+    recordGateMatrixFailures: (matrix, whale) =>
+      recordGateMatrixFailures(summary, matrix, whale),
+    recordQueuedSuccess: () => recordQueuedSuccess(summary),
+    finalizeTrade: () => {},
+  };
+}
+
+function mergeGateSummary(target: GateSummary, source: GateSummary): void {
+  target.totalEvaluated += source.totalEvaluated;
+  target.failedEvThreshold += source.failedEvThreshold;
+  target.failedStakeFloor += source.failedStakeFloor;
+  target.failedCredibility += source.failedCredibility;
+  target.failedCredibility_ResolvedBets +=
+    source.failedCredibility_ResolvedBets;
+  target.failedCredibility_AvgEv += source.failedCredibility_AvgEv;
+  target.failedCredibility_NotInRegistry +=
+    source.failedCredibility_NotInRegistry;
+  target.failedLegibilityOrAlignment += source.failedLegibilityOrAlignment;
+  target.failedFreshness += source.failedFreshness;
+  target.failedKalshiSource += source.failedKalshiSource;
+  target.queuedSuccessfully += source.queuedSuccessfully;
+}
+
+export class RollingGateMatrixTracker implements GateMetricsCollector {
+  private readonly ring: GateSummary[] = [];
+  private tradeMetrics: GateSummary | null = null;
+
+  constructor(private readonly maxSize = 1000) {}
+
+  recordTradeEvaluated(): void {
+    recordTradeEvaluated(this.active());
+  }
+
+  recordGateMatrixFailures(
+    matrix: GateMatrixCounters,
+    whale?: CredibilityGateWhale | null
+  ): void {
+    recordGateMatrixFailures(this.active(), matrix, whale);
+  }
+
+  recordQueuedSuccess(): void {
+    recordQueuedSuccess(this.active());
+  }
+
+  finalizeTrade(): void {
+    if (!this.tradeMetrics) return;
+    this.ring.push(this.tradeMetrics);
+    if (this.ring.length > this.maxSize) {
+      this.ring.shift();
+    }
+    this.tradeMetrics = null;
+  }
+
+  aggregate(): GateSummary {
+    const total = createGateSummary();
+    for (const entry of this.ring) {
+      mergeGateSummary(total, entry);
+    }
+    if (this.tradeMetrics) {
+      mergeGateSummary(total, this.tradeMetrics);
+    }
+    return total;
+  }
+
+  getWindowSize(): number {
+    return this.ring.length + (this.tradeMetrics ? 1 : 0);
+  }
+
+  private active(): GateSummary {
+    if (!this.tradeMetrics) {
+      this.tradeMetrics = createGateSummary();
+    }
+    return this.tradeMetrics;
+  }
+}
+
+export function resolveGateMetricsCollector(
+  metrics?: GateSummary | GateMetricsCollector
+): GateMetricsCollector | undefined {
+  if (!metrics) return undefined;
+  if (
+    typeof metrics === "object" &&
+    "finalizeTrade" in metrics &&
+    typeof metrics.finalizeTrade === "function"
+  ) {
+    return metrics as GateMetricsCollector;
+  }
+  return createGateSummaryCollector(metrics as GateSummary);
+}
+
 function formatGateFraction(count: number, total: number, width = 5): string {
   const countStr = String(count).padStart(width);
   const totalStr = String(total).padStart(width);
@@ -127,13 +233,20 @@ function formatStakeFloorSummaryLabel(usd: number): string {
   return `<$${usd.toLocaleString("en-US")}`;
 }
 
-export function printGateSummaryBox(metrics: GateSummary): void {
+export function printGateSummaryBox(
+  metrics: GateSummary,
+  options?: { rollingWindow?: number }
+): void {
   const total = metrics.totalEvaluated;
   const stakeFloorSummaryLabel = formatStakeFloorSummaryLabel(STAKE_FLOOR_USD);
   const walletEvLabel = `+${MIN_WALLET_AVG_EV_THRESHOLD_PCT}%`;
+  const rollingLabel =
+    options?.rollingWindow != null
+      ? ` (rolling last ${options.rollingWindow})`
+      : "";
   const lines = [
     "==================================================",
-    "📊 SHADOW CRON FULL GATE-MATRIX SUMMARY",
+    `📊 SHADOW CRON FULL GATE-MATRIX SUMMARY${rollingLabel}`,
     "==================================================",
     `Total Trades Evaluated:        ${String(total).padStart(5)}`,
     `❌ Failed Trade EV (<3%):        ${formatGateFraction(metrics.failedEvThreshold, total)}`,

@@ -16,7 +16,9 @@ import {
   MIN_WALLET_AVG_EV_DECIMAL,
   MIN_WALLET_RESOLVED_BETS,
   type GateSummary,
+  type GateMetricsCollector,
   HIGH_EV_TRADE_THRESHOLD_PCT,
+  resolveGateMetricsCollector,
   recordQueuedSuccess,
   recordTradeEvaluated,
 } from "@/lib/x-agent/gateMetrics";
@@ -101,10 +103,11 @@ function buildTradePayload(
  */
 export async function processWhaleTradeForXAgent(
   trade: WhaleTrade,
-  metrics?: GateSummary
+  metrics?: GateSummary | GateMetricsCollector
 ): Promise<void> {
-  if (metrics) {
-    recordTradeEvaluated(metrics);
+  const metricsCollector = resolveGateMetricsCollector(metrics);
+  if (metricsCollector) {
+    metricsCollector.recordTradeEvaluated();
   }
 
   const wallet = trade.proxyWallet?.trim();
@@ -148,7 +151,7 @@ export async function processWhaleTradeForXAgent(
     payload,
     whaleForGates,
     Date.now(),
-    { tradeEvPercent, metrics }
+    { tradeEvPercent, metrics: metricsCollector ?? metrics }
   );
 
   if (!eligibility.matrix.passesAll || !eligibility.translation) {
@@ -220,8 +223,14 @@ export async function processWhaleTradeForXAgent(
     throw error;
   }
 
-  console.log("[SUCCESS: Queued] Trade added to x_post_queue");
-  if (metrics) recordQueuedSuccess(metrics);
+  console.log(
+    `[QUEUED TO X_POST_QUEUE] Trade ID: ${payload.tradeId} | Whale: ${whaleRegistry.whale.pseudonym} | Stake: $${Math.round(payload.stakeNotional).toLocaleString("en-US")}`
+  );
+  if (metricsCollector) {
+    metricsCollector.recordQueuedSuccess();
+  } else if (metrics) {
+    recordQueuedSuccess(metrics as GateSummary);
+  }
 
   void dispatchAdminReviewAlert(queued as XPostQueue).catch((err) => {
     console.error("[x-agent/enqueue] admin alert failed", {

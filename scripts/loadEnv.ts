@@ -5,13 +5,25 @@ function isCiEnvironment(): boolean {
   return process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true";
 }
 
+function isCloudWorkerEnvironment(): boolean {
+  return (
+    process.env.CLOUD_WORKER === "1" ||
+    Boolean(process.env.RAILWAY_ENVIRONMENT) ||
+    Boolean(process.env.RENDER) ||
+    Boolean(process.env.FLY_APP_NAME) ||
+    Boolean(process.env.VERCEL) ||
+    process.env.NODE_ENV === "production"
+  );
+}
+
 /**
  * Load `.env` then `.env.local` for local/script runs.
- * Skips entirely in CI where `process.env` is already populated (e.g. GitHub Actions secrets).
- * Never overwrites variables already set in the environment (`override: false` semantics).
+ * Skips file loading in CI and typical cloud worker hosts where `process.env`
+ * is already populated by the platform. Never overwrites variables already
+ * set in the environment (`override: false` semantics).
  */
 export function loadEnvFiles(): void {
-  if (isCiEnvironment()) return;
+  if (isCiEnvironment() || isCloudWorkerEnvironment()) return;
 
   for (const file of [".env", ".env.local"]) {
     const path = join(process.cwd(), file);

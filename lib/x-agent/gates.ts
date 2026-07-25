@@ -11,7 +11,8 @@ import {
   MIN_WALLET_RESOLVED_BETS,
   STAKE_FLOOR_USD,
   type GateSummary,
-  recordGateMatrixFailures,
+  type GateMetricsCollector,
+  resolveGateMetricsCollector,
 } from "@/lib/x-agent/gateMetrics";
 import {
   translateMarketAndSide,
@@ -85,7 +86,7 @@ export interface EvaluateTradeGateMatrixInput {
 
 export interface TradeEligibilityOptions {
   tradeEvPercent?: number | null;
-  metrics?: GateSummary;
+  metrics?: GateSummary | GateMetricsCollector;
 }
 
 export const MIN_RESOLVED_BETS = MIN_WALLET_RESOLVED_BETS;
@@ -332,8 +333,9 @@ export async function evaluateTradeEligibility(
 
   logGateMatrix(trade, whale, options?.tradeEvPercent ?? null, matrix, nowMs);
 
-  if (options?.metrics) {
-    recordGateMatrixFailures(options.metrics, matrix, whale);
+  const metricsCollector = resolveGateMetricsCollector(options?.metrics);
+  if (metricsCollector) {
+    metricsCollector.recordGateMatrixFailures(matrix, whale);
   }
 
   if (!matrix.passesAll) {
