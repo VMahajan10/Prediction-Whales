@@ -195,11 +195,11 @@ function logGateMatrix(
       `[Pass: Wallet Credibility] Registry track record: resolved bets (${whale.resolvedBetsCount}) >= ${MIN_WALLET_RESOLVED_BETS}, wallet avg EV (${formatWalletEvPct(whale.avgEv)}%) >= +${HIGH_EV_TRADE_THRESHOLD_PCT}%`
     );
   } else {
-    const resolvedBets = whale?.resolvedBetsCount ?? 0;
-    const avgEv = whale?.avgEv ?? 0;
-    console.log(
-      `[Credibility Check Failed] Wallet: ${trade.walletAddress} | Resolved Bets: ${resolvedBets} (Req: >=${MIN_WALLET_RESOLVED_BETS}) | AVG EV: ${(avgEv * 100).toFixed(1)}% (Req: >=${HIGH_EV_TRADE_THRESHOLD_PCT}%)`
-    );
+    console.log("[Credibility Fail]", {
+      wallet: trade.walletAddress,
+      resolvedBets: whale?.resolvedBetsCount ?? "NOT_IN_DB",
+      avgEv: whale?.avgEv ?? "N/A",
+    });
   }
 
   if (matrix.passesAlignment && matrix.translation) {
