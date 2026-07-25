@@ -97,6 +97,7 @@ async function resolveMappingEnsemblePTrue(params: {
     fetchEnsemble: true,
     fetchExchangeConsensus: true,
     computeEnsembleIfMissing: params.computeEnsembleIfMissing ?? true,
+    computeRagIfMissing: true,
   });
 }
 

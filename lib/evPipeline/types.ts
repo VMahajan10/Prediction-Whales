@@ -82,6 +82,10 @@ export interface PipelineTradeEvInput {
   tokenId?: string;
   kalshiTicker?: string;
   tradePrice?: number;
+  /** Market question/title for OpenAI ensemble fallback when consensus mapping fails. */
+  title?: string;
+  /** Polymarket slug for sportsbook / RAG context. */
+  slug?: string;
 }
 
 export type PipelineTradeEvStatus = "ok" | "unmapped" | "error";

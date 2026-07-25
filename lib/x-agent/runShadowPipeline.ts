@@ -7,6 +7,10 @@ import {
 } from "@/lib/evPipeline/redisCache";
 import { tradeToWhale } from "@/lib/whaleTrades";
 import { processWhaleTradeForXAgent } from "@/lib/x-agent/enqueueWhaleTrade";
+import {
+  createGateSummary,
+  type GateSummary,
+} from "@/lib/x-agent/gateMetrics";
 
 export const EV_PIPELINE_LOCK_HELD_MESSAGE =
   "EV pipeline lock held — skipped EV warm-up";
@@ -16,6 +20,7 @@ export interface XAgentShadowPipelineResult {
   whalesFetched: number;
   whalesProcessed: number;
   whalesFailed: number;
+  gateSummary: GateSummary;
   error?: string;
 }
 
@@ -25,6 +30,7 @@ export interface XAgentShadowPipelineResult {
  */
 export async function runXAgentShadowPipeline(): Promise<XAgentShadowPipelineResult> {
   const runId = randomUUID();
+  const gateSummary = createGateSummary();
   let evPipelineOk = false;
   let evError: string | undefined;
 
@@ -60,6 +66,7 @@ export async function runXAgentShadowPipeline(): Promise<XAgentShadowPipelineRes
       whalesFetched: 0,
       whalesProcessed: 0,
       whalesFailed: 0,
+      gateSummary,
       error: EV_PIPELINE_LOCK_HELD_MESSAGE,
     };
   }
@@ -77,6 +84,7 @@ export async function runXAgentShadowPipeline(): Promise<XAgentShadowPipelineRes
       whalesFetched: 0,
       whalesProcessed: 0,
       whalesFailed: 0,
+      gateSummary,
       error:
         evError ??
         (err instanceof Error ? err.message : "Failed to fetch whale trades"),
@@ -96,7 +104,7 @@ export async function runXAgentShadowPipeline(): Promise<XAgentShadowPipelineRes
     });
 
     try {
-      await processWhaleTradeForXAgent(whale);
+      await processWhaleTradeForXAgent(whale, gateSummary);
       whalesProcessed += 1;
     } catch (err) {
       whalesFailed += 1;
@@ -113,6 +121,7 @@ export async function runXAgentShadowPipeline(): Promise<XAgentShadowPipelineRes
     whalesFetched: trades.length,
     whalesProcessed,
     whalesFailed,
+    gateSummary,
     error: evError,
   };
 }

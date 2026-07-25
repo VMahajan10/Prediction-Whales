@@ -10,6 +10,7 @@ import {
   EV_PIPELINE_LOCK_HELD_MESSAGE,
   runXAgentShadowPipeline,
 } from "../lib/x-agent/runShadowPipeline";
+import { printGateSummaryBox } from "../lib/x-agent/gateMetrics";
 import { disconnectPrisma, getPrisma } from "../lib/prisma";
 
 console.log('[DEBUG] OPENAI_API_KEY present:', Boolean(process.env.OPENAI_API_KEY));
@@ -61,6 +62,7 @@ async function runCron(): Promise<void> {
 
     if (result.error === EV_PIPELINE_LOCK_HELD_MESSAGE) {
       console.warn("[Shadow Cron] Lock held, skipping run");
+      printGateSummaryBox(result.gateSummary);
       await shutdown(0);
       return;
     }
@@ -102,6 +104,8 @@ async function runCron(): Promise<void> {
         `[${formatTimestamp()}] [Shadow Cron] warning: run completed with partial status${result.error ? ` | error=${result.error}` : ""}${result.whalesFailed > 0 ? ` | whalesFailed=${result.whalesFailed}` : ""}${!result.evPipelineOk ? " | evPipeline=error" : ""}`
       );
     }
+
+    printGateSummaryBox(result.gateSummary);
   } catch (error) {
     console.error("[Shadow Cron] Error executing pipeline:", error);
     exitCode = 1;

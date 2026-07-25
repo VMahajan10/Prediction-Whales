@@ -12,7 +12,7 @@ import {
   lookupExchangeConsensusBaseline,
 } from "@/lib/evPipeline/exchangeConsensusArb";
 import { resolveEnsemblePTrue } from "@/lib/evPipeline/ensemblePTrue";
-import { resolvePTrueSync } from "@/lib/evPipeline/pTrueEnsembleResolver";
+import { resolvePTrue } from "@/lib/evPipeline/pTrueEnsembleResolver";
 import type { PTrueSource } from "@/lib/evPipeline/pTrueTypes";
 
 export interface ResolvedYesNoQuotes {
@@ -147,9 +147,7 @@ export async function resolveVenueYesNoQuotes(params: {
     ? resolveEnsemblePTrue(tokenForPTrue)
     : Promise.resolve(null);
   const baselinePromise =
-    params.venue === "polymarket" &&
-    tokenForPTrue &&
-    (params.slug || params.title)
+    params.venue === "polymarket" && tokenForPTrue
       ? lookupExchangeConsensusBaseline({
           tokenId: tokenForPTrue,
           slug: params.slug ?? undefined,
@@ -165,17 +163,25 @@ export async function resolveVenueYesNoQuotes(params: {
   const fromOb = derivePartialYesNoAsksFromOrderBook(ob);
 
   const exchangeMid = baseline
-    ? Math.round(((baseline.yesBid + baseline.yesAsk) / 2) * 10000) / 10000
+    ? baseline.ensemblePTrue ??
+      Math.round(((baseline.yesBid + baseline.yesAsk) / 2) * 10000) / 10000
     : null;
-  const resolvedPTrue = resolvePTrueSync({
+  const resolvedPTrue = await resolvePTrue({
     mappingPairKey: null,
     platform: params.venue,
+    tokenId: tokenForPTrue,
+    title: params.title ?? undefined,
+    slug: params.slug ?? undefined,
     pmOb: params.venue === "polymarket" ? ob : null,
     kalshiOb: params.venue === "kalshi" ? ob : null,
     pmMid: params.pmMid,
     exchangeMid,
     executionPrice: params.tradePrice,
-    ensemblePTrue,
+    ensemblePTrue: ensemblePTrue ?? baseline?.ensemblePTrue ?? null,
+    fetchEnsemble: true,
+    fetchExchangeConsensus: params.venue === "polymarket",
+    computeEnsembleIfMissing: true,
+    computeRagIfMissing: true,
   });
   return completeYesNoQuoteCandidates({
     venue: params.venue,

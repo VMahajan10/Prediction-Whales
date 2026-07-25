@@ -10,6 +10,9 @@ import {
   getEnrichedConsensusIndex,
 } from "@/lib/evPipeline/consensusIndexBuilder";
 import {
+  resolveEnsemblePTrueWithLlmFallback,
+} from "@/lib/evPipeline/ensemblePricingFallback";
+import {
   buildLooseParsedGameKey,
   fuzzyTeamTokenFromLabel,
   isSportsMarketProbe,
@@ -403,9 +406,11 @@ export interface ExchangeConsensusBaseline {
   label: string;
   bookmakerCount: number;
   quoteUpdatedAt: number | null;
-  source: "sportsbook";
+  source: "sportsbook" | "ensemble";
   /** True when prices were derived by inverting the opposing team's book. */
   invertedFromOpposing?: boolean;
+  /** Present when `source` is `"ensemble"` (OpenAI RAG ensemble p_true). */
+  ensemblePTrue?: number | null;
 }
 
 export interface ResolvedPmOutcome {
@@ -588,6 +593,126 @@ function resolveMatchIdFromTitle(
 
 function roundProb(value: number): number {
   return Math.round(value * 10000) / 10000;
+}
+
+function clampProb(value: number): number {
+  return Math.min(0.99, Math.max(0.01, value));
+}
+
+const ENSEMBLE_BASELINE_HALF_SPREAD = 0.005;
+
+function buildEnsembleConsensusBaseline(
+  ensemblePTrue: number,
+  params: {
+    tokenId?: string | null;
+    slug?: string | null;
+    title?: string | null;
+    outcomeName?: string | null;
+  }
+): ExchangeConsensusBaseline {
+  const pTrue = roundProb(clampProb(ensemblePTrue));
+  const yesBid = roundProb(clampProb(pTrue - ENSEMBLE_BASELINE_HALF_SPREAD));
+  const yesAsk = roundProb(clampProb(pTrue + ENSEMBLE_BASELINE_HALF_SPREAD));
+  const tokenId = params.tokenId?.trim() || null;
+  const slug = params.slug?.trim() || null;
+  const matchId = slug
+    ? `ensemble:${slug}`
+    : tokenId
+      ? `ensemble:${tokenId}`
+      : "ensemble:unknown";
+
+  return {
+    matchId,
+    outcome: "team_a",
+    outcomePm: null,
+    outcomeLabel: params.outcomeName?.trim() || null,
+    yesBid,
+    yesAsk,
+    label: "OpenAI ensemble",
+    bookmakerCount: 0,
+    quoteUpdatedAt: Math.floor(Date.now() / 1000),
+    source: "ensemble",
+    ensemblePTrue: pTrue,
+  };
+}
+
+/**
+ * When sportsbook PM-outcome alignment fails, resolve p_true via cached ensemble
+ * or live OpenAI RAG ensemble (OPENAI_API_KEY).
+ */
+async function resolveEnsembleFallbackBaseline(params: {
+  tokenId?: string | null;
+  slug?: string | null;
+  title?: string | null;
+  outcomeName?: string | null;
+}): Promise<ExchangeConsensusBaseline | null> {
+  const tokenId = params.tokenId?.trim().toLowerCase() || null;
+  const slug = params.slug?.trim() || null;
+  const title = params.title?.trim() || null;
+  const outcomeName = params.outcomeName?.trim() || null;
+
+  const resolved = await resolveEnsemblePTrueWithLlmFallback(
+    {
+      tokenId,
+      slug,
+      title,
+    },
+    { logPrefix: "[exchangeConsensusArb]" }
+  );
+
+  if (resolved == null || !Number.isFinite(resolved.pTrue)) {
+    return null;
+  }
+
+  return buildEnsembleConsensusBaseline(resolved.pTrue, {
+    tokenId,
+    slug,
+    title,
+    outcomeName,
+  });
+}
+
+async function tryEnsembleBaselineFallback(
+  params: {
+    tokenId?: string | null;
+    slug?: string | null;
+    title?: string | null;
+    outcomeName?: string | null;
+  },
+  reason: string,
+  context: Record<string, unknown> = {}
+): Promise<ExchangeConsensusBaseline | null> {
+  console.warn(`[exchangeConsensusArb] ${reason} — trying OpenAI ensemble fallback`, {
+    tokenId: params.tokenId ?? null,
+    slug: params.slug ?? null,
+    title: params.title ?? null,
+    outcomeName: params.outcomeName ?? null,
+    ...context,
+  });
+
+  const ensembleBaseline = await resolveEnsembleFallbackBaseline(params);
+  if (!ensembleBaseline) {
+    console.warn(
+      "[exchangeConsensusArb] ensemble fallback unavailable — refusing baseline",
+      {
+        tokenId: params.tokenId ?? null,
+        slug: params.slug ?? null,
+        title: params.title ?? null,
+        outcomeName: params.outcomeName ?? null,
+        ...context,
+      }
+    );
+    return null;
+  }
+
+  console.log("[exchangeConsensusArb] ensemble fallback baseline", {
+    tokenId: params.tokenId ?? null,
+    slug: params.slug ?? null,
+    ensemblePTrue: ensembleBaseline.ensemblePTrue,
+    yesBid: ensembleBaseline.yesBid,
+    yesAsk: ensembleBaseline.yesAsk,
+  });
+  return ensembleBaseline;
 }
 
 function getOpposingOutcome(outcome: OutcomeSide): OutcomeSide | null {
@@ -1074,14 +1199,16 @@ export async function lookupExchangeConsensusBaseline(params: {
   }
 
   if (!pmOutcome) {
-    console.warn("[exchangeConsensusArb] no PM outcome resolved — refusing misaligned baseline", {
-      tokenId: params.tokenId ?? null,
-      slug,
-      title,
-      outcomeName,
-      indexSize: index.size,
-    });
-    return null;
+    return tryEnsembleBaselineFallback(
+      {
+        tokenId: params.tokenId,
+        slug,
+        title,
+        outcomeName,
+      },
+      "no PM outcome resolved",
+      { indexSize: index.size }
+    );
   }
 
   const aligned = resolveSportsbookForPmOutcome(index, pmOutcome);
@@ -1106,15 +1233,20 @@ export async function lookupExchangeConsensusBaseline(params: {
     return cachedBaseline;
   }
 
-  console.warn("[exchangeConsensusArb] no aligned sportsbook for PM outcome", {
-    tokenId: params.tokenId ?? null,
-    slug,
-    title,
-    pmOutcome,
-    indexSize: index.size,
-    sportsbookOddsEnabled: isSportsbookOddsEnabled(),
-  });
-  return null;
+  return tryEnsembleBaselineFallback(
+    {
+      tokenId: params.tokenId,
+      slug,
+      title,
+      outcomeName,
+    },
+    "no aligned sportsbook for PM outcome",
+    {
+      pmOutcome,
+      indexSize: index.size,
+      sportsbookOddsEnabled: isSportsbookOddsEnabled(),
+    }
+  );
 }
 
 export function exchangeBaselineToYesNoAsks(

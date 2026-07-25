@@ -5,6 +5,8 @@ import {
   xPostLog,
   xPostQueue,
 } from "@/lib/crossmarket/store/schema";
+import { recordGateRejection } from "@/lib/x-agent/gateMetrics";
+import type { GateSummary } from "@/lib/x-agent/gateMetrics";
 import {
   translateMarketAndSide,
   type RawPolymarketTrade,
@@ -50,6 +52,8 @@ export interface TradeEligibilityResult {
 export interface TradeEligibilityOptions {
   /** Skip registry track-record gates for wallets auto-registered from a high-EV trade. */
   skipWhaleStatGates?: boolean;
+  /** Optional run-scoped counters for shadow cron / pipeline metrics. */
+  metrics?: GateSummary;
 }
 
 const MIN_RESOLVED_BETS = 500;
@@ -140,8 +144,12 @@ async function logGateFailure(
 
 async function reject(
   trade: TradePayload,
-  reason: GateRejectionReason
+  reason: GateRejectionReason,
+  metrics?: TradeEligibilityOptions["metrics"]
 ): Promise<TradeEligibilityResult> {
+  if (metrics) {
+    recordGateRejection(metrics, reason);
+  }
   await logGateFailure(trade, reason);
   return { eligible: false, reason };
 }
@@ -212,7 +220,7 @@ export async function evaluateTradeEligibility(
 
   if (trade.source !== "polymarket") {
     logSourceSkip();
-    return reject(trade, "KALSHI_SOURCE_REJECTED");
+    return reject(trade, "KALSHI_SOURCE_REJECTED", options?.metrics);
   }
   console.log("[Pass: Source] Polymarket trade");
 
@@ -226,7 +234,8 @@ export async function evaluateTradeEligibility(
         trade,
         whale.resolvedBetsCount < MIN_RESOLVED_BETS
           ? "BELOW_RESOLVED_BETS"
-          : "LOW_EV"
+          : "LOW_EV",
+        options?.metrics
       );
     }
     logCredibilityPass(whale);
@@ -238,7 +247,7 @@ export async function evaluateTradeEligibility(
 
   if (trade.stakeNotional < MIN_STAKE_NOTIONAL) {
     logStakeSkip(trade.stakeNotional);
-    return reject(trade, "BELOW_STAKE_FLOOR");
+    return reject(trade, "BELOW_STAKE_FLOOR", options?.metrics);
   }
   console.log(
     `[Pass: Stake] ${formatStake(trade.stakeNotional)} >= $25,000 threshold`
@@ -250,7 +259,7 @@ export async function evaluateTradeEligibility(
     console.log(
       `[Skip: Stale] Trade age (${ageMin}m) > ${MAX_TRADE_AGE_MS / 60_000}m threshold`
     );
-    return reject(trade, "STALE_TRADE");
+    return reject(trade, "STALE_TRADE", options?.metrics);
   }
   console.log(
     `[Pass: Freshness] Trade age (${Math.round(tradeAgeMs / 60_000)}m) within ${MAX_TRADE_AGE_MS / 60_000}m window`
@@ -261,14 +270,14 @@ export async function evaluateTradeEligibility(
     console.log(
       `[Skip: Line Drift] ${lineDrift}¢ drift > ${MAX_LINE_DRIFT_CENTS}¢ threshold`
     );
-    return reject(trade, "LINE_DRIFT_EXCEEDED");
+    return reject(trade, "LINE_DRIFT_EXCEEDED", options?.metrics);
   }
   console.log(`[Pass: Line Drift] ${lineDrift}¢ <= ${MAX_LINE_DRIFT_CENTS}¢`);
 
   const translation = translateMarketAndSide(toRawPolymarketTrade(trade));
   if (!translation) {
     logLegibilitySkip();
-    return reject(trade, "ILLEGIBLE_MARKET");
+    return reject(trade, "ILLEGIBLE_MARKET", options?.metrics);
   }
   console.log(
     `[Pass: Legibility] Translated to "${translation.side}" on "${translation.marketPlain}"`
@@ -276,7 +285,7 @@ export async function evaluateTradeEligibility(
 
   if (await hasDuplicateTrade(trade.tradeId)) {
     console.log("[Skip: Duplicate] Trade already queued or logged");
-    return reject(trade, "DUPLICATE_TRADE");
+    return reject(trade, "DUPLICATE_TRADE", options?.metrics);
   }
   console.log("[Pass: Duplicate] No prior queue/log entry for trade");
 
@@ -284,7 +293,7 @@ export async function evaluateTradeEligibility(
     console.log(
       `[Skip: Recent Post] Market "${trade.marketSlug}" posted within ${MARKET_DEDUPE_WINDOW_MS / 60_000}m`
     );
-    return reject(trade, "RECENT_MARKET_POST");
+    return reject(trade, "RECENT_MARKET_POST", options?.metrics);
   }
   console.log("[Pass: Recent Post] No recent queue entry for market slug");
 

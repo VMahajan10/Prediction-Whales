@@ -113,6 +113,8 @@ export async function createLowConfidencePipelineTradeEv(
     platform,
     tokenId,
     kalshiTicker,
+    title: item.title,
+    slug: item.slug,
     pmOb: books.pmOb,
     kalshiOb: books.kalshiOb,
     pmMid: books.pmMid,
@@ -125,8 +127,8 @@ export async function createLowConfidencePipelineTradeEv(
         : null,
     fetchEnsemble: true,
     fetchExchangeConsensus: platform === "polymarket" && exchangeMid == null,
-    computeRagIfMissing:
-      mapping?.pTrue == null || !Number.isFinite(mapping.pTrue),
+    computeEnsembleIfMissing: true,
+    computeRagIfMissing: true,
   });
 
   return attachAverageEvField(
@@ -419,53 +421,13 @@ async function syncComputePricingEv(
     ? enrichPipelineEvInputFromMapping(item, mapping)
     : await enrichInputFromMappingCache(item);
 
-  let tokenId = normalizePmTokenId(enriched.tokenId);
-  let kalshiTicker = normalizeKalshiTicker(enriched.kalshiTicker);
-
-  if (enriched.source === "kalshi" && kalshiTicker && !tokenId) {
-    tokenId = normalizePmTokenId(await resolvePmTokenForKalshi(kalshiTicker));
-  }
-
-  if (!tokenId && !kalshiTicker) return null;
-
-  const books = await loadOrderBookContext(tokenId, kalshiTicker);
-  const executionPrice = normalizeIncomingTradePrice(enriched.tradePrice);
-  const mappingPairKey =
-    tokenId && kalshiTicker
-      ? pipelineMappingPairKey(tokenId, kalshiTicker)
-      : null;
-  const exchangeMid = await resolveSportsExchangeMid(
+  const result = await resolveTradeEvViaEnsemblePricing(
+    lookupKey,
     enriched,
-    tokenId,
-    mappingPairKey,
-    books
-  );
-  const { ensemblePTrue, marketPrior } = await loadEnsemblePricingContext(
-    tokenId,
-    books,
     mapping
   );
+  if (!result) return null;
 
-  const priced = buildPipelineTradeEvFromPricing({
-    lookupKey,
-    platform: enriched.source,
-    tokenId,
-    kalshiTicker,
-    mappingPairKey,
-    pmOb: books.pmOb,
-    kalshiOb: books.kalshiOb,
-    pmMid: books.pmMid,
-    kalshiMid: books.kalshiMid,
-    exchangeMid,
-    executionPrice: enriched.tradePrice,
-    ensemblePTrue,
-    baselinePTrue: ensemblePTrue,
-    marketPrior,
-  });
-
-  const result = attachAverageEvField(
-    finalizePipelineTradeEv(priced, lookupKey)
-  );
   await cacheTradeEvLookup(lookupKey, result);
   return result;
 }
@@ -745,6 +707,64 @@ async function enrichInputFromMappingCache(
   return enrichPipelineEvInputFromMapping(input, mapping);
 }
 
+async function resolveTradeEvViaEnsemblePricing(
+  lookupKey: string,
+  enriched: PipelineTradeEvInput,
+  mapping?: CachedMapping | null
+): Promise<PipelineTradeEv | null> {
+  let tokenId = normalizePmTokenId(enriched.tokenId);
+  let kalshiTicker = normalizeKalshiTicker(enriched.kalshiTicker);
+
+  if (enriched.source === "kalshi" && kalshiTicker && !tokenId) {
+    tokenId = normalizePmTokenId(await resolvePmTokenForKalshi(kalshiTicker));
+  }
+
+  if (!tokenId && !kalshiTicker) return null;
+
+  const books = await loadOrderBookContext(tokenId, kalshiTicker);
+  const platform: EvPlatform =
+    enriched.source === "kalshi" ? "kalshi" : "polymarket";
+  const mappingPairKey =
+    tokenId && kalshiTicker
+      ? pipelineMappingPairKey(tokenId, kalshiTicker)
+      : null;
+
+  const pTrueResult = await resolvePTrue({
+    mappingPairKey,
+    platform,
+    tokenId,
+    kalshiTicker,
+    title: enriched.title,
+    slug: enriched.slug,
+    pmOb: books.pmOb,
+    kalshiOb: books.kalshiOb,
+    pmMid: books.pmMid,
+    kalshiMid: books.kalshiMid,
+    executionPrice: enriched.tradePrice,
+    ensemblePTrue:
+      mapping?.pTrue != null && Number.isFinite(mapping.pTrue)
+        ? mapping.pTrue
+        : null,
+    fetchEnsemble: true,
+    fetchExchangeConsensus: platform === "polymarket",
+    computeEnsembleIfMissing: true,
+    computeRagIfMissing: true,
+  });
+
+  return attachAverageEvField(
+    finalizePipelineTradeEv(
+      buildPipelineTradeEvFromPTrue(lookupKey, pTrueResult, {
+        platform,
+        tokenId,
+        kalshiTicker,
+        mappingPairKey,
+        executionPrice: enriched.tradePrice,
+      }),
+      lookupKey
+    )
+  );
+}
+
 async function resolveSportsExchangeMid(
   input: PipelineTradeEvInput,
   tokenId: string | null,
@@ -764,7 +784,11 @@ async function resolveSportsExchangeMid(
     }
   }
 
-  const baseline = await lookupExchangeConsensusBaseline({ tokenId });
+  const baseline = await lookupExchangeConsensusBaseline({
+    tokenId,
+    slug: input.slug,
+    title: input.title,
+  });
   if (!baseline) return null;
   return Math.round(((baseline.yesBid + baseline.yesAsk) / 2) * 10000) / 10000;
 }
@@ -836,11 +860,6 @@ export async function resolvePipelineTradeEv(
     books
   );
   const resolvedMapping = await loadMappingForTradeEv(tokenId, kalshiTicker);
-  const { ensemblePTrue, marketPrior } = await loadEnsemblePricingContext(
-    tokenId,
-    books,
-    resolvedMapping
-  );
 
   try {
     const cachedEv = await getTradeEvLookupRedisOnly(key);
@@ -868,58 +887,14 @@ export async function resolvePipelineTradeEv(
     return createUnmappedPipelineTradeEv(key, enriched);
   }
 
-  const priced = buildPipelineTradeEvFromPricing({
-    lookupKey: key,
-    platform: enriched.source,
-    tokenId,
-    kalshiTicker,
-    mappingPairKey,
-    pmOb: books.pmOb,
-    kalshiOb: books.kalshiOb,
-    pmMid: books.pmMid,
-    kalshiMid: books.kalshiMid,
-    exchangeMid,
-    executionPrice: enriched.tradePrice,
-    ensemblePTrue,
-    baselinePTrue: ensemblePTrue,
-    marketPrior,
-  });
-
-  if (priced) {
-    const result = finalizePipelineTradeEv(priced, key);
-    await cacheTradeEvLookup(key, result);
-    return result;
-  }
-
-  if (!tokenId) {
-    return createUnmappedPipelineTradeEv(key, enriched);
-  }
-
-  if (ensemblePTrue == null) {
-    return buildDynamicBaselineTradeEv(key, enriched);
-  }
-
-  const fallback = buildPipelineTradeEvFromPricing({
-    lookupKey: key,
-    platform: enriched.source,
-    tokenId,
-    kalshiTicker,
-    mappingPairKey,
-    pmOb: books.pmOb,
-    kalshiOb: books.kalshiOb,
-    pmMid: books.pmMid,
-    kalshiMid: books.kalshiMid,
-    exchangeMid,
-    executionPrice: enriched.tradePrice,
-    ensemblePTrue,
-    baselinePTrue: ensemblePTrue,
-    marketPrior,
-  });
-
-  if (fallback) {
-    const result = finalizePipelineTradeEv(fallback, key);
-    await cacheTradeEvLookup(key, result);
-    return result;
+  const ensemblePriced = await resolveTradeEvViaEnsemblePricing(
+    key,
+    enriched,
+    resolvedMapping
+  );
+  if (ensemblePriced) {
+    await cacheTradeEvLookup(key, ensemblePriced);
+    return ensemblePriced;
   }
 
   return buildDynamicBaselineTradeEv(key, enriched);

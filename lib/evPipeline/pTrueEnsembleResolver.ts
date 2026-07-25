@@ -1,5 +1,5 @@
-import { computeRagPTrue } from "@/lib/ai/rag/ragPTrueProvider";
 import { lookupExchangeConsensusBaseline } from "@/lib/evPipeline/exchangeConsensusArb";
+import { resolveEnsemblePTrueWithLlmFallback } from "@/lib/evPipeline/ensemblePricingFallback";
 import { resolveEnsemblePTrue } from "@/lib/evPipeline/ensemblePTrue";
 import {
   liquidityWeightedCrossMid,
@@ -317,61 +317,59 @@ export async function resolvePTrue(
 
   if (
     ensemblePTrue == null &&
-    (input.title || input.tokenId)
+    (input.title || input.tokenId || input.slug)
   ) {
-    const drySync = resolvePTrueSync({
-      ...input,
-      exchangeMid,
-      ensemblePTrue: null,
-      baselinePTrue: null,
-    });
+    const consensusUnresolved =
+      Boolean(input.fetchExchangeConsensus) &&
+      input.platform === "polymarket" &&
+      !isFiniteProb(exchangeMid);
     const needsRag =
       input.computeEnsembleIfMissing ||
-      (input.computeRagIfMissing && drySync.lowConfidence);
+      input.computeRagIfMissing ||
+      consensusUnresolved;
 
     if (needsRag) {
-      const marketPrior = resolveMarketPrior(
-        input.pmMid ?? null,
-        input.kalshiMid ?? null,
-        input.marketPrior
-      );
       try {
-        const computed = await computeRagPTrue({
-          tokenId: input.tokenId,
-          kalshiTicker: input.kalshiTicker,
-          title: input.title || input.tokenId || "Unknown market",
-          slug: input.slug,
-          pmMid: input.pmMid ?? null,
-          kalshiMid: input.kalshiMid ?? null,
-          exchangeMid,
-          marketPrior,
-        });
-        ensemblePTrue = computed.engine.pTrue;
-        const source: PTrueSource = "rag_ensemble";
-        const syncResult = resolvePTrueSync({
-          ...input,
-          exchangeMid,
-          ensemblePTrue,
-          baselinePTrue: ensemblePTrue,
-        });
-        return {
-          ...syncResult,
-          source,
-          confidence: Math.max(
-            syncResult.confidence,
-            computed.engine.sourceScore
-          ),
-          ragContextIds: computed.contextIds,
-          contributors: [
-            contributor(
-              source,
-              computed.engine.pTrue,
-              1,
-              computed.engine.sourceScore
+        const computed = await resolveEnsemblePTrueWithLlmFallback(
+          {
+            tokenId: input.tokenId,
+            kalshiTicker: input.kalshiTicker,
+            title: input.title || input.tokenId || "Unknown market",
+            slug: input.slug,
+            pmMid: input.pmMid ?? null,
+            kalshiMid: input.kalshiMid ?? null,
+            exchangeMid,
+          },
+          { logPrefix: "[pTrueEnsembleResolver]" }
+        );
+        if (computed) {
+          ensemblePTrue = computed.pTrue;
+          const source = computed.source;
+          const syncResult = resolvePTrueSync({
+            ...input,
+            exchangeMid,
+            ensemblePTrue,
+            baselinePTrue: ensemblePTrue,
+          });
+          return {
+            ...syncResult,
+            source,
+            confidence: Math.max(
+              syncResult.confidence,
+              computed.sourceScore
             ),
-            ...syncResult.contributors,
-          ],
-        };
+            ragContextIds: computed.contextIds,
+            contributors: [
+              contributor(
+                source,
+                computed.pTrue,
+                1,
+                computed.sourceScore
+              ),
+              ...syncResult.contributors,
+            ],
+          };
+        }
       } catch {
         // Fall through to sync resolver without ensemble.
       }

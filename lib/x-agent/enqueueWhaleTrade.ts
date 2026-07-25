@@ -14,6 +14,14 @@ import {
   logSourceSkip,
   type TradePayload,
 } from "@/lib/x-agent/gates";
+import {
+  type GateSummary,
+  HIGH_EV_TRADE_THRESHOLD_PCT,
+  recordEvThresholdFailure,
+  recordKalshiSourceFailure,
+  recordQueuedSuccess,
+  recordTradeEvaluated,
+} from "@/lib/x-agent/gateMetrics";
 import { dispatchAdminReviewAlert } from "@/lib/x-agent/notifications";
 import { generateXPostCopy } from "@/lib/x-agent/templates";
 import {
@@ -21,8 +29,7 @@ import {
   normalizeWalletAddress,
 } from "@/lib/x-agent/whaleRegistryDb";
 
-/** Minimum per-trade EV (display percent) to auto-register and enqueue. */
-export const HIGH_EV_TRADE_THRESHOLD_PCT = 20;
+export { HIGH_EV_TRADE_THRESHOLD_PCT } from "@/lib/x-agent/gateMetrics";
 
 function formatEvPercent(pct: number): string {
   const sign = pct >= 0 ? "+" : "";
@@ -39,6 +46,8 @@ function whaleToEvInput(trade: WhaleTrade): PipelineTradeEvInput | null {
       source: "polymarket",
       tokenId: trade.assetId,
       tradePrice: trade.price,
+      title: trade.title,
+      slug: trade.slug ?? trade.eventSlug ?? undefined,
     };
   }
 
@@ -47,6 +56,7 @@ function whaleToEvInput(trade: WhaleTrade): PipelineTradeEvInput | null {
       source: "kalshi",
       kalshiTicker: trade.ticker,
       tradePrice: trade.price,
+      title: trade.title,
     };
   }
 
@@ -96,8 +106,13 @@ function buildTradePayload(
  * in WhaleRegistry via Prisma, then enqueue an X post draft when gates pass.
  */
 export async function processWhaleTradeForXAgent(
-  trade: WhaleTrade
+  trade: WhaleTrade,
+  metrics?: GateSummary
 ): Promise<void> {
+  if (metrics) {
+    recordTradeEvaluated(metrics);
+  }
+
   if (!isPrismaEnabled()) {
     logEnqueueSkip(trade, "[Skip: Setup] Prisma/DATABASE_URL not configured");
     return;
@@ -106,6 +121,7 @@ export async function processWhaleTradeForXAgent(
     logGateCheck(trade.id);
     if (trade.source === "kalshi") {
       logSourceSkip();
+      if (metrics) recordKalshiSourceFailure(metrics);
     } else {
       logEnqueueSkip(
         trade,
@@ -141,6 +157,7 @@ export async function processWhaleTradeForXAgent(
   const tradeEvPercent = coalesceDisplayEvPercent(pipelineEv);
   if (tradeEvPercent == null) {
     logEnqueueSkip(trade, "[Skip: Trade EV] Trade EV unavailable");
+    if (metrics) recordEvThresholdFailure(metrics);
     return;
   }
   if (tradeEvPercent <= HIGH_EV_TRADE_THRESHOLD_PCT) {
@@ -148,6 +165,7 @@ export async function processWhaleTradeForXAgent(
       trade,
       `[Skip: Trade EV] Trade EV (${formatEvPercent(tradeEvPercent)}) <= ${HIGH_EV_TRADE_THRESHOLD_PCT}% threshold`
     );
+    if (metrics) recordEvThresholdFailure(metrics);
     return;
   }
   console.log(
@@ -174,7 +192,7 @@ export async function processWhaleTradeForXAgent(
     payload,
     registry.whale,
     Date.now(),
-    { skipWhaleStatGates: registry.created }
+    { skipWhaleStatGates: registry.created, metrics }
   );
 
   if (!eligibility.eligible || !eligibility.translation) return;
@@ -217,6 +235,7 @@ export async function processWhaleTradeForXAgent(
   }
 
   console.log("[SUCCESS: Queued] Trade added to x_post_queue");
+  if (metrics) recordQueuedSuccess(metrics);
 
   void dispatchAdminReviewAlert(queued as XPostQueue).catch((err) => {
     console.error("[x-agent/enqueue] admin alert failed", {
