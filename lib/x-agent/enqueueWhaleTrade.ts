@@ -10,6 +10,8 @@ import { getPrisma, isPrismaEnabled } from "@/lib/prisma";
 import type { WhaleTrade } from "@/lib/whaleTrades";
 import {
   evaluateTradeEligibility,
+  logGateCheck,
+  logSourceSkip,
   type TradePayload,
 } from "@/lib/x-agent/gates";
 import { dispatchAdminReviewAlert } from "@/lib/x-agent/notifications";
@@ -28,10 +30,7 @@ function formatEvPercent(pct: number): string {
 }
 
 function logEnqueueSkip(trade: WhaleTrade, message: string): void {
-  const wallet = trade.proxyWallet?.trim() ?? "unknown";
-  console.warn(
-    `[Skip] trade=${trade.id} wallet=${wallet.slice(0, 10)}… ${message}`
-  );
+  console.log(message);
 }
 
 function whaleToEvInput(trade: WhaleTrade): PipelineTradeEvInput | null {
@@ -100,51 +99,60 @@ export async function processWhaleTradeForXAgent(
   trade: WhaleTrade
 ): Promise<void> {
   if (!isPrismaEnabled()) {
-    logEnqueueSkip(trade, "Prisma/DATABASE_URL not configured");
+    logEnqueueSkip(trade, "[Skip: Setup] Prisma/DATABASE_URL not configured");
     return;
   }
   if (trade.source !== "polymarket") {
-    logEnqueueSkip(
-      trade,
-      trade.source === "kalshi"
-        ? "Data source is Kalshi"
-        : `Data source is ${trade.source}`
-    );
+    logGateCheck(trade.id);
+    if (trade.source === "kalshi") {
+      logSourceSkip();
+    } else {
+      logEnqueueSkip(
+        trade,
+        `[Skip: Source] Trade is from ${trade.source} (Polymarket required)`
+      );
+    }
     return;
   }
 
   const wallet = trade.proxyWallet?.trim();
   if (!wallet) {
-    logEnqueueSkip(trade, "Missing proxy wallet");
+    logEnqueueSkip(trade, "[Skip: Setup] Missing proxy wallet");
     return;
   }
 
   const prisma = getPrisma();
   if (!prisma) {
-    logEnqueueSkip(trade, "Prisma client unavailable");
+    logEnqueueSkip(trade, "[Skip: Setup] Prisma client unavailable");
     return;
   }
 
   const evInput = whaleToEvInput(trade);
   const lookupKey = evInput ? pipelineEvLookupKey(evInput) : null;
   if (!evInput || !lookupKey) {
-    logEnqueueSkip(trade, "Missing Polymarket asset id for EV lookup");
+    logEnqueueSkip(
+      trade,
+      "[Skip: Setup] Missing Polymarket asset id for EV lookup"
+    );
     return;
   }
 
   const pipelineEv = await ensureFullyComputedTradeEv(lookupKey, evInput);
   const tradeEvPercent = coalesceDisplayEvPercent(pipelineEv);
   if (tradeEvPercent == null) {
-    logEnqueueSkip(trade, "Trade EV unavailable");
+    logEnqueueSkip(trade, "[Skip: Trade EV] Trade EV unavailable");
     return;
   }
   if (tradeEvPercent <= HIGH_EV_TRADE_THRESHOLD_PCT) {
     logEnqueueSkip(
       trade,
-      `Trade EV (${formatEvPercent(tradeEvPercent)}) <= ${HIGH_EV_TRADE_THRESHOLD_PCT}% threshold`
+      `[Skip: Trade EV] Trade EV (${formatEvPercent(tradeEvPercent)}) <= ${HIGH_EV_TRADE_THRESHOLD_PCT}% threshold`
     );
     return;
   }
+  console.log(
+    `[Pass: Trade EV] Trade EV (${formatEvPercent(tradeEvPercent)}) > ${HIGH_EV_TRADE_THRESHOLD_PCT}% threshold`
+  );
 
   const walletAddress = normalizeWalletAddress(wallet);
   const registry = await ensureWhaleInRegistry(walletAddress, {
@@ -152,7 +160,7 @@ export async function processWhaleTradeForXAgent(
     avgStakeNotional: trade.usdNotional,
   });
   if (!registry) {
-    logEnqueueSkip(trade, "Whale registry upsert failed");
+    logEnqueueSkip(trade, "[Skip: Setup] Whale registry upsert failed");
     return;
   }
 
@@ -207,6 +215,8 @@ export async function processWhaleTradeForXAgent(
     console.error("[DB WRITE ERROR]", error);
     throw error;
   }
+
+  console.log("[SUCCESS: Queued] Trade added to x_post_queue");
 
   void dispatchAdminReviewAlert(queued as XPostQueue).catch((err) => {
     console.error("[x-agent/enqueue] admin alert failed", {

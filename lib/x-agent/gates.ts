@@ -70,63 +70,45 @@ function tradeTimestampMs(timestamp: number): number {
   return timestamp < 1_000_000_000_000 ? timestamp * 1000 : timestamp;
 }
 
-function formatUsdShort(amount: number): string {
-  if (amount >= 1_000_000) return `$${(amount / 1_000_000).toFixed(1)}M`;
-  if (amount >= 1_000) return `$${Math.round(amount / 1_000)}k`;
-  return `$${Math.round(amount)}`;
+function formatStake(amount: number): string {
+  return `$${Math.round(amount).toLocaleString("en-US")}`;
 }
 
-function formatEvDecimal(decimal: number): string {
-  const pct = decimal * 100;
-  const sign = pct >= 0 ? "+" : "";
-  return `${sign}${pct.toFixed(1)}%`;
+function formatWalletEvPct(avgEv: number): string {
+  return (avgEv * 100).toFixed(1);
 }
 
-/** Human-readable skip reason for temporary pipeline debugging. */
-export function formatGateSkipMessage(
-  reason: GateRejectionReason,
-  trade: TradePayload,
-  whale?: WhaleRegistry,
-  nowMs = Date.now()
-): string {
-  switch (reason) {
-    case "KALSHI_SOURCE_REJECTED":
-      return "Data source is Kalshi";
-    case "BELOW_RESOLVED_BETS":
-      return `Resolved bets (${whale?.resolvedBetsCount ?? 0}) < ${MIN_RESOLVED_BETS} threshold`;
-    case "LOW_EV":
-      return `Wallet EV (${formatEvDecimal(whale?.avgEv ?? 0)}) < ${formatEvDecimal(MIN_AVG_EV)} threshold`;
-    case "BELOW_STAKE_FLOOR":
-      return `Stake (${formatUsdShort(trade.stakeNotional)}) < ${formatUsdShort(MIN_STAKE_NOTIONAL)} threshold`;
-    case "STALE_TRADE": {
-      const ageMin = Math.round(
-        (nowMs - tradeTimestampMs(trade.timestamp)) / 60_000
-      );
-      return `Trade age (${ageMin}m) > ${MAX_TRADE_AGE_MS / 60_000}m threshold`;
-    }
-    case "LINE_DRIFT_EXCEEDED": {
-      const drift = Math.abs(trade.nowCents - trade.entryCents);
-      return `Line drift (${drift}¢) > ${MAX_LINE_DRIFT_CENTS}¢ threshold`;
-    }
-    case "ILLEGIBLE_MARKET":
-      return "Market title/side could not be translated";
-    case "DUPLICATE_TRADE":
-      return "Duplicate trade already queued or logged";
-    case "RECENT_MARKET_POST":
-      return `Recent post for market "${trade.marketSlug}" within ${MARKET_DEDUPE_WINDOW_MS / 60_000}m window`;
-    default:
-      return reason;
-  }
+export function logGateCheck(tradeId: string): void {
+  console.log("[Gate Check] Trade ID:", tradeId);
 }
 
-function logGateSkip(
-  trade: TradePayload,
-  message: string,
-  whale?: WhaleRegistry
-): void {
-  const wallet = whale?.walletAddress ?? trade.walletAddress;
-  console.warn(
-    `[Skip] trade=${trade.tradeId} wallet=${wallet.slice(0, 10)}… ${message}`
+function logCredibilitySkip(whale: WhaleRegistry): void {
+  console.log(
+    `[Skip: Credibility] Wallet EV (${formatWalletEvPct(whale.avgEv)}%) < 3% or resolved bets (${whale.resolvedBetsCount}) < 500`
+  );
+}
+
+function logCredibilityPass(whale: WhaleRegistry): void {
+  console.log(
+    `[Pass: Credibility] Wallet EV (${formatWalletEvPct(whale.avgEv)}%) >= 3%, resolved bets (${whale.resolvedBetsCount}) >= 500`
+  );
+}
+
+export function logSourceSkip(): void {
+  console.log(
+    "[Skip: Source] Trade is from Kalshi (Polymarket required)"
+  );
+}
+
+function logStakeSkip(stakeNotional: number): void {
+  console.log(
+    `[Skip: Stake] ${formatStake(stakeNotional)} < $25,000 threshold`
+  );
+}
+
+function logLegibilitySkip(): void {
+  console.log(
+    "[Skip: Unmapped] Market cannot be translated to plain-English side"
   );
 }
 
@@ -158,11 +140,8 @@ async function logGateFailure(
 
 async function reject(
   trade: TradePayload,
-  reason: GateRejectionReason,
-  whale?: WhaleRegistry,
-  nowMs = Date.now()
+  reason: GateRejectionReason
 ): Promise<TradeEligibilityResult> {
-  logGateSkip(trade, formatGateSkipMessage(reason, trade, whale, nowMs), whale);
   await logGateFailure(trade, reason);
   return { eligible: false, reason };
 }
@@ -229,46 +208,85 @@ export async function evaluateTradeEligibility(
   nowMs = Date.now(),
   options?: TradeEligibilityOptions
 ): Promise<TradeEligibilityResult> {
+  logGateCheck(trade.tradeId);
+
   if (trade.source !== "polymarket") {
-    return reject(trade, "KALSHI_SOURCE_REJECTED", whale, nowMs);
+    logSourceSkip();
+    return reject(trade, "KALSHI_SOURCE_REJECTED");
   }
+  console.log("[Pass: Source] Polymarket trade");
 
   if (!options?.skipWhaleStatGates) {
-    if (whale.resolvedBetsCount < MIN_RESOLVED_BETS) {
-      return reject(trade, "BELOW_RESOLVED_BETS", whale, nowMs);
+    if (
+      whale.resolvedBetsCount < MIN_RESOLVED_BETS ||
+      whale.avgEv < MIN_AVG_EV
+    ) {
+      logCredibilitySkip(whale);
+      return reject(
+        trade,
+        whale.resolvedBetsCount < MIN_RESOLVED_BETS
+          ? "BELOW_RESOLVED_BETS"
+          : "LOW_EV"
+      );
     }
-
-    if (whale.avgEv < MIN_AVG_EV) {
-      return reject(trade, "LOW_EV", whale, nowMs);
-    }
+    logCredibilityPass(whale);
+  } else {
+    console.log(
+      "[Pass: Credibility] Whale stat gates skipped (auto-registered wallet)"
+    );
   }
 
   if (trade.stakeNotional < MIN_STAKE_NOTIONAL) {
-    return reject(trade, "BELOW_STAKE_FLOOR", whale, nowMs);
+    logStakeSkip(trade.stakeNotional);
+    return reject(trade, "BELOW_STAKE_FLOOR");
   }
+  console.log(
+    `[Pass: Stake] ${formatStake(trade.stakeNotional)} >= $25,000 threshold`
+  );
 
   const tradeAgeMs = nowMs - tradeTimestampMs(trade.timestamp);
   if (tradeAgeMs > MAX_TRADE_AGE_MS) {
-    return reject(trade, "STALE_TRADE", whale, nowMs);
+    const ageMin = Math.round(tradeAgeMs / 60_000);
+    console.log(
+      `[Skip: Stale] Trade age (${ageMin}m) > ${MAX_TRADE_AGE_MS / 60_000}m threshold`
+    );
+    return reject(trade, "STALE_TRADE");
   }
+  console.log(
+    `[Pass: Freshness] Trade age (${Math.round(tradeAgeMs / 60_000)}m) within ${MAX_TRADE_AGE_MS / 60_000}m window`
+  );
 
   const lineDrift = Math.abs(trade.nowCents - trade.entryCents);
   if (lineDrift > MAX_LINE_DRIFT_CENTS) {
-    return reject(trade, "LINE_DRIFT_EXCEEDED", whale, nowMs);
+    console.log(
+      `[Skip: Line Drift] ${lineDrift}¢ drift > ${MAX_LINE_DRIFT_CENTS}¢ threshold`
+    );
+    return reject(trade, "LINE_DRIFT_EXCEEDED");
   }
+  console.log(`[Pass: Line Drift] ${lineDrift}¢ <= ${MAX_LINE_DRIFT_CENTS}¢`);
 
   const translation = translateMarketAndSide(toRawPolymarketTrade(trade));
   if (!translation) {
-    return reject(trade, "ILLEGIBLE_MARKET", whale, nowMs);
+    logLegibilitySkip();
+    return reject(trade, "ILLEGIBLE_MARKET");
   }
+  console.log(
+    `[Pass: Legibility] Translated to "${translation.side}" on "${translation.marketPlain}"`
+  );
 
   if (await hasDuplicateTrade(trade.tradeId)) {
-    return reject(trade, "DUPLICATE_TRADE", whale, nowMs);
+    console.log("[Skip: Duplicate] Trade already queued or logged");
+    return reject(trade, "DUPLICATE_TRADE");
   }
+  console.log("[Pass: Duplicate] No prior queue/log entry for trade");
 
   if (await hasRecentMarketPost(trade.marketSlug)) {
-    return reject(trade, "RECENT_MARKET_POST", whale, nowMs);
+    console.log(
+      `[Skip: Recent Post] Market "${trade.marketSlug}" posted within ${MARKET_DEDUPE_WINDOW_MS / 60_000}m`
+    );
+    return reject(trade, "RECENT_MARKET_POST");
   }
+  console.log("[Pass: Recent Post] No recent queue entry for market slug");
 
   return { eligible: true, translation };
 }
