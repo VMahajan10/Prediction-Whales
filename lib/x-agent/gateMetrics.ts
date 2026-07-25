@@ -1,5 +1,14 @@
-/** Minimum per-trade EV (display percent) to enter post-queue gate evaluation. */
+/** Minimum live trade EV as display percent (+3%). */
 export const HIGH_EV_TRADE_THRESHOLD_PCT = 3;
+
+/** Minimum live trade EV as decimal (trade.ev >= 0.03). */
+export const MIN_TRADE_EV_DECIMAL = 0.03;
+
+/** Minimum wallet historical avg EV from registry (wallet.avgEv >= 0.03). */
+export const MIN_WALLET_AVG_EV_DECIMAL = 0.03;
+
+/** Minimum resolved bets on wallet registry for credibility. */
+export const MIN_WALLET_RESOLVED_BETS = 500;
 
 export interface GateSummary {
   totalEvaluated: number;
@@ -10,6 +19,15 @@ export interface GateSummary {
   failedFreshness: number;
   failedKalshiSource: number;
   queuedSuccessfully: number;
+}
+
+export interface GateMatrixCounters {
+  passesEv: boolean;
+  passesStake: boolean;
+  passesCredibility: boolean;
+  passesAlignment: boolean;
+  passesFreshness: boolean;
+  passesSource: boolean;
 }
 
 export function createGateSummary(): GateSummary {
@@ -29,67 +47,43 @@ export function recordTradeEvaluated(metrics: GateSummary): void {
   metrics.totalEvaluated += 1;
 }
 
-export function recordEvThresholdFailure(metrics: GateSummary): void {
-  metrics.failedEvThreshold += 1;
-}
-
-export function recordKalshiSourceFailure(metrics: GateSummary): void {
-  metrics.failedKalshiSource += 1;
+export function recordGateMatrixFailures(
+  metrics: GateSummary,
+  matrix: GateMatrixCounters
+): void {
+  if (!matrix.passesEv) metrics.failedEvThreshold += 1;
+  if (!matrix.passesStake) metrics.failedStakeFloor += 1;
+  if (!matrix.passesCredibility) metrics.failedCredibility += 1;
+  if (!matrix.passesAlignment) metrics.failedLegibilityOrAlignment += 1;
+  if (!matrix.passesFreshness) metrics.failedFreshness += 1;
+  if (!matrix.passesSource) metrics.failedKalshiSource += 1;
 }
 
 export function recordQueuedSuccess(metrics: GateSummary): void {
   metrics.queuedSuccessfully += 1;
 }
 
-const LEGIBILITY_OR_ALIGNMENT_REASONS = new Set([
-  "ILLEGIBLE_MARKET",
-  "LINE_DRIFT_EXCEEDED",
-  "DUPLICATE_TRADE",
-  "RECENT_MARKET_POST",
-]);
-
-const CREDIBILITY_REASONS = new Set(["BELOW_RESOLVED_BETS", "LOW_EV"]);
-
-export function recordGateRejection(metrics: GateSummary, reason: string): void {
-  if (reason === "KALSHI_SOURCE_REJECTED") {
-    metrics.failedKalshiSource += 1;
-    return;
-  }
-  if (reason === "BELOW_STAKE_FLOOR") {
-    metrics.failedStakeFloor += 1;
-    return;
-  }
-  if (CREDIBILITY_REASONS.has(reason)) {
-    metrics.failedCredibility += 1;
-    return;
-  }
-  if (reason === "STALE_TRADE") {
-    metrics.failedFreshness += 1;
-    return;
-  }
-  if (LEGIBILITY_OR_ALIGNMENT_REASONS.has(reason)) {
-    metrics.failedLegibilityOrAlignment += 1;
-  }
-}
-
-function padCount(value: number, width = 5): string {
-  return String(value).padStart(width);
+function formatGateFraction(count: number, total: number, width = 5): string {
+  const countStr = String(count).padStart(width);
+  const totalStr = String(total).padStart(width);
+  return `${countStr} / ${totalStr}`;
 }
 
 export function printGateSummaryBox(metrics: GateSummary): void {
+  const total = metrics.totalEvaluated;
   const lines = [
     "==================================================",
-    "📊 SHADOW CRON RUN POST-QUEUE SUMMARY",
+    "📊 SHADOW CRON FULL GATE-MATRIX SUMMARY",
     "==================================================",
-    `Total Trades Evaluated:      ${padCount(metrics.totalEvaluated)}`,
-    `❌ Failed EV Threshold (<3%): ${padCount(metrics.failedEvThreshold)}`,
-    `❌ Failed Stake Floor (<$25k): ${padCount(metrics.failedStakeFloor)}`,
-    `❌ Failed Credibility (<3%):  ${padCount(metrics.failedCredibility)}`,
-    `❌ Failed Alignment/Mapping:   ${padCount(metrics.failedLegibilityOrAlignment)}`,
-    `❌ Failed Freshness (>10m):    ${padCount(metrics.failedFreshness)}`,
-    `❌ Failed Kalshi Source:       ${padCount(metrics.failedKalshiSource)}`,
+    `Total Trades Evaluated:        ${String(total).padStart(5)}`,
+    `❌ Failed Trade EV (<3%):        ${formatGateFraction(metrics.failedEvThreshold, total)}`,
+    `❌ Failed Stake Floor (<$25k):   ${formatGateFraction(metrics.failedStakeFloor, total)}`,
+    `❌ Failed Wallet Credibility:    ${formatGateFraction(metrics.failedCredibility, total)}`,
+    `❌ Failed Alignment/Mapping:      ${formatGateFraction(metrics.failedLegibilityOrAlignment, total)}`,
+    `❌ Failed Freshness (>10m):       ${formatGateFraction(metrics.failedFreshness, total)}`,
+    `❌ Failed Kalshi Source:          ${formatGateFraction(metrics.failedKalshiSource, total)}`,
     "--------------------------------------------------",
-    `✅ Queued to x_post_queue:     ${padCount(metrics.queuedSuccessfully)}`,
+    `✅ Passed ALL Gates (Queued):     ${formatGateFraction(metrics.queuedSuccessfully, total)}`,
     "==================================================",
   ];
 

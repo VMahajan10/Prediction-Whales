@@ -10,15 +10,11 @@ import { getPrisma, isPrismaEnabled } from "@/lib/prisma";
 import type { WhaleTrade } from "@/lib/whaleTrades";
 import {
   evaluateTradeEligibility,
-  logGateCheck,
-  logSourceSkip,
   type TradePayload,
 } from "@/lib/x-agent/gates";
 import {
   type GateSummary,
   HIGH_EV_TRADE_THRESHOLD_PCT,
-  recordEvThresholdFailure,
-  recordKalshiSourceFailure,
   recordQueuedSuccess,
   recordTradeEvaluated,
 } from "@/lib/x-agent/gateMetrics";
@@ -26,15 +22,11 @@ import { dispatchAdminReviewAlert } from "@/lib/x-agent/notifications";
 import { generateXPostCopy } from "@/lib/x-agent/templates";
 import {
   ensureWhaleInRegistry,
+  findWhaleByWallet,
   normalizeWalletAddress,
 } from "@/lib/x-agent/whaleRegistryDb";
 
 export { HIGH_EV_TRADE_THRESHOLD_PCT } from "@/lib/x-agent/gateMetrics";
-
-function formatEvPercent(pct: number): string {
-  const sign = pct >= 0 ? "+" : "";
-  return `${sign}${pct.toFixed(1)}%`;
-}
 
 function logEnqueueSkip(trade: WhaleTrade, message: string): void {
   console.log(message);
@@ -103,7 +95,7 @@ function buildTradePayload(
 
 /**
  * High-EV whale ingestion hook: resolve trade EV, auto-register unknown wallets
- * in WhaleRegistry via Prisma, then enqueue an X post draft when gates pass.
+ * in WhaleRegistry via Prisma, then enqueue an X post draft when all gates pass.
  */
 export async function processWhaleTradeForXAgent(
   trade: WhaleTrade,
@@ -113,25 +105,45 @@ export async function processWhaleTradeForXAgent(
     recordTradeEvaluated(metrics);
   }
 
+  const wallet = trade.proxyWallet?.trim();
+  const evInput = whaleToEvInput(trade);
+  const lookupKey = evInput ? pipelineEvLookupKey(evInput) : null;
+
+  let tradeEvPercent: number | null = null;
+  let pipelinePmMid: number | null = null;
+  if (evInput && lookupKey) {
+    const pipelineEv = await ensureFullyComputedTradeEv(lookupKey, evInput);
+    tradeEvPercent = coalesceDisplayEvPercent(pipelineEv);
+    pipelinePmMid = pipelineEv.pMarket ?? null;
+  }
+
+  let whaleForGates: Awaited<ReturnType<typeof findWhaleByWallet>> = null;
+  if (wallet && isPrismaEnabled()) {
+    whaleForGates = await findWhaleByWallet(normalizeWalletAddress(wallet));
+  }
+
+  const walletAddress = wallet
+    ? normalizeWalletAddress(wallet)
+    : "0x0000000000000000000000000000000000000000";
+  const nowCents =
+    pipelinePmMid != null ? priceToCents(pipelinePmMid) : priceToCents(trade.price);
+  const payload = buildTradePayload(trade, walletAddress, nowCents);
+
+  const eligibility = await evaluateTradeEligibility(
+    payload,
+    whaleForGates,
+    Date.now(),
+    { tradeEvPercent, metrics }
+  );
+
+  if (!eligibility.matrix.passesAll || !eligibility.translation) {
+    return;
+  }
+
   if (!isPrismaEnabled()) {
     logEnqueueSkip(trade, "[Skip: Setup] Prisma/DATABASE_URL not configured");
     return;
   }
-  if (trade.source !== "polymarket") {
-    logGateCheck(trade.id);
-    if (trade.source === "kalshi") {
-      logSourceSkip();
-      if (metrics) recordKalshiSourceFailure(metrics);
-    } else {
-      logEnqueueSkip(
-        trade,
-        `[Skip: Source] Trade is from ${trade.source} (Polymarket required)`
-      );
-    }
-    return;
-  }
-
-  const wallet = trade.proxyWallet?.trim();
   if (!wallet) {
     logEnqueueSkip(trade, "[Skip: Setup] Missing proxy wallet");
     return;
@@ -143,72 +155,29 @@ export async function processWhaleTradeForXAgent(
     return;
   }
 
-  const evInput = whaleToEvInput(trade);
-  const lookupKey = evInput ? pipelineEvLookupKey(evInput) : null;
-  if (!evInput || !lookupKey) {
-    logEnqueueSkip(
-      trade,
-      "[Skip: Setup] Missing Polymarket asset id for EV lookup"
-    );
-    return;
-  }
-
-  const pipelineEv = await ensureFullyComputedTradeEv(lookupKey, evInput);
-  const tradeEvPercent = coalesceDisplayEvPercent(pipelineEv);
-  if (tradeEvPercent == null) {
-    logEnqueueSkip(trade, "[Skip: Trade EV] Trade EV unavailable");
-    if (metrics) recordEvThresholdFailure(metrics);
-    return;
-  }
-  if (tradeEvPercent < HIGH_EV_TRADE_THRESHOLD_PCT) {
-    logEnqueueSkip(
-      trade,
-      `[Skip: Trade EV] Trade EV (${formatEvPercent(tradeEvPercent)}) < ${HIGH_EV_TRADE_THRESHOLD_PCT}% threshold`
-    );
-    if (metrics) recordEvThresholdFailure(metrics);
-    return;
-  }
-  console.log(
-    `[Pass: Trade EV] Trade EV (${formatEvPercent(tradeEvPercent)}) >= ${HIGH_EV_TRADE_THRESHOLD_PCT}% threshold`
-  );
-
-  const walletAddress = normalizeWalletAddress(wallet);
-  const registry = await ensureWhaleInRegistry(walletAddress, {
-    avgEv: tradeEvPercent / 100,
-    avgStakeNotional: trade.usdNotional,
-  });
-  if (!registry) {
+  const whaleRegistry =
+    whaleForGates != null
+      ? { whale: whaleForGates, created: false }
+      : await ensureWhaleInRegistry(normalizeWalletAddress(wallet), {
+          avgStakeNotional: trade.usdNotional,
+        });
+  if (!whaleRegistry) {
     logEnqueueSkip(trade, "[Skip: Setup] Whale registry upsert failed");
     return;
   }
 
-  const nowCents =
-    pipelineEv.pMarket != null
-      ? priceToCents(pipelineEv.pMarket)
-      : priceToCents(trade.price);
-
-  const payload = buildTradePayload(trade, walletAddress, nowCents);
-  const eligibility = await evaluateTradeEligibility(
-    payload,
-    registry.whale,
-    Date.now(),
-    { skipWhaleStatGates: registry.created, metrics }
-  );
-
-  if (!eligibility.eligible || !eligibility.translation) return;
-
   const { copyText, family } = generateXPostCopy({
-    whale: registry.whale.pseudonym,
+    whale: whaleRegistry.whale.pseudonym,
     side: eligibility.translation.side,
     entry: payload.entryCents,
     now: payload.nowCents,
-    avg_ev: registry.whale.avgEv,
+    avg_ev: whaleRegistry.whale.avgEv,
     marketPlain: eligibility.translation.marketPlain,
     stakeNotional: payload.stakeNotional,
-    avgStakeNotional: registry.whale.avgStakeNotional,
-    postedCount30d: registry.whale.postedCount30d,
-    resolvedBetsCount: registry.whale.resolvedBetsCount,
-    winRate: registry.whale.winRate,
+    avgStakeNotional: whaleRegistry.whale.avgStakeNotional,
+    postedCount30d: whaleRegistry.whale.postedCount30d,
+    resolvedBetsCount: whaleRegistry.whale.resolvedBetsCount,
+    winRate: whaleRegistry.whale.winRate,
   });
 
   let queued: Awaited<ReturnType<typeof prisma.xPostQueue.create>>;
@@ -216,7 +185,7 @@ export async function processWhaleTradeForXAgent(
     queued = await prisma.xPostQueue.create({
       data: {
         id: randomUUID(),
-        walletAddress,
+        walletAddress: normalizeWalletAddress(wallet),
         tradeId: payload.tradeId,
         templateFamily: family,
         copyText,
