@@ -194,13 +194,11 @@ function logGateMatrix(
     console.log(
       `[Pass: Wallet Credibility] Registry track record: resolved bets (${whale.resolvedBetsCount}) >= ${MIN_WALLET_RESOLVED_BETS}, wallet avg EV (${formatWalletEvPct(whale.avgEv)}%) >= +${HIGH_EV_TRADE_THRESHOLD_PCT}%`
     );
-  } else if (whale) {
-    console.log(
-      `[Skip: Wallet Credibility] Registry track record: resolved bets (${whale.resolvedBetsCount}) < ${MIN_WALLET_RESOLVED_BETS} or wallet avg EV (${formatWalletEvPct(whale.avgEv)}%) < +${HIGH_EV_TRADE_THRESHOLD_PCT}%`
-    );
   } else {
+    const resolvedBets = whale?.resolvedBetsCount ?? 0;
+    const avgEv = whale?.avgEv ?? 0;
     console.log(
-      "[Skip: Wallet Credibility] Wallet registry unavailable (no historical track record)"
+      `[Credibility Check Failed] Wallet: ${trade.walletAddress} | Resolved Bets: ${resolvedBets} (Req: >=${MIN_WALLET_RESOLVED_BETS}) | AVG EV: ${(avgEv * 100).toFixed(1)}% (Req: >=${HIGH_EV_TRADE_THRESHOLD_PCT}%)`
     );
   }
 
@@ -333,7 +331,7 @@ export async function evaluateTradeEligibility(
   logGateMatrix(trade, whale, options?.tradeEvPercent ?? null, matrix, nowMs);
 
   if (options?.metrics) {
-    recordGateMatrixFailures(options.metrics, matrix);
+    recordGateMatrixFailures(options.metrics, matrix, whale);
   }
 
   if (!matrix.passesAll) {

@@ -15,6 +15,9 @@ export interface GateSummary {
   failedEvThreshold: number;
   failedStakeFloor: number;
   failedCredibility: number;
+  failedCredibility_ResolvedBets: number;
+  failedCredibility_AvgEv: number;
+  failedCredibility_NotInRegistry: number;
   failedLegibilityOrAlignment: number;
   failedFreshness: number;
   failedKalshiSource: number;
@@ -36,6 +39,9 @@ export function createGateSummary(): GateSummary {
     failedEvThreshold: 0,
     failedStakeFloor: 0,
     failedCredibility: 0,
+    failedCredibility_ResolvedBets: 0,
+    failedCredibility_AvgEv: 0,
+    failedCredibility_NotInRegistry: 0,
     failedLegibilityOrAlignment: 0,
     failedFreshness: 0,
     failedKalshiSource: 0,
@@ -47,13 +53,40 @@ export function recordTradeEvaluated(metrics: GateSummary): void {
   metrics.totalEvaluated += 1;
 }
 
+export interface CredibilityGateWhale {
+  resolvedBetsCount: number;
+  avgEv: number;
+}
+
+export function recordCredibilityFailureBreakdown(
+  metrics: GateSummary,
+  whale?: CredibilityGateWhale | null
+): void {
+  metrics.failedCredibility += 1;
+
+  if (!whale) {
+    metrics.failedCredibility_NotInRegistry += 1;
+    return;
+  }
+
+  if (whale.resolvedBetsCount < MIN_WALLET_RESOLVED_BETS) {
+    metrics.failedCredibility_ResolvedBets += 1;
+  }
+  if (whale.avgEv < MIN_WALLET_AVG_EV_DECIMAL) {
+    metrics.failedCredibility_AvgEv += 1;
+  }
+}
+
 export function recordGateMatrixFailures(
   metrics: GateSummary,
-  matrix: GateMatrixCounters
+  matrix: GateMatrixCounters,
+  whale?: CredibilityGateWhale | null
 ): void {
   if (!matrix.passesEv) metrics.failedEvThreshold += 1;
   if (!matrix.passesStake) metrics.failedStakeFloor += 1;
-  if (!matrix.passesCredibility) metrics.failedCredibility += 1;
+  if (!matrix.passesCredibility) {
+    recordCredibilityFailureBreakdown(metrics, whale);
+  }
   if (!matrix.passesAlignment) metrics.failedLegibilityOrAlignment += 1;
   if (!matrix.passesFreshness) metrics.failedFreshness += 1;
   if (!matrix.passesSource) metrics.failedKalshiSource += 1;
@@ -79,6 +112,9 @@ export function printGateSummaryBox(metrics: GateSummary): void {
     `❌ Failed Trade EV (<3%):        ${formatGateFraction(metrics.failedEvThreshold, total)}`,
     `❌ Failed Stake Floor (<$25k):   ${formatGateFraction(metrics.failedStakeFloor, total)}`,
     `❌ Failed Wallet Credibility:    ${formatGateFraction(metrics.failedCredibility, total)}`,
+    `   ↳ Resolved Bets (<500):        ${formatGateFraction(metrics.failedCredibility_ResolvedBets, total)}`,
+    `   ↳ AVG EV (<3%):                ${formatGateFraction(metrics.failedCredibility_AvgEv, total)}`,
+    `   ↳ Not In Registry:             ${formatGateFraction(metrics.failedCredibility_NotInRegistry, total)}`,
     `❌ Failed Alignment/Mapping:      ${formatGateFraction(metrics.failedLegibilityOrAlignment, total)}`,
     `❌ Failed Freshness (>10m):       ${formatGateFraction(metrics.failedFreshness, total)}`,
     `❌ Failed Kalshi Source:          ${formatGateFraction(metrics.failedKalshiSource, total)}`,
