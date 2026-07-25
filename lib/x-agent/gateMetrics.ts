@@ -1,5 +1,5 @@
 /** Minimum per-trade EV (display percent) to enter post-queue gate evaluation. */
-export const HIGH_EV_TRADE_THRESHOLD_PCT = 20;
+export const HIGH_EV_TRADE_THRESHOLD_PCT = 3;
 
 export interface GateSummary {
   totalEvaluated: number;
@@ -82,7 +82,7 @@ export function printGateSummaryBox(metrics: GateSummary): void {
     "📊 SHADOW CRON RUN POST-QUEUE SUMMARY",
     "==================================================",
     `Total Trades Evaluated:      ${padCount(metrics.totalEvaluated)}`,
-    `❌ Failed EV Threshold (≤${HIGH_EV_TRADE_THRESHOLD_PCT}%): ${padCount(metrics.failedEvThreshold)}`,
+    `❌ Failed EV Threshold (<3%): ${padCount(metrics.failedEvThreshold)}`,
     `❌ Failed Stake Floor (<$25k): ${padCount(metrics.failedStakeFloor)}`,
     `❌ Failed Credibility (<3%):  ${padCount(metrics.failedCredibility)}`,
     `❌ Failed Alignment/Mapping:   ${padCount(metrics.failedLegibilityOrAlignment)}`,

@@ -160,16 +160,16 @@ export async function processWhaleTradeForXAgent(
     if (metrics) recordEvThresholdFailure(metrics);
     return;
   }
-  if (tradeEvPercent <= HIGH_EV_TRADE_THRESHOLD_PCT) {
+  if (tradeEvPercent < HIGH_EV_TRADE_THRESHOLD_PCT) {
     logEnqueueSkip(
       trade,
-      `[Skip: Trade EV] Trade EV (${formatEvPercent(tradeEvPercent)}) <= ${HIGH_EV_TRADE_THRESHOLD_PCT}% threshold`
+      `[Skip: Trade EV] Trade EV (${formatEvPercent(tradeEvPercent)}) < ${HIGH_EV_TRADE_THRESHOLD_PCT}% threshold`
     );
     if (metrics) recordEvThresholdFailure(metrics);
     return;
   }
   console.log(
-    `[Pass: Trade EV] Trade EV (${formatEvPercent(tradeEvPercent)}) > ${HIGH_EV_TRADE_THRESHOLD_PCT}% threshold`
+    `[Pass: Trade EV] Trade EV (${formatEvPercent(tradeEvPercent)}) >= ${HIGH_EV_TRADE_THRESHOLD_PCT}% threshold`
   );
 
   const walletAddress = normalizeWalletAddress(wallet);
