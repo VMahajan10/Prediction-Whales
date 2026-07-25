@@ -3,9 +3,11 @@ import {
   clearLowCredibilityCacheForTests,
   closedPositionsToResolvedBets,
   computeWalletCredibilityStats,
+  resolveWhaleForCredibilityGate,
   walletMeetsCredibilityCriteria,
 } from "@/lib/x-agent/walletCredibility";
 import { MIN_WALLET_RESOLVED_BETS } from "@/lib/x-agent/gateMetrics";
+import { ANONYMOUS_WALLET_ADDRESS } from "@/lib/x-agent/whaleRegistryDb";
 
 describe("walletCredibility", () => {
   it("maps closed positions into resolved bets for avgEv", () => {
@@ -48,6 +50,13 @@ describe("walletCredibility", () => {
         closedCount: MIN_WALLET_RESOLVED_BETS - 1,
       })
     ).toBe(false);
+  });
+
+  it("skips registry lookup for anonymous zero-address wallets", async () => {
+    const resolution = await resolveWhaleForCredibilityGate(
+      ANONYMOUS_WALLET_ADDRESS
+    );
+    expect(resolution).toEqual({ whale: null, source: "anonymous" });
   });
 
   it("caches low-credibility wallets in memory", () => {

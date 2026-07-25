@@ -12,6 +12,7 @@ import {
   findWhaleByWallet,
   findWhaleByWalletCaseInsensitive,
   formatWalletPseudonym,
+  isAnonymousWalletAddress,
   normalizeWalletAddress,
   upsertWhaleRegistry,
 } from "@/lib/x-agent/whaleRegistryDb";
@@ -29,6 +30,7 @@ export interface WalletCredibilityResolution {
     | "registry"
     | "polymarket_api"
     | "low_credibility_cache"
+    | "anonymous"
     | "unavailable";
   stats?: WalletCredibilityStats;
 }
@@ -159,6 +161,10 @@ function buildStubWhale(
 export async function resolveWhaleForCredibilityGate(
   wallet: string
 ): Promise<WalletCredibilityResolution> {
+  if (isAnonymousWalletAddress(wallet)) {
+    return { whale: null, source: "anonymous" };
+  }
+
   const walletAddress = normalizeWalletAddress(wallet);
   if (!walletAddress) {
     return { whale: null, source: "unavailable" };

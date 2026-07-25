@@ -25,7 +25,9 @@ import {
 import { dispatchAdminReviewAlert } from "@/lib/x-agent/notifications";
 import { generateXPostCopy } from "@/lib/x-agent/templates";
 import {
+  ANONYMOUS_WALLET_ADDRESS,
   ensureWhaleInRegistry,
+  isAnonymousWalletAddress,
   normalizeWalletAddress,
 } from "@/lib/x-agent/whaleRegistryDb";
 import { resolveWhaleForCredibilityGate } from "@/lib/x-agent/walletCredibility";
@@ -111,6 +113,7 @@ export async function processWhaleTradeForXAgent(
   }
 
   const wallet = trade.proxyWallet?.trim();
+  const anonymousTrade = isAnonymousWalletAddress(wallet);
   const evInput = whaleToEvInput(trade);
   const lookupKey = evInput ? pipelineEvLookupKey(evInput) : null;
 
@@ -125,7 +128,7 @@ export async function processWhaleTradeForXAgent(
   let whaleForGates: Awaited<
     ReturnType<typeof resolveWhaleForCredibilityGate>
   >["whale"] = null;
-  if (wallet && isPrismaEnabled()) {
+  if (wallet && !anonymousTrade && isPrismaEnabled()) {
     const credibility = await resolveWhaleForCredibilityGate(wallet);
     whaleForGates = credibility.whale;
     if (credibility.source === "polymarket_api") {
@@ -140,9 +143,10 @@ export async function processWhaleTradeForXAgent(
     }
   }
 
-  const walletAddress = wallet
-    ? normalizeWalletAddress(wallet)
-    : "0x0000000000000000000000000000000000000000";
+  const walletAddress =
+    wallet && !anonymousTrade
+      ? normalizeWalletAddress(wallet)
+      : ANONYMOUS_WALLET_ADDRESS;
   const nowCents =
     pipelinePmMid != null ? priceToCents(pipelinePmMid) : priceToCents(trade.price);
   const payload = buildTradePayload(trade, walletAddress, nowCents);

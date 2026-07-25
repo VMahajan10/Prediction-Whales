@@ -8,6 +8,7 @@ import {
   MIN_STAKE_NOTIONAL,
   type TradePayload,
 } from "@/lib/x-agent/gates";
+import { ANONYMOUS_WALLET_ADDRESS } from "@/lib/x-agent/whaleRegistryDb";
 
 function makeWhale(overrides: Partial<WhaleRegistry> = {}): WhaleRegistry {
   return {
@@ -81,6 +82,17 @@ describe("evaluateTradeGateMatrix", () => {
     expect(matrix.passesAll).toBe(false);
   });
 
+  it("passes credibility for anonymous zero-address trades without whale lookup", () => {
+    const matrix = evaluateTradeGateMatrix({
+      trade: makeTrade({ walletAddress: ANONYMOUS_WALLET_ADDRESS }),
+      whale: null,
+      tradeEvPercent: 2.0,
+    });
+
+    expect(matrix.passesCredibility).toBe(true);
+    expect(matrix.passesAll).toBe(true);
+  });
+
   it("passes all gates when every condition is met", () => {
     const matrix = evaluateTradeGateMatrix({
       trade: makeTrade(),
@@ -147,6 +159,18 @@ describe("evaluateTradeEligibility", () => {
       side: "buy yes",
       marketPlain: "China invade Taiwan",
     });
+  });
+
+  it("passes credibility for anonymous trades via evaluateTradeEligibility", async () => {
+    const result = await evaluateTradeEligibility(
+      makeTrade({ walletAddress: ANONYMOUS_WALLET_ADDRESS }),
+      null,
+      Date.now(),
+      { tradeEvPercent: 2.0 }
+    );
+
+    expect(result.matrix.passesCredibility).toBe(true);
+    expect(result.eligible).toBe(true);
   });
 
   it("rejects trades below the stake floor", async () => {

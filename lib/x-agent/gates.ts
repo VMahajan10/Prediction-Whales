@@ -18,6 +18,7 @@ import {
   translateMarketAndSide,
   type RawPolymarketTrade,
 } from "@/lib/x-agent/translator";
+import { isAnonymousWalletAddress } from "@/lib/x-agent/whaleRegistryDb";
 
 export const GATE_REJECTION_REASONS = [
   "KALSHI_SOURCE_REJECTED",
@@ -193,7 +194,11 @@ function logGateMatrix(
     );
   }
 
-  if (matrix.passesCredibility && whale) {
+  if (isAnonymousWalletAddress(trade.walletAddress)) {
+    console.log(
+      "[Pass: Credibility] Anonymous trade (zero address) skipped wallet check"
+    );
+  } else if (matrix.passesCredibility && whale) {
     console.log(
       `[Pass: Wallet Credibility] Registry track record: resolved bets (${whale.resolvedBetsCount}) >= ${MIN_WALLET_RESOLVED_BETS}, wallet avg EV (${formatWalletEvPct(whale.avgEv)}%) >= +${MIN_WALLET_AVG_EV_THRESHOLD_PCT}%`
     );
@@ -245,10 +250,12 @@ export function evaluateTradeGateMatrix(
   const passesEv =
     tradeEvDecimal != null && tradeEvDecimal >= MIN_TRADE_EV_DECIMAL;
   const passesStake = trade.stakeNotional >= MIN_STAKE_NOTIONAL;
+  const anonymousTrade = isAnonymousWalletAddress(trade.walletAddress);
   const passesCredibility =
-    whale != null &&
-    whale.resolvedBetsCount >= MIN_WALLET_RESOLVED_BETS &&
-    whale.avgEv >= MIN_WALLET_AVG_EV_DECIMAL;
+    anonymousTrade ||
+    (whale != null &&
+      whale.resolvedBetsCount >= MIN_WALLET_RESOLVED_BETS &&
+      whale.avgEv >= MIN_WALLET_AVG_EV_DECIMAL);
 
   const translation =
     passesSource && translateMarketAndSide(toRawPolymarketTrade(trade));
