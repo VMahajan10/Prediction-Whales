@@ -13,6 +13,7 @@
 
 # production
 /build
+/dist
 
 # capacitor native projects (tracked; regenerate with `npx cap add ios/android` if needed)
 # /ios

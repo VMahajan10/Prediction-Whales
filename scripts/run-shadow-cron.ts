@@ -2,8 +2,8 @@
  * Shadow cron worker — 24/7 live Polymarket WebSocket gate evaluator.
  *
  * Cloud deployment:
+ *   npm run build:worker
  *   npm run start:worker
- *   # inject DATABASE_URL, OPENAI_API_KEY, UPSTASH_REDIS_* via platform env
  *
  * Local:
  *   npx tsx scripts/run-shadow-cron.ts

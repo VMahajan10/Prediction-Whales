@@ -6,7 +6,8 @@
     "dev": "next dev",
     "pipeline:trigger": "wait-on http://localhost:3000 && sh -c 'set -a; [ -f .env.local ] && . ./.env.local; set +a; curl -fsS -H \"Authorization: Bearer $CRON_SECRET\" http://localhost:3000/api/cron/ev-pipeline'",
     "dev:all": "concurrently \"npm run dev\" \"npm run pipeline:trigger\"",
-    "build": "next build",
+    "build": "next build && npm run build:worker",
+    "build:worker": "prisma generate && tsc -p tsconfig.server.json",
     "start": "next start",
     "lint": "next lint",
     "cap:sync": "npx cap sync",
@@ -38,7 +39,7 @@
     "test:x-agent": "vitest run tests/x-agent",
     "test:watch": "vitest",
     "shadow:watch": "ts-node --transpile-only --project tsconfig.scripts.json scripts/run-shadow-cron.ts",
-    "start:worker": "prisma generate && ts-node scripts/run-shadow-cron.ts"
+    "start:worker": "TS_NODE_PROJECT=tsconfig.server.paths.json node --max-old-space-size=4096 -r tsconfig-paths/register dist/scripts/run-shadow-cron.js"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.77",

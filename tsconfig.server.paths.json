@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./dist/*"],
+      "@kalshi/sdk": ["./dist/lib/kalshi-sdk"]
+    }
+  }
+}
