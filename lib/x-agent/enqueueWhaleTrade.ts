@@ -22,6 +22,18 @@ import {
 /** Minimum per-trade EV (display percent) to auto-register and enqueue. */
 export const HIGH_EV_TRADE_THRESHOLD_PCT = 20;
 
+function formatEvPercent(pct: number): string {
+  const sign = pct >= 0 ? "+" : "";
+  return `${sign}${pct.toFixed(1)}%`;
+}
+
+function logEnqueueSkip(trade: WhaleTrade, message: string): void {
+  const wallet = trade.proxyWallet?.trim() ?? "unknown";
+  console.warn(
+    `[Skip] trade=${trade.id} wallet=${wallet.slice(0, 10)}… ${message}`
+  );
+}
+
 function whaleToEvInput(trade: WhaleTrade): PipelineTradeEvInput | null {
   if (trade.source === "polymarket" && trade.assetId) {
     return {
@@ -87,22 +99,50 @@ function buildTradePayload(
 export async function processWhaleTradeForXAgent(
   trade: WhaleTrade
 ): Promise<void> {
-  if (!isPrismaEnabled()) return;
-  if (trade.source !== "polymarket") return;
+  if (!isPrismaEnabled()) {
+    logEnqueueSkip(trade, "Prisma/DATABASE_URL not configured");
+    return;
+  }
+  if (trade.source !== "polymarket") {
+    logEnqueueSkip(
+      trade,
+      trade.source === "kalshi"
+        ? "Data source is Kalshi"
+        : `Data source is ${trade.source}`
+    );
+    return;
+  }
 
   const wallet = trade.proxyWallet?.trim();
-  if (!wallet) return;
+  if (!wallet) {
+    logEnqueueSkip(trade, "Missing proxy wallet");
+    return;
+  }
 
   const prisma = getPrisma();
-  if (!prisma) return;
+  if (!prisma) {
+    logEnqueueSkip(trade, "Prisma client unavailable");
+    return;
+  }
 
   const evInput = whaleToEvInput(trade);
   const lookupKey = evInput ? pipelineEvLookupKey(evInput) : null;
-  if (!evInput || !lookupKey) return;
+  if (!evInput || !lookupKey) {
+    logEnqueueSkip(trade, "Missing Polymarket asset id for EV lookup");
+    return;
+  }
 
   const pipelineEv = await ensureFullyComputedTradeEv(lookupKey, evInput);
   const tradeEvPercent = coalesceDisplayEvPercent(pipelineEv);
-  if (tradeEvPercent == null || tradeEvPercent <= HIGH_EV_TRADE_THRESHOLD_PCT) {
+  if (tradeEvPercent == null) {
+    logEnqueueSkip(trade, "Trade EV unavailable");
+    return;
+  }
+  if (tradeEvPercent <= HIGH_EV_TRADE_THRESHOLD_PCT) {
+    logEnqueueSkip(
+      trade,
+      `Trade EV (${formatEvPercent(tradeEvPercent)}) <= ${HIGH_EV_TRADE_THRESHOLD_PCT}% threshold`
+    );
     return;
   }
 
@@ -111,7 +151,10 @@ export async function processWhaleTradeForXAgent(
     avgEv: tradeEvPercent / 100,
     avgStakeNotional: trade.usdNotional,
   });
-  if (!registry) return;
+  if (!registry) {
+    logEnqueueSkip(trade, "Whale registry upsert failed");
+    return;
+  }
 
   const nowCents =
     pipelineEv.pMarket != null

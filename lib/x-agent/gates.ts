@@ -70,6 +70,66 @@ function tradeTimestampMs(timestamp: number): number {
   return timestamp < 1_000_000_000_000 ? timestamp * 1000 : timestamp;
 }
 
+function formatUsdShort(amount: number): string {
+  if (amount >= 1_000_000) return `$${(amount / 1_000_000).toFixed(1)}M`;
+  if (amount >= 1_000) return `$${Math.round(amount / 1_000)}k`;
+  return `$${Math.round(amount)}`;
+}
+
+function formatEvDecimal(decimal: number): string {
+  const pct = decimal * 100;
+  const sign = pct >= 0 ? "+" : "";
+  return `${sign}${pct.toFixed(1)}%`;
+}
+
+/** Human-readable skip reason for temporary pipeline debugging. */
+export function formatGateSkipMessage(
+  reason: GateRejectionReason,
+  trade: TradePayload,
+  whale?: WhaleRegistry,
+  nowMs = Date.now()
+): string {
+  switch (reason) {
+    case "KALSHI_SOURCE_REJECTED":
+      return "Data source is Kalshi";
+    case "BELOW_RESOLVED_BETS":
+      return `Resolved bets (${whale?.resolvedBetsCount ?? 0}) < ${MIN_RESOLVED_BETS} threshold`;
+    case "LOW_EV":
+      return `Wallet EV (${formatEvDecimal(whale?.avgEv ?? 0)}) < ${formatEvDecimal(MIN_AVG_EV)} threshold`;
+    case "BELOW_STAKE_FLOOR":
+      return `Stake (${formatUsdShort(trade.stakeNotional)}) < ${formatUsdShort(MIN_STAKE_NOTIONAL)} threshold`;
+    case "STALE_TRADE": {
+      const ageMin = Math.round(
+        (nowMs - tradeTimestampMs(trade.timestamp)) / 60_000
+      );
+      return `Trade age (${ageMin}m) > ${MAX_TRADE_AGE_MS / 60_000}m threshold`;
+    }
+    case "LINE_DRIFT_EXCEEDED": {
+      const drift = Math.abs(trade.nowCents - trade.entryCents);
+      return `Line drift (${drift}¢) > ${MAX_LINE_DRIFT_CENTS}¢ threshold`;
+    }
+    case "ILLEGIBLE_MARKET":
+      return "Market title/side could not be translated";
+    case "DUPLICATE_TRADE":
+      return "Duplicate trade already queued or logged";
+    case "RECENT_MARKET_POST":
+      return `Recent post for market "${trade.marketSlug}" within ${MARKET_DEDUPE_WINDOW_MS / 60_000}m window`;
+    default:
+      return reason;
+  }
+}
+
+function logGateSkip(
+  trade: TradePayload,
+  message: string,
+  whale?: WhaleRegistry
+): void {
+  const wallet = whale?.walletAddress ?? trade.walletAddress;
+  console.warn(
+    `[Skip] trade=${trade.tradeId} wallet=${wallet.slice(0, 10)}… ${message}`
+  );
+}
+
 async function logGateFailure(
   trade: TradePayload,
   reason: GateRejectionReason
@@ -98,8 +158,11 @@ async function logGateFailure(
 
 async function reject(
   trade: TradePayload,
-  reason: GateRejectionReason
+  reason: GateRejectionReason,
+  whale?: WhaleRegistry,
+  nowMs = Date.now()
 ): Promise<TradeEligibilityResult> {
+  logGateSkip(trade, formatGateSkipMessage(reason, trade, whale, nowMs), whale);
   await logGateFailure(trade, reason);
   return { eligible: false, reason };
 }
@@ -167,44 +230,44 @@ export async function evaluateTradeEligibility(
   options?: TradeEligibilityOptions
 ): Promise<TradeEligibilityResult> {
   if (trade.source !== "polymarket") {
-    return reject(trade, "KALSHI_SOURCE_REJECTED");
+    return reject(trade, "KALSHI_SOURCE_REJECTED", whale, nowMs);
   }
 
   if (!options?.skipWhaleStatGates) {
     if (whale.resolvedBetsCount < MIN_RESOLVED_BETS) {
-      return reject(trade, "BELOW_RESOLVED_BETS");
+      return reject(trade, "BELOW_RESOLVED_BETS", whale, nowMs);
     }
 
     if (whale.avgEv < MIN_AVG_EV) {
-      return reject(trade, "LOW_EV");
+      return reject(trade, "LOW_EV", whale, nowMs);
     }
   }
 
   if (trade.stakeNotional < MIN_STAKE_NOTIONAL) {
-    return reject(trade, "BELOW_STAKE_FLOOR");
+    return reject(trade, "BELOW_STAKE_FLOOR", whale, nowMs);
   }
 
   const tradeAgeMs = nowMs - tradeTimestampMs(trade.timestamp);
   if (tradeAgeMs > MAX_TRADE_AGE_MS) {
-    return reject(trade, "STALE_TRADE");
+    return reject(trade, "STALE_TRADE", whale, nowMs);
   }
 
   const lineDrift = Math.abs(trade.nowCents - trade.entryCents);
   if (lineDrift > MAX_LINE_DRIFT_CENTS) {
-    return reject(trade, "LINE_DRIFT_EXCEEDED");
+    return reject(trade, "LINE_DRIFT_EXCEEDED", whale, nowMs);
   }
 
   const translation = translateMarketAndSide(toRawPolymarketTrade(trade));
   if (!translation) {
-    return reject(trade, "ILLEGIBLE_MARKET");
+    return reject(trade, "ILLEGIBLE_MARKET", whale, nowMs);
   }
 
   if (await hasDuplicateTrade(trade.tradeId)) {
-    return reject(trade, "DUPLICATE_TRADE");
+    return reject(trade, "DUPLICATE_TRADE", whale, nowMs);
   }
 
   if (await hasRecentMarketPost(trade.marketSlug)) {
-    return reject(trade, "RECENT_MARKET_POST");
+    return reject(trade, "RECENT_MARKET_POST", whale, nowMs);
   }
 
   return { eligible: true, translation };
