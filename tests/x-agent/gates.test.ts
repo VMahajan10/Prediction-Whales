@@ -65,7 +65,7 @@ describe("evaluateTradeGateMatrix", () => {
     const matrix = evaluateTradeGateMatrix({
       trade: makeTrade({
         source: "kalshi",
-        stakeNotional: 10_000,
+        stakeNotional: 9_999,
       }),
       whale: makeWhale({ resolvedBetsCount: 100, avgEv: 0.01 }),
       tradeEvPercent: 1.5,
@@ -107,10 +107,10 @@ describe("evaluateTradeEligibility", () => {
     expect(result.matrix.passesSource).toBe(false);
   });
 
-  it("rejects whales with 499 resolved bets", async () => {
+  it("rejects whales with 99 resolved bets", async () => {
     const result = await evaluateTradeEligibility(
       makeTrade(),
-      makeWhale({ resolvedBetsCount: 499 }),
+      makeWhale({ resolvedBetsCount: 99 }),
       Date.now(),
       { tradeEvPercent: 5 }
     );
@@ -119,10 +119,10 @@ describe("evaluateTradeEligibility", () => {
     expect(result.matrix.passesCredibility).toBe(false);
   });
 
-  it("rejects whales with +2.9% average EV", async () => {
+  it("rejects whales with +2.4% average EV", async () => {
     const result = await evaluateTradeEligibility(
       makeTrade(),
-      makeWhale({ avgEv: 0.029 }),
+      makeWhale({ avgEv: 0.024 }),
       Date.now(),
       { tradeEvPercent: 5 }
     );
@@ -131,10 +131,10 @@ describe("evaluateTradeEligibility", () => {
     expect(result.matrix.passesCredibility).toBe(false);
   });
 
-  it("passes the whale EV gate at +3.1% average EV", async () => {
+  it("passes the whale EV gate at +2.6% average EV", async () => {
     const result = await evaluateTradeEligibility(
       makeTrade(),
-      makeWhale({ avgEv: 0.031 }),
+      makeWhale({ avgEv: 0.026 }),
       Date.now(),
       { tradeEvPercent: 5 }
     );
@@ -146,9 +146,9 @@ describe("evaluateTradeEligibility", () => {
     });
   });
 
-  it("rejects trades below the $25,000 stake floor", async () => {
+  it("rejects trades below the $10,000 stake floor", async () => {
     const result = await evaluateTradeEligibility(
-      makeTrade({ stakeNotional: 24_999 }),
+      makeTrade({ stakeNotional: 9_999 }),
       makeWhale(),
       Date.now(),
       { tradeEvPercent: 5 }

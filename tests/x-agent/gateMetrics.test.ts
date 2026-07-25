@@ -19,7 +19,7 @@ describe("recordCredibilityFailureBreakdown", () => {
   it("counts resolved bets and avg EV failures independently", () => {
     const metrics = createGateSummary();
     recordCredibilityFailureBreakdown(metrics, {
-      resolvedBetsCount: 100,
+      resolvedBetsCount: 99,
       avgEv: 0.01,
     });
 
@@ -54,7 +54,7 @@ describe("recordGateMatrixFailures", () => {
         passesFreshness: true,
         passesSource: true,
       },
-      { resolvedBetsCount: 499, avgEv: 0.04 }
+      { resolvedBetsCount: 99, avgEv: 0.04 }
     );
 
     expect(metrics.failedCredibility).toBe(1);

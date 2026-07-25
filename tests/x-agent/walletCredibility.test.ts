@@ -41,10 +41,10 @@ describe("walletCredibility", () => {
 
     expect(
       walletMeetsCredibilityCriteria({
-        resolvedBetsCount: 499,
+        resolvedBetsCount: 99,
         avgEv: 0.1,
         winRate: 0.7,
-        closedCount: 499,
+        closedCount: 99,
       })
     ).toBe(false);
   });

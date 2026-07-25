@@ -7,7 +7,9 @@ import {
   HIGH_EV_TRADE_THRESHOLD_PCT,
   MIN_TRADE_EV_DECIMAL,
   MIN_WALLET_AVG_EV_DECIMAL,
+  MIN_WALLET_AVG_EV_THRESHOLD_PCT,
   MIN_WALLET_RESOLVED_BETS,
+  STAKE_FLOOR_USD,
   type GateSummary,
   recordGateMatrixFailures,
 } from "@/lib/x-agent/gateMetrics";
@@ -52,7 +54,7 @@ export interface TradeGateMatrix {
   /** Live trade EV from pipeline (trade.ev >= 0.03). */
   passesEv: boolean;
   passesStake: boolean;
-  /** Wallet registry track record (resolvedBets >= 500, avgEv >= 0.03). */
+  /** Wallet registry track record (resolvedBets >= 100, avgEv >= 0.025). */
   passesCredibility: boolean;
   passesAlignment: boolean;
   passesFreshness: boolean;
@@ -88,7 +90,7 @@ export interface TradeEligibilityOptions {
 
 export const MIN_RESOLVED_BETS = MIN_WALLET_RESOLVED_BETS;
 export const MIN_AVG_EV = MIN_WALLET_AVG_EV_DECIMAL;
-export const MIN_STAKE_NOTIONAL = 25_000;
+export const MIN_STAKE_NOTIONAL = STAKE_FLOOR_USD;
 export const MAX_TRADE_AGE_MS = 10 * 60 * 1000;
 
 function tradeTimestampMs(timestamp: number): number {
@@ -182,17 +184,17 @@ function logGateMatrix(
 
   if (matrix.passesStake) {
     console.log(
-      `[Pass: Stake] ${formatStake(trade.stakeNotional)} >= $25,000 threshold`
+      `[Pass: Stake] ${formatStake(trade.stakeNotional)} >= ${formatStake(MIN_STAKE_NOTIONAL)} threshold`
     );
   } else {
     console.log(
-      `[Skip: Stake] ${formatStake(trade.stakeNotional)} < $25,000 threshold`
+      `[Skip: Stake] ${formatStake(trade.stakeNotional)} < ${formatStake(MIN_STAKE_NOTIONAL)} threshold`
     );
   }
 
   if (matrix.passesCredibility && whale) {
     console.log(
-      `[Pass: Wallet Credibility] Registry track record: resolved bets (${whale.resolvedBetsCount}) >= ${MIN_WALLET_RESOLVED_BETS}, wallet avg EV (${formatWalletEvPct(whale.avgEv)}%) >= +${HIGH_EV_TRADE_THRESHOLD_PCT}%`
+      `[Pass: Wallet Credibility] Registry track record: resolved bets (${whale.resolvedBetsCount}) >= ${MIN_WALLET_RESOLVED_BETS}, wallet avg EV (${formatWalletEvPct(whale.avgEv)}%) >= +${MIN_WALLET_AVG_EV_THRESHOLD_PCT}%`
     );
   } else {
     console.log("[Credibility Fail]", {

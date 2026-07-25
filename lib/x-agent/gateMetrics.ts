@@ -4,11 +4,21 @@ export const HIGH_EV_TRADE_THRESHOLD_PCT = 3;
 /** Minimum live trade EV as decimal (trade.ev >= 0.03). */
 export const MIN_TRADE_EV_DECIMAL = 0.03;
 
-/** Minimum wallet historical avg EV from registry (wallet.avgEv >= 0.03). */
-export const MIN_WALLET_AVG_EV_DECIMAL = 0.03;
+/** Minimum wallet historical avg EV from registry (wallet.avgEv >= 0.025). */
+export const MIN_WALLET_AVG_EV_DECIMAL = 0.025;
+
+/** Minimum wallet historical avg EV as display percent (+2.5%). */
+export const MIN_WALLET_AVG_EV_THRESHOLD_PCT =
+  MIN_WALLET_AVG_EV_DECIMAL * 100;
 
 /** Minimum resolved bets on wallet registry for credibility. */
-export const MIN_WALLET_RESOLVED_BETS = 500;
+export const MIN_WALLET_RESOLVED_BETS = 100;
+
+/** Minimum trade stake notional (USD) for post-queue gates. */
+export const STAKE_FLOOR_USD = (() => {
+  const parsed = Number(process.env.STAKE_FLOOR_USD);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 10_000;
+})();
 
 export interface GateSummary {
   totalEvaluated: number;
@@ -102,19 +112,26 @@ function formatGateFraction(count: number, total: number, width = 5): string {
   return `${countStr} / ${totalStr}`;
 }
 
+function formatStakeFloorLabel(usd: number): string {
+  if (usd >= 1000 && usd % 1000 === 0) return `$${usd / 1000}k`;
+  return `$${usd.toLocaleString("en-US")}`;
+}
+
 export function printGateSummaryBox(metrics: GateSummary): void {
   const total = metrics.totalEvaluated;
+  const stakeFloorLabel = formatStakeFloorLabel(STAKE_FLOOR_USD);
+  const walletEvLabel = `+${MIN_WALLET_AVG_EV_THRESHOLD_PCT}%`;
   const lines = [
     "==================================================",
     "📊 SHADOW CRON FULL GATE-MATRIX SUMMARY",
     "==================================================",
     `Total Trades Evaluated:        ${String(total).padStart(5)}`,
     `❌ Failed Trade EV (<3%):        ${formatGateFraction(metrics.failedEvThreshold, total)}`,
-    `❌ Failed Stake Floor (<$25k):   ${formatGateFraction(metrics.failedStakeFloor, total)}`,
+    `❌ Failed Stake Floor (<${stakeFloorLabel}):   ${formatGateFraction(metrics.failedStakeFloor, total)}`,
     `❌ Failed Wallet Credibility:    ${formatGateFraction(metrics.failedCredibility, total)}`,
     `   ❌ Failed Credibility (Missing in DB)   ${formatGateFraction(metrics.failedCredibility_NotInRegistry, total)}`,
-    `   ❌ Failed Credibility (Bets < 500)      ${formatGateFraction(metrics.failedCredibility_ResolvedBets, total)}`,
-    `   ❌ Failed Credibility (AVG EV < +3%)   ${formatGateFraction(metrics.failedCredibility_AvgEv, total)}`,
+    `   ❌ Failed Credibility (Bets < ${MIN_WALLET_RESOLVED_BETS})      ${formatGateFraction(metrics.failedCredibility_ResolvedBets, total)}`,
+    `   ❌ Failed Credibility (AVG EV < ${walletEvLabel})   ${formatGateFraction(metrics.failedCredibility_AvgEv, total)}`,
     `❌ Failed Alignment/Mapping:      ${formatGateFraction(metrics.failedLegibilityOrAlignment, total)}`,
     `❌ Failed Freshness (>10m):       ${formatGateFraction(metrics.failedFreshness, total)}`,
     `❌ Failed Kalshi Source:          ${formatGateFraction(metrics.failedKalshiSource, total)}`,
