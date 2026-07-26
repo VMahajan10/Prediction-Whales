@@ -1,4 +1,5 @@
 import type { XPostQueue } from "@/lib/crossmarket/store/schema";
+import { getAppBaseUrl } from "@/lib/appBaseUrl";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 export interface ReviewActionLinks {
@@ -31,16 +32,6 @@ export interface AdminReviewAlertResult {
   webhook: AdminChannelResult;
   sms: AdminChannelResult;
   email: AdminChannelResult;
-}
-
-function getAppBaseUrl(): string {
-  const explicit = process.env.NEXT_PUBLIC_APP_URL?.trim();
-  if (explicit) return explicit.replace(/\/$/, "");
-
-  const vercel = process.env.VERCEL_URL?.trim();
-  if (vercel) return `https://${vercel}`;
-
-  return "http://localhost:3000";
 }
 
 /** Build 1-tap admin review URLs for a queued X post. */

@@ -1,4 +1,5 @@
 import { createTransport } from "nodemailer";
+import { getAppBaseUrl } from "@/lib/appBaseUrl";
 
 export interface ReviewEmailTrade {
   id: string;
@@ -13,19 +14,6 @@ export interface SendReviewEmailResult {
   sent: boolean;
   skipped?: boolean;
   error?: string;
-}
-
-function getAppBaseUrl(): string {
-  const explicit = process.env.APP_URL?.trim();
-  if (explicit) return explicit.replace(/\/$/, "");
-
-  const nextPublic = process.env.NEXT_PUBLIC_APP_URL?.trim();
-  if (nextPublic) return nextPublic.replace(/\/$/, "");
-
-  const vercel = process.env.VERCEL_URL?.trim();
-  if (vercel) return `https://${vercel}`;
-
-  return "http://localhost:3000";
 }
 
 function escapeHtml(value: string): string {

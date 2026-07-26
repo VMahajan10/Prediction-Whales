@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getAppBaseUrl } from "@/lib/appBaseUrl";
 import {
   fetchMarkets,
   fetchTrades,
@@ -16,10 +17,7 @@ export const revalidate = 0;
 
 async function fetchKalshiMarkets(): Promise<MarketSummary[]> {
   try {
-    const base =
-      process.env.VERCEL_URL != null
-        ? `https://${process.env.VERCEL_URL}`
-        : "http://localhost:3000";
+    const base = getAppBaseUrl();
     const res = await fetch(`${base}/api/kalshi`, {
       next: { revalidate: 60 },
     });

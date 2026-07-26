@@ -1,3 +1,5 @@
+import { getAppBaseUrl } from "@/lib/appBaseUrl";
+
 export interface TweetWhaleTradePayload {
   tradeId?: string;
   whaleAddress: string;
@@ -13,7 +15,7 @@ function getTweetApiBaseUrl(): string {
   if (process.env.NEXT_PUBLIC_VERCEL_URL) {
     return `https://${process.env.NEXT_PUBLIC_VERCEL_URL}`;
   }
-  return process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  return getAppBaseUrl();
 }
 
 /** Server-only: POST to /api/tweet-whale-trade with the bot secret header. */

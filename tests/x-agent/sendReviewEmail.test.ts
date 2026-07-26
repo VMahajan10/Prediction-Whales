@@ -4,6 +4,7 @@ import {
   buildReviewEmailHtml,
   parseReviewEmailRecipients,
 } from "@/lib/email/sendReviewEmail";
+import { DEFAULT_APP_URL } from "@/lib/appBaseUrl";
 
 describe("sendReviewEmail", () => {
   it("builds queue action URLs from APP_URL", () => {
@@ -18,6 +19,23 @@ describe("sendReviewEmail", () => {
     );
 
     process.env.APP_URL = previous;
+  });
+
+  it("falls back to the production default app URL when env is unset", () => {
+    const previousApp = process.env.APP_URL;
+    const previousPublic = process.env.NEXT_PUBLIC_APP_URL;
+    const previousVercel = process.env.VERCEL_URL;
+    delete process.env.APP_URL;
+    delete process.env.NEXT_PUBLIC_APP_URL;
+    delete process.env.VERCEL_URL;
+
+    expect(buildQueueActionUrl("queue-123", "approve")).toBe(
+      `${DEFAULT_APP_URL}/api/queue/action?id=queue-123&action=approve`
+    );
+
+    process.env.APP_URL = previousApp;
+    process.env.NEXT_PUBLIC_APP_URL = previousPublic;
+    process.env.VERCEL_URL = previousVercel;
   });
 
   it("parses comma-separated review recipient emails", () => {

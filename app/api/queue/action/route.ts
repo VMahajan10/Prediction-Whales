@@ -140,3 +140,28 @@ export async function GET(request: NextRequest) {
 
   return handleQueueAction(request, queueId, action);
 }
+
+export async function POST(request: NextRequest) {
+  let queueId = request.nextUrl.searchParams.get("id")?.trim();
+  let action = parseAction(request.nextUrl.searchParams.get("action"));
+
+  const contentType = request.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    try {
+      const body = (await request.json()) as { id?: string; action?: string };
+      queueId = body.id?.trim() ?? queueId;
+      action = parseAction(body.action ?? null) ?? action;
+    } catch {
+      // Fall back to query params.
+    }
+  }
+
+  if (!queueId || !action) {
+    return NextResponse.json(
+      { error: "id and action=approve|reject are required" },
+      { status: 400 }
+    );
+  }
+
+  return handleQueueAction(request, queueId, action);
+}
