@@ -1,4 +1,4 @@
-import nodemailer from "nodemailer";
+import { createTransport } from "nodemailer";
 
 export interface ReviewEmailTrade {
   id: string;
@@ -208,7 +208,7 @@ export async function sendReviewEmail(
     process.env.SMTP_SECURE === "true" ||
     port === 465;
 
-  const transporter = nodemailer.createTransport({
+  const transporter = createTransport({
     host: process.env.SMTP_HOST!.trim(),
     port: Number.isFinite(port) ? port : 587,
     secure,
