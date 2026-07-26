@@ -67,7 +67,11 @@ const FAMILY_PRIORITY: TemplateFamily[] = [
   "V1",
 ];
 
-const LIVE_FAMILY_PRIORITY = FAMILY_PRIORITY.filter((family) => family !== "V8");
+const LIVE_FAMILY_PRIORITY: TemplateFamily[] = FAMILY_PRIORITY.filter(
+  (family) => family !== "V8"
+);
+
+const RESOLUTION_FAMILY_PRIORITY: TemplateFamily[] = ["V8"];
 
 const QUIET_LINE_MAX_DELTA_CENTS = 2;
 const CONTRARIAN_ENTRY_MAX_CENTS = 40;
@@ -465,7 +469,9 @@ function pickFamily(
   );
   const candidates = withoutRepeat.length > 0 ? withoutRepeat : eligible;
 
-  const priority = resolutionReceipt ? ["V8"] : LIVE_FAMILY_PRIORITY;
+  const priority: TemplateFamily[] = resolutionReceipt
+    ? RESOLUTION_FAMILY_PRIORITY
+    : LIVE_FAMILY_PRIORITY;
   const weighted = priority.filter((family) => candidates.includes(family));
   if (weighted.length > 0) {
     return weighted[0];
