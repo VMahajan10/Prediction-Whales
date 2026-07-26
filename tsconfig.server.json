@@ -22,6 +22,7 @@
   },
   "include": [
     "scripts/run-shadow-cron.ts",
+    "scripts/preload-env.ts",
     "scripts/loadEnv.ts",
     "scripts/workerBootstrap.ts",
     "types/server-fetch.d.ts",

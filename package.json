@@ -43,7 +43,7 @@
     "test:pipeline": "ts-node --transpile-only --project tsconfig.scripts.json -r tsconfig-paths/register scripts/test-full-pipeline.ts",
     "test:watch": "vitest",
     "shadow:watch": "ts-node --transpile-only --project tsconfig.scripts.json scripts/run-shadow-cron.ts",
-    "start:worker": "TS_NODE_PROJECT=tsconfig.server.paths.json node --max-old-space-size=4096 -r tsconfig-paths/register dist/scripts/run-shadow-cron.js"
+    "start:worker": "TS_NODE_PROJECT=tsconfig.server.paths.json node --max-old-space-size=4096 -r ./dist/scripts/preload-env.js -r tsconfig-paths/register dist/scripts/run-shadow-cron.js"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.77",

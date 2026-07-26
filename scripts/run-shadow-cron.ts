@@ -13,8 +13,11 @@
  *   batch    — bounded live WebSocket run
  *   backfill — one-shot Polymarket Data API scan
  */
+import "./preload-env";
+
 import { loadEnvFiles } from "./loadEnv";
 import { bootstrapCloudWorker } from "./workerBootstrap";
+import { logReviewEmailEnvAtStartup } from "../lib/email/sendReviewEmail";
 import { printGateSummaryBox } from "../lib/x-agent/gateMetrics";
 import {
   parseLiveShadowOptionsFromEnv,
@@ -33,6 +36,7 @@ import {
 import { disconnectPrisma, getPrisma } from "../lib/prisma";
 
 loadEnvFiles();
+logReviewEmailEnvAtStartup();
 bootstrapCloudWorker();
 
 const PENDING_QUEUE_STATUSES = [

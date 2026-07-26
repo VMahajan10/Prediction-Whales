@@ -27,6 +27,7 @@ import {
 import { dispatchAdminReviewAlert } from "@/lib/x-agent/notifications";
 import {
   sendEmailNotification,
+  getEffectiveNotificationEmailForLog,
 } from "@/lib/email/sendReviewEmail";
 import { logStderr, logStdout } from "@/lib/utils";
 import { selectPostTemplate } from "@/lib/templates/postTemplates";
@@ -334,9 +335,7 @@ export async function processWhaleTradeForXAgent(
   try {
     logStdout(
       "📩 [Queue Email] Dispatching email to:",
-      process.env.NOTIFICATION_EMAIL ||
-        process.env.REVIEW_RECIPIENT_EMAILS ||
-        "(not set)"
+      getEffectiveNotificationEmailForLog()
     );
     const emailRes = await sendEmailNotification({
       id: insertedRecord.id,

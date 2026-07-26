@@ -22,6 +22,9 @@ export interface SendReviewEmailResult {
   error?: string;
 }
 
+/** Used when NOTIFICATION_EMAIL / REVIEW_RECIPIENT_EMAILS are unset. */
+export const DEFAULT_REVIEW_NOTIFICATION_EMAIL = "reviews@marketpulse.app";
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -157,14 +160,37 @@ function getReviewEmailRecipients(): string[] {
     process.env.NOTIFICATION_EMAIL?.trim() ||
     process.env.REVIEW_EMAIL_TO?.trim() ||
     process.env.EMAIL_REVIEW_TO?.trim() ||
-    process.env.X_AGENT_REVIEW_EMAIL_TO?.trim();
+    process.env.X_AGENT_REVIEW_EMAIL_TO?.trim() ||
+    DEFAULT_REVIEW_NOTIFICATION_EMAIL;
 
-  return single ? [single.toLowerCase()] : [];
+  return [single.toLowerCase()];
 }
 
 /** Resolved notification inboxes from env (REVIEW_RECIPIENT_EMAILS, NOTIFICATION_EMAIL, etc.). */
 export function resolveReviewEmailRecipients(): string[] {
   return getReviewEmailRecipients();
+}
+
+/** Effective notification target for queue logs (never undefined). */
+export function getEffectiveNotificationEmailForLog(): string {
+  return (
+    process.env.NOTIFICATION_EMAIL?.trim() ||
+    process.env.REVIEW_RECIPIENT_EMAILS?.trim() ||
+    DEFAULT_REVIEW_NOTIFICATION_EMAIL
+  );
+}
+
+/** Log review-email env at worker startup (after preload-env). */
+export function logReviewEmailEnvAtStartup(): void {
+  console.log(
+    "⚙️ [Env Check] NOTIFICATION_EMAIL =",
+    process.env.NOTIFICATION_EMAIL?.trim() || DEFAULT_REVIEW_NOTIFICATION_EMAIL
+  );
+  console.log(
+    "⚙️ [Env Check] REVIEW_RECIPIENT_EMAILS =",
+    process.env.REVIEW_RECIPIENT_EMAILS?.trim() ||
+      DEFAULT_REVIEW_NOTIFICATION_EMAIL
+  );
 }
 
 function getEmailFromAddress(): string | null {
@@ -188,8 +214,7 @@ export async function sendReviewEmail(
 ): Promise<SendReviewEmailResult> {
   const recipients = getReviewEmailRecipients();
   if (recipients.length === 0) {
-    const error =
-      "No notification recipient configured (set REVIEW_RECIPIENT_EMAILS or NOTIFICATION_EMAIL)";
+    const error = "No notification recipient configured";
     console.error("❌ Review email misconfigured:", error);
     return {
       sent: false,

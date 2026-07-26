@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildQueueActionUrl,
   buildReviewEmailHtml,
+  DEFAULT_REVIEW_NOTIFICATION_EMAIL,
   parseReviewEmailRecipients,
   resolveReviewEmailRecipients,
 } from "@/lib/email/sendReviewEmail";
@@ -89,6 +90,35 @@ describe("sendReviewEmail", () => {
     process.env.NOTIFICATION_EMAIL = "ops@example.com";
 
     expect(resolveReviewEmailRecipients()).toEqual(["ops@example.com"]);
+
+    for (const key of keys) {
+      if (previous[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = previous[key];
+      }
+    }
+  });
+
+  it("falls back to the default notification email when env is unset", () => {
+    const keys = [
+      "REVIEW_RECIPIENT_EMAILS",
+      "NOTIFICATION_EMAIL",
+      "REVIEW_EMAIL_TO",
+      "EMAIL_REVIEW_TO",
+      "X_AGENT_REVIEW_EMAIL_TO",
+    ] as const;
+    const previous = Object.fromEntries(
+      keys.map((key) => [key, process.env[key]])
+    );
+
+    for (const key of keys) {
+      delete process.env[key];
+    }
+
+    expect(resolveReviewEmailRecipients()).toEqual([
+      DEFAULT_REVIEW_NOTIFICATION_EMAIL,
+    ]);
 
     for (const key of keys) {
       if (previous[key] === undefined) {
