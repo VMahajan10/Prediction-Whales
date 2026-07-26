@@ -563,6 +563,14 @@ export function selectPostTemplate(
   };
 }
 
+/** Alias for pipeline integrations and test scripts. */
+export function selectAndRenderPostTemplate(
+  data: PostTemplateInputs,
+  options: PostTemplateSelectionOptions = {}
+): PostTemplateSelection {
+  return selectPostTemplate(data, options);
+}
+
 /** Resolution follow-up posts (V8 only). */
 export function selectResolutionReceiptTemplate(
   data: PostTemplateInputs,
