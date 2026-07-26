@@ -39,6 +39,7 @@
     "report:arb-coverage": "npx tsx --tsconfig tsconfig.json scripts/arb-coverage-report.ts",
     "test": "vitest run",
     "test:x-agent": "vitest run tests/x-agent",
+    "test:email": "npx tsx --tsconfig tsconfig.json scripts/testEmail.ts",
     "test:watch": "vitest",
     "shadow:watch": "ts-node --transpile-only --project tsconfig.scripts.json scripts/run-shadow-cron.ts",
     "start:worker": "TS_NODE_PROJECT=tsconfig.server.paths.json node --max-old-space-size=4096 -r tsconfig-paths/register dist/scripts/run-shadow-cron.js"
