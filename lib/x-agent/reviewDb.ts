@@ -31,6 +31,44 @@ export async function findQueueByReviewToken(
   return row ?? null;
 }
 
+export async function findQueueById(id: string): Promise<XPostQueue | null> {
+  const trimmed = id.trim();
+  if (!trimmed || !isDatabaseEnabled()) return null;
+
+  const db = getDb();
+  const [row] = await db
+    .select()
+    .from(xPostQueue)
+    .where(eq(xPostQueue.id, trimmed))
+    .limit(1);
+
+  return row ?? null;
+}
+
+export async function updateQueueById(
+  id: string,
+  patch: {
+    status?: XPostQueueStatus;
+    copyText?: string;
+    scheduledFor?: Date | null;
+  }
+): Promise<XPostQueue | null> {
+  const trimmed = id.trim();
+  if (!trimmed || !isDatabaseEnabled()) return null;
+
+  const db = getDb();
+  const [row] = await db
+    .update(xPostQueue)
+    .set({
+      ...patch,
+      updatedAt: new Date(),
+    })
+    .where(eq(xPostQueue.id, trimmed))
+    .returning();
+
+  return row ?? null;
+}
+
 export async function updateQueueByReviewToken(
   token: string,
   patch: {

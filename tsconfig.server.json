@@ -38,6 +38,7 @@
     "lib/whaleTrades.ts",
     "lib/resolveWhaleWallet.ts",
     "lib/fetchWithTimeout.ts",
+    "lib/email/**/*.ts",
     "lib/averageEvDisplay.ts",
     "lib/clvPriceHistory.ts",
     "lib/kalshi.ts",

@@ -6,7 +6,8 @@
     "dev": "next dev",
     "pipeline:trigger": "wait-on http://localhost:3000 && sh -c 'set -a; [ -f .env.local ] && . ./.env.local; set +a; curl -fsS -H \"Authorization: Bearer $CRON_SECRET\" http://localhost:3000/api/cron/ev-pipeline'",
     "dev:all": "concurrently \"npm run dev\" \"npm run pipeline:trigger\"",
-    "build": "next build && npm run build:worker",
+    "build": "npx prisma generate && next build && npm run build:worker",
+    "postinstall": "prisma generate",
     "build:worker": "prisma generate && tsc -p tsconfig.server.json",
     "start": "next start",
     "lint": "next lint",
@@ -50,11 +51,13 @@
     "@capacitor/ios": "^8.4.1",
     "@neondatabase/serverless": "^1.0.0",
     "@prisma/adapter-pg": "^7.9.0",
+    "@prisma/client": "^7.9.0",
     "@upstash/redis": "^1.38.0",
     "ai": "^6.0.214",
     "drizzle-orm": "^0.44.0",
     "kalshi-typescript": "^3.20.0",
     "next": "14.2.35",
+    "nodemailer": "^9.0.3",
     "pg": "^8.22.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -63,7 +66,6 @@
   },
   "devDependencies": {
     "@capacitor/assets": "^3.0.5",
-    "@prisma/client": "^7.9.0",
     "@types/node": "^20",
     "@types/pg": "^8.20.0",
     "@types/react": "^18",
@@ -87,6 +89,8 @@
   "ts-node": {
     "project": "tsconfig.scripts.json",
     "transpileOnly": true,
-    "require": ["tsconfig-paths/register"]
+    "require": [
+      "tsconfig-paths/register"
+    ]
   }
 }

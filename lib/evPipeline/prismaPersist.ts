@@ -1,7 +1,14 @@
-import type { Prisma } from "@prisma/client";
 import { evPricingSignal } from "@/lib/crossMarketEvDisplay";
 import { getPrisma, isPrismaEnabled } from "@/lib/prisma";
 import type { MatchedPair } from "@/lib/evPipeline/types";
+
+/** JSON-compatible value for Prisma `Json` columns (ev_snapshots.contributors). */
+export type EvSnapshotContributors =
+  | string
+  | number
+  | boolean
+  | EvSnapshotContributors[]
+  | { [key: string]: EvSnapshotContributors };
 
 function confidenceTier(similarity: number): string {
   if (similarity >= 0.75) return "direct";
@@ -123,7 +130,7 @@ export async function createEvSnapshotPrisma(input: {
   polymarketTokenId: string;
   pmMid: number | null;
   consensusProb: number;
-  contributors: Prisma.InputJsonValue;
+  contributors: EvSnapshotContributors;
   netEvPercent?: number | null;
 }): Promise<void> {
   if (!isPrismaEnabled()) return;

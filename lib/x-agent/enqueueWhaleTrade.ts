@@ -23,6 +23,7 @@ import {
   recordTradeEvaluated,
 } from "@/lib/x-agent/gateMetrics";
 import { dispatchAdminReviewAlert } from "@/lib/x-agent/notifications";
+import { sendReviewEmail } from "@/lib/email/sendReviewEmail";
 import { generateXPostCopy } from "@/lib/x-agent/templates";
 import {
   ANONYMOUS_WALLET_ADDRESS,
@@ -246,4 +247,33 @@ export async function processWhaleTradeForXAgent(
       error: err instanceof Error ? err.message : err,
     });
   });
+
+  try {
+    const emailResult = await sendReviewEmail({
+      id: queued.id,
+      copyText: queued.copyText,
+      stakeNotional: queued.stakeNotional,
+      evPercent: tradeEvPercent,
+      marketTitle: eligibility.translation.marketPlain,
+    });
+
+    if (emailResult.sent) {
+      console.log("[x-agent/enqueue] review email sent", {
+        tradeId: payload.tradeId,
+        queueId: queued.id,
+      });
+    } else if (!emailResult.skipped) {
+      console.warn("[x-agent/enqueue] review email failed", {
+        tradeId: payload.tradeId,
+        queueId: queued.id,
+        error: emailResult.error,
+      });
+    }
+  } catch (error) {
+    console.error("[x-agent/enqueue] review email failed", {
+      tradeId: payload.tradeId,
+      queueId: queued.id,
+      error: error instanceof Error ? error.message : error,
+    });
+  }
 }
