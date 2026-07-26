@@ -25,7 +25,10 @@ import {
   recordQueuedSuccess,
 } from "@/lib/x-agent/gateMetrics";
 import { dispatchAdminReviewAlert } from "@/lib/x-agent/notifications";
-import { sendReviewEmail } from "@/lib/email/sendReviewEmail";
+import {
+  resolveReviewEmailRecipients,
+  sendReviewEmail,
+} from "@/lib/email/sendReviewEmail";
 import { selectPostTemplate } from "@/lib/templates/postTemplates";
 import {
   fetchLastTemplateFamily,
@@ -341,8 +344,24 @@ export async function processWhaleTradeForXAgent(
   });
 
   // Review email is sent synchronously immediately after x_post_queue insert.
+  const notificationEmail =
+    process.env.NOTIFICATION_EMAIL?.trim() ||
+    process.env.REVIEW_RECIPIENT_EMAILS?.trim() ||
+    undefined;
+  const resolvedRecipients = resolveReviewEmailRecipients();
+
+  console.log(
+    "[Queue] Sending email notification to:",
+    notificationEmail ?? resolvedRecipients.join(", ") ?? undefined
+  );
+  if (!notificationEmail && resolvedRecipients.length === 0) {
+    console.error(
+      "[Queue] NOTIFICATION_EMAIL and REVIEW_RECIPIENT_EMAILS are undefined — email will be skipped"
+    );
+  }
+
   try {
-    const emailResult = await sendReviewEmail({
+    const res = await sendReviewEmail({
       id: queued.id,
       copyText: queued.copyText,
       renderedDraft: queued.copyText,
@@ -353,20 +372,23 @@ export async function processWhaleTradeForXAgent(
       marketTitle: translation.marketPlain,
     });
 
-    if (emailResult.sent) {
+    if (res.sent) {
+      console.log("[Queue] Email sent successfully:", res);
       console.log("✅ Email sent for trade ID:", pricedPayload.tradeId);
     } else {
+      console.error("[Queue] Failed to send email:", res.error ?? res);
       console.error(
         "❌ Failed to send email for trade ID:",
         pricedPayload.tradeId,
-        emailResult.error ?? "unknown error"
+        res.error ?? "unknown error"
       );
     }
-  } catch (error) {
+  } catch (err) {
+    console.error("[Queue] Failed to send email:", err);
     console.error(
       "❌ Failed to send email for trade ID:",
       pricedPayload.tradeId,
-      error
+      err
     );
   }
 }
