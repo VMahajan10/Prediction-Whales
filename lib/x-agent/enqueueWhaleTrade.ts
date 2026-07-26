@@ -26,9 +26,9 @@ import {
 } from "@/lib/x-agent/gateMetrics";
 import { dispatchAdminReviewAlert } from "@/lib/x-agent/notifications";
 import {
-  resolveReviewEmailRecipients,
-  sendReviewEmail,
+  sendEmailNotification,
 } from "@/lib/email/sendReviewEmail";
+import { logStderr, logStdout } from "@/lib/utils";
 import { selectPostTemplate } from "@/lib/templates/postTemplates";
 import {
   fetchLastTemplateFamily,
@@ -323,11 +323,50 @@ export async function processWhaleTradeForXAgent(
       },
     });
   } catch (error) {
-    console.error("[DB WRITE ERROR]", error);
+    logStderr("[DB WRITE ERROR]", error);
     throw error;
   }
 
-  console.log(
+  const insertedRecord = queued;
+
+  logStdout("📌 [Queue Insert] Record created ID:", insertedRecord.id);
+
+  try {
+    logStdout(
+      "📩 [Queue Email] Dispatching email to:",
+      process.env.NOTIFICATION_EMAIL ||
+        process.env.REVIEW_RECIPIENT_EMAILS ||
+        "(not set)"
+    );
+    const emailRes = await sendEmailNotification({
+      id: insertedRecord.id,
+      copyText: insertedRecord.copyText,
+      renderedDraft: insertedRecord.copyText,
+      templateFamily: family,
+      variantId,
+      stakeNotional: insertedRecord.stakeNotional,
+      evPercent: tradeEvPercent,
+      marketTitle: translation.marketPlain,
+      queuedAt: insertedRecord.createdAt,
+    });
+    if (emailRes.sent) {
+      logStdout("✅ [Queue Email Success] Result:", emailRes);
+    } else {
+      logStderr(
+        "❌ [Queue Email Error] Failed for ID:",
+        insertedRecord.id,
+        emailRes
+      );
+    }
+  } catch (emailErr) {
+    logStderr(
+      "❌ [Queue Email Error] Failed for ID:",
+      insertedRecord.id,
+      emailErr
+    );
+  }
+
+  logStdout(
     `[QUEUED TO X_POST_QUEUE] Trade ID: ${pricedPayload.tradeId} | Whale: ${whaleRegistry.whale.pseudonym} | Template: ${family}/${variantId} | Stake: $${Math.round(pricedPayload.stakeNotional).toLocaleString("en-US")}`
   );
   if (metricsCollector) {
@@ -336,59 +375,10 @@ export async function processWhaleTradeForXAgent(
     recordQueuedSuccess(metrics as GateSummary);
   }
 
-  void dispatchAdminReviewAlert(queued as XPostQueue).catch((err) => {
-    console.error("[x-agent/enqueue] admin alert failed", {
+  void dispatchAdminReviewAlert(insertedRecord as XPostQueue).catch((err) => {
+    logStderr("[x-agent/enqueue] admin alert failed", {
       tradeId: pricedPayload.tradeId,
       error: err instanceof Error ? err.message : err,
     });
   });
-
-  // Review email is sent synchronously immediately after x_post_queue insert.
-  const notificationEmail =
-    process.env.NOTIFICATION_EMAIL?.trim() ||
-    process.env.REVIEW_RECIPIENT_EMAILS?.trim() ||
-    undefined;
-  const resolvedRecipients = resolveReviewEmailRecipients();
-
-  console.log(
-    "[Queue] Sending email notification to:",
-    notificationEmail ?? resolvedRecipients.join(", ") ?? undefined
-  );
-  if (!notificationEmail && resolvedRecipients.length === 0) {
-    console.error(
-      "[Queue] NOTIFICATION_EMAIL and REVIEW_RECIPIENT_EMAILS are undefined — email will be skipped"
-    );
-  }
-
-  try {
-    const res = await sendReviewEmail({
-      id: queued.id,
-      copyText: queued.copyText,
-      renderedDraft: queued.copyText,
-      templateFamily: family,
-      variantId,
-      stakeNotional: queued.stakeNotional,
-      evPercent: tradeEvPercent,
-      marketTitle: translation.marketPlain,
-    });
-
-    if (res.sent) {
-      console.log("[Queue] Email sent successfully:", res);
-      console.log("✅ Email sent for trade ID:", pricedPayload.tradeId);
-    } else {
-      console.error("[Queue] Failed to send email:", res.error ?? res);
-      console.error(
-        "❌ Failed to send email for trade ID:",
-        pricedPayload.tradeId,
-        res.error ?? "unknown error"
-      );
-    }
-  } catch (err) {
-    console.error("[Queue] Failed to send email:", err);
-    console.error(
-      "❌ Failed to send email for trade ID:",
-      pricedPayload.tradeId,
-      err
-    );
-  }
 }

@@ -1,6 +1,7 @@
 import type { XPostQueue } from "@/lib/crossmarket/store/schema";
 import { getAppBaseUrl } from "@/lib/appBaseUrl";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
+import { formatToEST } from "@/lib/utils";
 
 export interface ReviewActionLinks {
   approve: string;
@@ -56,6 +57,7 @@ function buildAlertPayload(
   const message = [
     "X Agent draft ready for review",
     `Trade: ${queueItem.tradeId}`,
+    `Queued: ${formatToEST(queueItem.createdAt)}`,
     `Market: ${queueItem.marketSlug}`,
     `Template: ${queueItem.templateFamily}`,
     "",

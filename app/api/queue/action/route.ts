@@ -4,6 +4,7 @@ import {
   findQueueById,
   updateQueueById,
 } from "@/lib/x-agent/reviewDb";
+import { formatToEST } from "@/lib/utils";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -107,10 +108,7 @@ async function handleQueueAction(
     );
   }
 
-  const scheduledLabel = scheduledFor.toLocaleString("en-US", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
+  const scheduledLabel = formatToEST(scheduledFor);
 
   if (wantsHtml(request)) {
     return htmlResponse(

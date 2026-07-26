@@ -1,5 +1,6 @@
 import { createTransport } from "nodemailer";
 import { getAppBaseUrl } from "@/lib/appBaseUrl";
+import { formatToEST } from "@/lib/utils";
 
 export interface ReviewEmailTrade {
   id: string;
@@ -11,6 +12,8 @@ export interface ReviewEmailTrade {
   /** Live trade EV as display percent (e.g. 2.5 = +2.5%). */
   evPercent: number | null;
   marketTitle: string;
+  /** When the queue row was created (shown in EST/EDT). */
+  queuedAt?: Date | string | number;
 }
 
 export interface SendReviewEmailResult {
@@ -61,6 +64,10 @@ export function buildReviewEmailHtml(trade: ReviewEmailTrade): string {
   );
   const stake = escapeHtml(formatStakeUsd(trade.stakeNotional));
   const ev = escapeHtml(formatEvLabel(trade.evPercent));
+  const queuedAt =
+    trade.queuedAt != null
+      ? escapeHtml(formatToEST(trade.queuedAt))
+      : null;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -87,7 +94,8 @@ export function buildReviewEmailHtml(trade: ReviewEmailTrade): string {
                   <td style="padding:16px;">
                     <p style="margin:0 0 10px;font-size:14px;"><strong>Market:</strong> ${market}</p>
                     <p style="margin:0 0 10px;font-size:14px;"><strong>Stake:</strong> ${stake}</p>
-                    <p style="margin:0;font-size:14px;"><strong>EV:</strong> ${ev}</p>
+                    <p style="margin:0 0 10px;font-size:14px;"><strong>EV:</strong> ${ev}</p>
+                    ${queuedAt ? `<p style="margin:0;font-size:14px;"><strong>Queued:</strong> ${queuedAt}</p>` : ""}
                   </td>
                 </tr>
               </table>
@@ -234,6 +242,9 @@ export async function sendReviewEmail(
     `Market: ${trade.marketTitle}`,
     `Stake: ${formatStakeUsd(trade.stakeNotional)}`,
     `EV: ${formatEvLabel(trade.evPercent)}`,
+    ...(trade.queuedAt != null
+      ? [`Queued: ${formatToEST(trade.queuedAt)}`]
+      : []),
     "",
     "Drafted X post:",
     trade.renderedDraft ?? trade.copyText,
@@ -260,3 +271,6 @@ export async function sendReviewEmail(
 
   return { sent: true };
 }
+
+/** Queue review email dispatch (alias used after x_post_queue insert). */
+export const sendEmailNotification = sendReviewEmail;

@@ -37,7 +37,7 @@ import { usePipelineTradeEv } from "@/lib/usePipelineEvIndex";
 import { resolvePolymarketPipelineTokenId } from "@/lib/pipelineEvClient";
 import { resolveCrossMarketEvForTrade } from "@/lib/resolveTradeCrossMarketEv";
 import { isPolymarketTrade } from "@/lib/tradeSource";
-import { getFullDate, getTimeAgo, getUtcString } from "@/lib/time";
+import { getFullDate, getTimeAgo } from "@/lib/time";
 import { formatImpliedProbabilitySummary } from "@/lib/tradeDetail";
 import WhaleTrackRecord from "@/components/WhaleTrackRecord";
 
@@ -743,9 +743,6 @@ export default function WhaleProfilePage() {
             </p>
             <p className="text-lg font-semibold text-white">
               {getFullDate(trade.timestamp)}
-            </p>
-            <p className="mt-1 text-xs text-slate-500">
-              UTC: {getUtcString(trade.timestamp)}
             </p>
             <p className="mt-1 text-sm text-pulse-accent">
               {getTimeAgo(trade.timestamp)}

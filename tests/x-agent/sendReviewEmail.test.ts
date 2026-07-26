@@ -9,7 +9,9 @@ import { DEFAULT_APP_URL } from "@/lib/appBaseUrl";
 
 describe("sendReviewEmail", () => {
   it("builds queue action URLs from APP_URL", () => {
+    const previousRender = process.env.RENDER_EXTERNAL_URL;
     const previous = process.env.APP_URL;
+    delete process.env.RENDER_EXTERNAL_URL;
     process.env.APP_URL = "https://marketpulse.example.com";
 
     expect(buildQueueActionUrl("queue-123", "approve")).toBe(
@@ -19,24 +21,36 @@ describe("sendReviewEmail", () => {
       "https://marketpulse.example.com/api/queue/action?id=queue-123&action=reject"
     );
 
+    process.env.RENDER_EXTERNAL_URL = previousRender;
     process.env.APP_URL = previous;
   });
 
-  it("falls back to the production default app URL when env is unset", () => {
+  it("prefers RENDER_EXTERNAL_URL over APP_URL for queue action links", () => {
+    const previousRender = process.env.RENDER_EXTERNAL_URL;
     const previousApp = process.env.APP_URL;
-    const previousPublic = process.env.NEXT_PUBLIC_APP_URL;
-    const previousVercel = process.env.VERCEL_URL;
+    process.env.RENDER_EXTERNAL_URL = "https://mvp-2324.onrender.com";
+    process.env.APP_URL = "https://wrong-host.example.com";
+
+    expect(buildQueueActionUrl("real-queue-uuid", "approve")).toBe(
+      "https://mvp-2324.onrender.com/api/queue/action?id=real-queue-uuid&action=approve"
+    );
+
+    process.env.RENDER_EXTERNAL_URL = previousRender;
+    process.env.APP_URL = previousApp;
+  });
+
+  it("falls back to the production default app URL when env is unset", () => {
+    const previousRender = process.env.RENDER_EXTERNAL_URL;
+    const previousApp = process.env.APP_URL;
+    delete process.env.RENDER_EXTERNAL_URL;
     delete process.env.APP_URL;
-    delete process.env.NEXT_PUBLIC_APP_URL;
-    delete process.env.VERCEL_URL;
 
     expect(buildQueueActionUrl("queue-123", "approve")).toBe(
       `${DEFAULT_APP_URL}/api/queue/action?id=queue-123&action=approve`
     );
 
+    process.env.RENDER_EXTERNAL_URL = previousRender;
     process.env.APP_URL = previousApp;
-    process.env.NEXT_PUBLIC_APP_URL = previousPublic;
-    process.env.VERCEL_URL = previousVercel;
   });
 
   it("parses comma-separated review recipient emails", () => {
@@ -92,11 +106,13 @@ describe("sendReviewEmail", () => {
       stakeNotional: 25000,
       evPercent: 2.4,
       marketTitle: "China invade Taiwan",
+      queuedAt: new Date("2026-03-10T17:00:00.000Z"),
     });
 
     expect(html).toContain("China invade Taiwan");
     expect(html).toContain("$25,000");
     expect(html).toContain("+2.4%");
+    expect(html).toContain("Queued:");
     expect(html).toContain("DeepWallet bought yes on China invade Taiwan");
     expect(html).toContain("action=approve");
     expect(html).toContain("action=reject");

@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 import { getDb, isDatabaseEnabled } from "@/lib/crossmarket/store/db";
 import {
   xPostQueue,
@@ -13,6 +13,34 @@ const REVIEWABLE_STATUSES = new Set<XPostQueueStatus>([
 
 export function canMutateReviewItem(item: XPostQueue): boolean {
   return REVIEWABLE_STATUSES.has(item.status as XPostQueueStatus);
+}
+
+/** Newest-first ordering for all multi-row x_post_queue reads. */
+export const xPostQueueOrderByCreatedDesc = desc(xPostQueue.createdAt);
+
+export async function listXPostQueue(options?: {
+  status?: XPostQueueStatus[];
+  limit?: number;
+}): Promise<XPostQueue[]> {
+  if (!isDatabaseEnabled()) return [];
+
+  const db = getDb();
+  const limit = options?.limit;
+
+  if (options?.status?.length) {
+    const query = db
+      .select()
+      .from(xPostQueue)
+      .where(inArray(xPostQueue.status, options.status))
+      .orderBy(xPostQueueOrderByCreatedDesc);
+    return limit != null && limit > 0 ? query.limit(limit) : query;
+  }
+
+  const query = db
+    .select()
+    .from(xPostQueue)
+    .orderBy(xPostQueueOrderByCreatedDesc);
+  return limit != null && limit > 0 ? query.limit(limit) : query;
 }
 
 export async function findQueueByReviewToken(

@@ -33,7 +33,7 @@ import { useResolvedWallet } from "@/lib/useResolvedWallet";
 import { useCrossMarketEvIndex } from "@/lib/useCrossMarketEvIndex";
 import { usePipelineTradeEv } from "@/lib/usePipelineEvIndex";
 import { resolvePolymarketPipelineTokenId } from "@/lib/pipelineEvClient";
-import { getFullDate, getTimeAgo, getUtcString } from "@/lib/time";
+import { getFullDate, getTimeAgo } from "@/lib/time";
 import {
   formatImpliedProbabilitySummary,
   getPlainEnglishOutcome,
@@ -450,9 +450,6 @@ export default function TradeDetailPage() {
             </p>
             <p className="text-lg font-semibold text-white">
               {getFullDate(trade.timestamp)}
-            </p>
-            <p className="mt-1 text-xs text-slate-500">
-              UTC: {getUtcString(trade.timestamp)}
             </p>
             <p className="mt-1 text-sm text-pulse-accent">
               {getTimeAgo(trade.timestamp)}

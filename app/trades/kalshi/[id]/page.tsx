@@ -35,7 +35,7 @@ import { useCrossMarketEvIndex } from "@/lib/useCrossMarketEvIndex";
 import { usePipelineTradeEv } from "@/lib/usePipelineEvIndex";
 import { resolveCrossMarketEvForTrade } from "@/lib/resolveTradeCrossMarketEv";
 import type { TradeSummary } from "@/lib/polymarket";
-import { getFullDate, getTimeAgo, getUtcString } from "@/lib/time";
+import { getFullDate, getTimeAgo } from "@/lib/time";
 import {
   formatImpliedProbabilitySummary,
   getPlainEnglishOutcomeLabel,
@@ -416,9 +416,6 @@ export default function KalshiTradeDetailPage() {
             </p>
             <p className="text-lg font-semibold text-white">
               {getFullDate(trade.timestamp)}
-            </p>
-            <p className="mt-1 text-xs text-slate-500">
-              UTC: {getUtcString(trade.timestamp)}
             </p>
             <p className="mt-1 text-sm text-pulse-accent">
               {getTimeAgo(trade.timestamp)}

@@ -6,12 +6,32 @@ const ACTIVE_QUEUE_STATUSES = [
   "APPROVED",
 ] as const;
 
+/** Prisma orderBy — newest queue rows first. */
+export const xPostQueuePrismaOrder = { createdAt: "desc" as const };
+
+/** List x_post_queue rows newest-first (dashboard / admin reads). */
+export async function listXPostQueueRows(
+  prisma: PrismaClient,
+  options?: {
+    status?: string[];
+    limit?: number;
+  }
+) {
+  return prisma.xPostQueue.findMany({
+    where: options?.status?.length
+      ? { status: { in: options.status } }
+      : undefined,
+    orderBy: xPostQueuePrismaOrder,
+    take: options?.limit,
+  });
+}
+
 /** Most recent template family from any queued or published post. */
 export async function fetchLastTemplateFamily(
   prisma: PrismaClient
 ): Promise<string | undefined> {
   const row = await prisma.xPostQueue.findFirst({
-    orderBy: { createdAt: "desc" },
+    orderBy: xPostQueuePrismaOrder,
     select: { templateFamily: true },
   });
   return row?.templateFamily ?? undefined;
@@ -29,6 +49,7 @@ export async function hasActiveWhaleMarketQueueItem(
       marketSlug,
       status: { in: [...ACTIVE_QUEUE_STATUSES] },
     },
+    orderBy: xPostQueuePrismaOrder,
     select: { id: true },
   });
   return existing != null;
