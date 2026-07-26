@@ -1,7 +1,7 @@
 import type { XPostQueue } from "@/lib/crossmarket/store/schema";
 import { getAppBaseUrl } from "@/lib/appBaseUrl";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
-import { formatToEST } from "@/lib/utils";
+import { formatToEST } from "@/lib/client-utils";
 
 export interface ReviewActionLinks {
   approve: string;

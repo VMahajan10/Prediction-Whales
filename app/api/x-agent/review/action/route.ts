@@ -4,7 +4,7 @@ import {
   findQueueByReviewToken,
   updateQueueByReviewToken,
 } from "@/lib/x-agent/reviewDb";
-import { formatToEST } from "@/lib/utils";
+import { formatToEST } from "@/lib/client-utils";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";

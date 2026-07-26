@@ -1,6 +1,6 @@
 import { createTransport } from "nodemailer";
 import { getAppBaseUrl } from "@/lib/appBaseUrl";
-import { formatToEST } from "@/lib/utils";
+import { formatToEST } from "@/lib/client-utils";
 
 export interface ReviewEmailTrade {
   id: string;

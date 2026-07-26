@@ -6,7 +6,7 @@ import CrossMarketEvBadge from "@/components/CrossMarketEvBadge";
 import AiArbitrageBadge from "@/components/AiArbitrageBadge";
 import PipelineEvBadge from "@/components/PipelineEvBadge";
 import PlatformFilterToggle from "@/components/PlatformFilterToggle";
-import { getTimeAgo } from "@/lib/time";
+import { getTimeAgo } from "@/lib/client-utils";
 import type { FeedTrade } from "@/lib/kalshiTrades";
 import type { OutcomeBooks } from "@/lib/crossMarketEv";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
