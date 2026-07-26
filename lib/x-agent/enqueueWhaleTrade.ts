@@ -26,6 +26,7 @@ import { dispatchAdminReviewAlert } from "@/lib/x-agent/notifications";
 import { generateXPostCopy } from "@/lib/x-agent/templates";
 import {
   ANONYMOUS_WALLET_ADDRESS,
+  ANONYMOUS_WHALE_PSEUDONYM,
   ensureWhaleInRegistry,
   isAnonymousWalletAddress,
   normalizeWalletAddress,
@@ -112,8 +113,11 @@ export async function processWhaleTradeForXAgent(
     metricsCollector.recordTradeEvaluated();
   }
 
-  const wallet = trade.proxyWallet?.trim();
-  const anonymousTrade = isAnonymousWalletAddress(wallet);
+  const proxyWallet = trade.proxyWallet?.trim();
+  const anonymousTrade = isAnonymousWalletAddress(proxyWallet);
+  const walletAddress = anonymousTrade
+    ? ANONYMOUS_WALLET_ADDRESS
+    : normalizeWalletAddress(proxyWallet!);
   const evInput = whaleToEvInput(trade);
   const lookupKey = evInput ? pipelineEvLookupKey(evInput) : null;
 
@@ -128,14 +132,14 @@ export async function processWhaleTradeForXAgent(
   let whaleForGates: Awaited<
     ReturnType<typeof resolveWhaleForCredibilityGate>
   >["whale"] = null;
-  if (wallet && !anonymousTrade && isPrismaEnabled()) {
-    const credibility = await resolveWhaleForCredibilityGate(wallet);
+  if (!anonymousTrade && isPrismaEnabled()) {
+    const credibility = await resolveWhaleForCredibilityGate(walletAddress);
     whaleForGates = credibility.whale;
     if (credibility.source === "polymarket_api") {
       console.log(
         "[x-agent/enqueue] wallet credibility hydrated from Polymarket Data API",
         {
-          wallet: normalizeWalletAddress(wallet),
+          wallet: walletAddress,
           resolvedBetsCount: credibility.stats?.resolvedBetsCount,
           avgEv: credibility.stats?.avgEv,
         }
@@ -143,10 +147,6 @@ export async function processWhaleTradeForXAgent(
     }
   }
 
-  const walletAddress =
-    wallet && !anonymousTrade
-      ? normalizeWalletAddress(wallet)
-      : ANONYMOUS_WALLET_ADDRESS;
   const nowCents =
     pipelinePmMid != null ? priceToCents(pipelinePmMid) : priceToCents(trade.price);
   const payload = buildTradePayload(trade, walletAddress, nowCents);
@@ -166,10 +166,6 @@ export async function processWhaleTradeForXAgent(
     logEnqueueSkip(trade, "[Skip: Setup] Prisma/DATABASE_URL not configured");
     return;
   }
-  if (!wallet) {
-    logEnqueueSkip(trade, "[Skip: Setup] Missing proxy wallet");
-    return;
-  }
 
   const prisma = getPrisma();
   if (!prisma) {
@@ -178,16 +174,24 @@ export async function processWhaleTradeForXAgent(
   }
 
   const whaleRegistry =
+    !anonymousTrade &&
     whaleForGates != null &&
     whaleForGates.resolvedBetsCount >= MIN_WALLET_RESOLVED_BETS &&
     whaleForGates.avgEv >= MIN_WALLET_AVG_EV_DECIMAL
       ? { whale: whaleForGates, created: false }
-      : await ensureWhaleInRegistry(normalizeWalletAddress(wallet), {
+      : await ensureWhaleInRegistry(walletAddress, {
+          pseudonym: anonymousTrade ? ANONYMOUS_WHALE_PSEUDONYM : undefined,
           avgStakeNotional: trade.usdNotional,
         });
   if (!whaleRegistry) {
     logEnqueueSkip(trade, "[Skip: Setup] Whale registry upsert failed");
     return;
+  }
+
+  if (anonymousTrade) {
+    console.log(
+      "[x-agent/enqueue] Unresolved proxy wallet — queuing with anonymous placeholder"
+    );
   }
 
   const { copyText, family } = generateXPostCopy({
@@ -209,7 +213,7 @@ export async function processWhaleTradeForXAgent(
     queued = await prisma.xPostQueue.create({
       data: {
         id: randomUUID(),
-        walletAddress: normalizeWalletAddress(wallet),
+        walletAddress,
         tradeId: payload.tradeId,
         templateFamily: family,
         copyText,

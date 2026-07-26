@@ -4,6 +4,8 @@ import { getPrisma, isPrismaEnabled } from "@/lib/prisma";
 export const ANONYMOUS_WALLET_ADDRESS =
   "0x0000000000000000000000000000000000000000";
 
+export const ANONYMOUS_WHALE_PSEUDONYM = "Anonymous Whale";
+
 export function normalizeWalletAddress(wallet: string): string {
   return wallet.trim().toLowerCase();
 }
