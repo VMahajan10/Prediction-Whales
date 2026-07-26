@@ -233,13 +233,21 @@ export async function sendReviewEmail(
     `Reject: ${buildQueueActionUrl(trade.id, "reject")}`,
   ].join("\n");
 
-  await transporter.sendMail({
-    from,
-    to: recipients,
-    subject,
-    text,
-    html,
-  });
+  try {
+    await transporter.sendMail({
+      from,
+      to: recipients,
+      subject,
+      text,
+      html,
+    });
+  } catch (error) {
+    console.error("Email send failed:", error);
+    return {
+      sent: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 
   return { sent: true };
 }

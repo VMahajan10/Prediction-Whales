@@ -105,6 +105,7 @@ interface RenderContext {
   resolved: string | null;
   postedCount: string | null;
   evGloss: string;
+  evGlossThey: string;
   ago: string;
   gain: string | null;
   hashtag: string;
@@ -144,6 +145,14 @@ function formatAvgEvPct(avgEv: number): string {
 function formatWinRate(winRate?: number): string | null {
   if (winRate == null || !Number.isFinite(winRate)) return null;
   return `${Math.round(winRate * 100)}`;
+}
+
+/** EV gloss phrasing for "they …" / "as they …" (plural verb forms). */
+function evGlossForThey(gloss: string): string {
+  return gloss
+    .replace(/^gets\b/, "get")
+    .replace(/^wins\b/, "win")
+    .replace(/^makes\b/, "make");
 }
 
 function lineDeltaCents(data: PostTemplateInputs): number | null {
@@ -186,6 +195,8 @@ function buildRenderContext(
       ? ROTATING_HASHTAGS[Math.floor(random() * ROTATING_HASHTAGS.length)]
       : "";
 
+  const evGloss = data.evGloss ?? formatEvGloss(data.avg_ev, random);
+
   return {
     whale: data.whale.trim(),
     side: data.side.trim(),
@@ -208,7 +219,8 @@ function buildRenderContext(
       data.postedCount30d != null && Number.isFinite(data.postedCount30d)
         ? String(data.postedCount30d)
         : null,
-    evGloss: data.evGloss ?? formatEvGloss(data.avg_ev, random),
+    evGloss,
+    evGlossThey: evGlossForThey(evGloss),
     ago:
       data.agoMinutes != null && Number.isFinite(data.agoMinutes)
         ? `${Math.max(1, Math.round(data.agoMinutes))} min`
@@ -299,7 +311,7 @@ const TEMPLATE_FAMILIES_DEF: TemplateFamilyDefinition[] = [
       {
         id: "d",
         render: (ctx) =>
-          `Anyone can win 80% betting favorites. This whale runs ${ctx.avgEv} EV over ${ctx.resolved} bets as they ${ctx.evGloss}. Just in: ${ctx.stake} on ${ctx.side}.`,
+          `Anyone can win 80% betting favorites. This whale runs ${ctx.avgEv} EV over ${ctx.resolved} bets as they ${ctx.evGlossThey}. Just in: ${ctx.stake} on ${ctx.side}.`,
         requiredSlots: ["resolved"],
       },
     ],
@@ -323,7 +335,7 @@ const TEMPLATE_FAMILIES_DEF: TemplateFamilyDefinition[] = [
       {
         id: "c",
         render: (ctx) =>
-          `${ctx.whale} entered ${ctx.side} at ${ctx.entry}¢ — it's ${ctx.now}¢ now. Their AVG EV is ${ctx.avgEv}: historically they ${ctx.evGloss}. That gap is the edge.`,
+          `${ctx.whale} entered ${ctx.side} at ${ctx.entry}¢ — it's ${ctx.now}¢ now. Their AVG EV is ${ctx.avgEv}: historically they ${ctx.evGlossThey}. That gap is the edge.`,
         requiredSlots: ["now"],
       },
     ],
@@ -364,7 +376,7 @@ const TEMPLATE_FAMILIES_DEF: TemplateFamilyDefinition[] = [
       {
         id: "b",
         render: (ctx) =>
-          `The crowd has this at ${ctx.now ?? ctx.entry}¢. ${ctx.whale} took ${ctx.side} at ${ctx.entry}¢ with ${ctx.stake} and their ${ctx.avgEv} AVG EV over ${ctx.resolved ?? "—"} bets says they usually ${ctx.evGloss}.`,
+          `The crowd has this at ${ctx.now ?? ctx.entry}¢. ${ctx.whale} took ${ctx.side} at ${ctx.entry}¢ with ${ctx.stake} and their ${ctx.avgEv} AVG EV over ${ctx.resolved ?? "—"} bets says they usually ${ctx.evGlossThey}.`,
       },
     ],
   },
@@ -405,7 +417,7 @@ const TEMPLATE_FAMILIES_DEF: TemplateFamilyDefinition[] = [
       {
         id: "c",
         render: (ctx) =>
-          `${ctx.stake} on ${ctx.side} at ${ctx.entry}¢ from a wallet averaging ${ctx.avgEv} EV across ${ctx.resolved ?? "—"} bets as they ${ctx.evGloss}. The market hasn't noticed yet.`,
+          `${ctx.stake} on ${ctx.side} at ${ctx.entry}¢ from a wallet averaging ${ctx.avgEv} EV across ${ctx.resolved ?? "—"} bets as they ${ctx.evGlossThey}. The market hasn't noticed yet.`,
         requiredSlots: ["now"],
       },
       {

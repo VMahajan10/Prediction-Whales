@@ -306,22 +306,19 @@ export async function processWhaleTradeForXAgent(
     });
 
     if (emailResult.sent) {
-      console.log("[x-agent/enqueue] review email sent", {
-        tradeId: payload.tradeId,
-        queueId: queued.id,
-      });
-    } else if (!emailResult.skipped) {
-      console.warn("[x-agent/enqueue] review email failed", {
-        tradeId: payload.tradeId,
-        queueId: queued.id,
-        error: emailResult.error,
-      });
+      console.log(
+        `Successfully queued trade ID ${payload.tradeId} and sent email`
+      );
+    } else {
+      console.error(
+        `Failed to send email for trade ID ${payload.tradeId}`,
+        emailResult.skipped
+          ? { skipped: true, reason: emailResult.error }
+          : { error: emailResult.error }
+      );
     }
   } catch (error) {
-    console.error("[x-agent/enqueue] review email failed", {
-      tradeId: payload.tradeId,
-      queueId: queued.id,
-      error: error instanceof Error ? error.message : error,
-    });
+    console.error("Email send failed:", error);
+    console.error(`Failed to send email for trade ID ${payload.tradeId}`);
   }
 }
