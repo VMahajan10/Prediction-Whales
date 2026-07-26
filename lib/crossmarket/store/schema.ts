@@ -510,6 +510,7 @@ export const xPostQueue = pgTable(
       .references(() => whaleRegistry.walletAddress, { onDelete: "cascade" }),
     tradeId: text("trade_id").notNull(),
     templateFamily: text("template_family").notNull(),
+    variantId: text("variant_id"),
     copyText: text("copy_text").notNull(),
     marketSlug: text("market_slug").notNull(),
     side: text("side").notNull(),

@@ -24,7 +24,11 @@ import {
 } from "@/lib/x-agent/gateMetrics";
 import { dispatchAdminReviewAlert } from "@/lib/x-agent/notifications";
 import { sendReviewEmail } from "@/lib/email/sendReviewEmail";
-import { generateXPostCopy } from "@/lib/x-agent/templates";
+import { selectPostTemplate } from "@/lib/templates/postTemplates";
+import {
+  fetchLastTemplateFamily,
+  hasActiveWhaleMarketQueueItem,
+} from "@/lib/templates/queueHelpers";
 import {
   ANONYMOUS_WALLET_ADDRESS,
   ANONYMOUS_WHALE_PSEUDONYM,
@@ -195,19 +199,59 @@ export async function processWhaleTradeForXAgent(
     );
   }
 
-  const { copyText, family } = generateXPostCopy({
-    whale: whaleRegistry.whale.pseudonym,
-    side: eligibility.translation.side,
-    entry: payload.entryCents,
-    now: payload.nowCents,
-    avg_ev: whaleRegistry.whale.avgEv,
-    marketPlain: eligibility.translation.marketPlain,
-    stakeNotional: payload.stakeNotional,
-    avgStakeNotional: whaleRegistry.whale.avgStakeNotional,
-    postedCount30d: whaleRegistry.whale.postedCount30d,
-    resolvedBetsCount: whaleRegistry.whale.resolvedBetsCount,
-    winRate: whaleRegistry.whale.winRate,
-  });
+  const duplicateQueue = await hasActiveWhaleMarketQueueItem(
+    prisma,
+    walletAddress,
+    payload.marketSlug
+  );
+  if (duplicateQueue) {
+    logEnqueueSkip(
+      trade,
+      "[Skip: Dedupe] Active x_post_queue row exists for whale-market pair"
+    );
+    return;
+  }
+
+  let lastTemplateFamily: string | undefined;
+  try {
+    lastTemplateFamily = await fetchLastTemplateFamily(prisma);
+  } catch (error) {
+    console.warn("[x-agent/enqueue] failed to load last template family", {
+      error: error instanceof Error ? error.message : error,
+    });
+  }
+
+  let templateSelection: ReturnType<typeof selectPostTemplate>;
+  try {
+    templateSelection = selectPostTemplate(
+      {
+        whale: whaleRegistry.whale.pseudonym,
+        side: eligibility.translation.side,
+        entry: payload.entryCents,
+        now: payload.nowCents,
+        avg_ev: whaleRegistry.whale.avgEv,
+        marketPlain: eligibility.translation.marketPlain,
+        stakeNotional: payload.stakeNotional,
+        avgStakeNotional: whaleRegistry.whale.avgStakeNotional,
+        postedCount30d: whaleRegistry.whale.postedCount30d,
+        resolvedBetsCount: whaleRegistry.whale.resolvedBetsCount,
+        winRate: whaleRegistry.whale.winRate,
+        category: eligibility.translation.marketPlain,
+      },
+      { lastTemplateFamily }
+    );
+  } catch (error) {
+    logEnqueueSkip(
+      trade,
+      `[Skip: Template] ${
+        error instanceof Error ? error.message : "template selection failed"
+      }`
+    );
+    return;
+  }
+
+  const { renderedDraft: copyText, templateFamily: family, variantId } =
+    templateSelection;
 
   let queued: Awaited<ReturnType<typeof prisma.xPostQueue.create>>;
   try {
@@ -217,6 +261,7 @@ export async function processWhaleTradeForXAgent(
         walletAddress,
         tradeId: payload.tradeId,
         templateFamily: family,
+        variantId,
         copyText,
         marketSlug: payload.marketSlug,
         side: eligibility.translation.side,
@@ -233,7 +278,7 @@ export async function processWhaleTradeForXAgent(
   }
 
   console.log(
-    `[QUEUED TO X_POST_QUEUE] Trade ID: ${payload.tradeId} | Whale: ${whaleRegistry.whale.pseudonym} | Stake: $${Math.round(payload.stakeNotional).toLocaleString("en-US")}`
+    `[QUEUED TO X_POST_QUEUE] Trade ID: ${payload.tradeId} | Whale: ${whaleRegistry.whale.pseudonym} | Template: ${family}/${variantId} | Stake: $${Math.round(payload.stakeNotional).toLocaleString("en-US")}`
   );
   if (metricsCollector) {
     metricsCollector.recordQueuedSuccess();
@@ -252,6 +297,9 @@ export async function processWhaleTradeForXAgent(
     const emailResult = await sendReviewEmail({
       id: queued.id,
       copyText: queued.copyText,
+      renderedDraft: queued.copyText,
+      templateFamily: family,
+      variantId,
       stakeNotional: queued.stakeNotional,
       evPercent: tradeEvPercent,
       marketTitle: eligibility.translation.marketPlain,

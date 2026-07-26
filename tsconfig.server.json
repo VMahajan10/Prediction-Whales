@@ -39,6 +39,7 @@
     "lib/resolveWhaleWallet.ts",
     "lib/fetchWithTimeout.ts",
     "lib/appBaseUrl.ts",
+    "lib/templates/**/*.ts",
     "lib/email/**/*.ts",
     "lib/averageEvDisplay.ts",
     "lib/clvPriceHistory.ts",

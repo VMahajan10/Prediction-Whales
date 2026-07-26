@@ -4,6 +4,9 @@ import { getAppBaseUrl } from "@/lib/appBaseUrl";
 export interface ReviewEmailTrade {
   id: string;
   copyText: string;
+  renderedDraft?: string;
+  templateFamily?: string;
+  variantId?: string;
   stakeNotional: number;
   /** Live trade EV as display percent (e.g. 2.5 = +2.5%). */
   evPercent: number | null;
@@ -51,7 +54,11 @@ export function buildReviewEmailHtml(trade: ReviewEmailTrade): string {
   const approveUrl = buildQueueActionUrl(trade.id, "approve");
   const rejectUrl = buildQueueActionUrl(trade.id, "reject");
   const market = escapeHtml(trade.marketTitle);
-  const copyText = escapeHtml(trade.copyText);
+  const draft = escapeHtml(trade.renderedDraft ?? trade.copyText);
+  const templateMeta = escapeHtml(
+    [trade.templateFamily, trade.variantId].filter(Boolean).join(" · ") ||
+      "Template pending"
+  );
   const stake = escapeHtml(formatStakeUsd(trade.stakeNotional));
   const ev = escapeHtml(formatEvLabel(trade.evPercent));
 
@@ -88,8 +95,9 @@ export function buildReviewEmailHtml(trade: ReviewEmailTrade): string {
           </tr>
           <tr>
             <td style="padding:0 28px 20px;">
-              <p style="margin:0 0 8px;font-size:13px;color:#6b7280;text-transform:uppercase;letter-spacing:0.06em;">Drafted X post</p>
-              <div style="padding:16px;background:#0b1220;color:#e8eef8;border-radius:8px;font-size:15px;line-height:1.5;white-space:pre-wrap;">${copyText}</div>
+              <p style="margin:0 0 8px;font-size:13px;color:#6b7280;text-transform:uppercase;letter-spacing:0.06em;">Tweet draft</p>
+              <p style="margin:0 0 12px;font-size:12px;color:#9ca3af;">Template: ${templateMeta}</p>
+              <div style="padding:18px;background:#0b1220;color:#e8eef8;border-radius:10px;font-size:16px;line-height:1.55;white-space:pre-wrap;border:1px solid #1f2937;">${draft}</div>
             </td>
           </tr>
           <tr>
@@ -219,7 +227,7 @@ export async function sendReviewEmail(
     `EV: ${formatEvLabel(trade.evPercent)}`,
     "",
     "Drafted X post:",
-    trade.copyText,
+    trade.renderedDraft ?? trade.copyText,
     "",
     `Approve: ${buildQueueActionUrl(trade.id, "approve")}`,
     `Reject: ${buildQueueActionUrl(trade.id, "reject")}`,
