@@ -90,6 +90,22 @@ export interface TradeEligibilityOptions {
   metrics?: GateSummary | GateMetricsCollector;
 }
 
+export type PreGateStep =
+  | "source"
+  | "freshness"
+  | "stake"
+  | "alignment"
+  | "credibility"
+  | "dedupe"
+  | "trade_ev";
+
+export interface PreGateShortCircuitResult {
+  passed: boolean;
+  reason?: GateRejectionReason;
+  failedStep?: PreGateStep;
+  translation?: { side: string; marketPlain: string };
+}
+
 export const MIN_RESOLVED_BETS = MIN_WALLET_RESOLVED_BETS;
 export const MIN_AVG_EV = MIN_WALLET_AVG_EV_DECIMAL;
 export const MIN_STAKE_NOTIONAL = STAKE_FLOOR_USD;
@@ -291,6 +307,168 @@ export function evaluateTradeGateMatrix(
   }
 
   return matrix;
+}
+
+/**
+ * Cheap deterministic gates (steps 1–4) evaluated in strict order with short-circuit.
+ * Does not invoke trade EV / OpenAI. Kalshi source is rejected before step 1.
+ */
+export function evaluateDeterministicPreGates(
+  trade: TradePayload,
+  nowMs = Date.now()
+): PreGateShortCircuitResult {
+  logGateCheck(trade.tradeId);
+
+  if (trade.source !== "polymarket") {
+    logSourceSkip();
+    return {
+      passed: false,
+      reason: "KALSHI_SOURCE_REJECTED",
+      failedStep: "source",
+    };
+  }
+  console.log("[Pass: Source] Polymarket trade");
+
+  const tradeAgeMs = nowMs - tradeTimestampMs(trade.timestamp);
+  if (tradeAgeMs > MAX_TRADE_AGE_MS) {
+    const ageMin = Math.round(tradeAgeMs / 60_000);
+    console.log(
+      `[Skip: Freshness] Trade age (${ageMin}m) > ${MAX_TRADE_AGE_MS / 60_000}m threshold`
+    );
+    return {
+      passed: false,
+      reason: "STALE_TRADE",
+      failedStep: "freshness",
+    };
+  }
+  console.log(
+    `[Pass: Freshness] Trade age (${Math.round(tradeAgeMs / 60_000)}m) within ${MAX_TRADE_AGE_MS / 60_000}m window`
+  );
+
+  if (trade.stakeNotional < MIN_STAKE_NOTIONAL) {
+    console.log(
+      `[Skip: Stake] ${formatStake(trade.stakeNotional)} < ${formatStake(MIN_STAKE_NOTIONAL)} threshold`
+    );
+    return {
+      passed: false,
+      reason: "BELOW_STAKE_FLOOR",
+      failedStep: "stake",
+    };
+  }
+  console.log(
+    `[Pass: Stake] ${formatStake(trade.stakeNotional)} >= ${formatStake(MIN_STAKE_NOTIONAL)} threshold`
+  );
+
+  const translation = translateMarketAndSide(toRawPolymarketTrade(trade));
+  if (!translation) {
+    console.log(
+      "[Skip: Alignment] Market cannot be translated to plain-English side"
+    );
+    return {
+      passed: false,
+      reason: "ILLEGIBLE_MARKET",
+      failedStep: "alignment",
+    };
+  }
+  console.log(
+    `[Pass: Alignment] Translated to "${translation.side}" on "${translation.marketPlain}"`
+  );
+
+  return { passed: true, translation };
+}
+
+/** Step 4 — wallet credibility from registry / Polymarket history (no OpenAI). */
+export function evaluateWalletCredibilityPreGate(
+  trade: TradePayload,
+  whale: WhaleRegistry | null | undefined
+): PreGateShortCircuitResult {
+  if (isAnonymousWalletAddress(trade.walletAddress)) {
+    console.log(
+      "[Pass: Credibility] Anonymous trade (zero address) skipped wallet check"
+    );
+    return { passed: true };
+  }
+
+  const passesCredibility =
+    whale != null &&
+    whale.resolvedBetsCount >= MIN_RESOLVED_BETS &&
+    whale.avgEv >= MIN_AVG_EV;
+
+  if (passesCredibility && whale) {
+    console.log(
+      `[Pass: Wallet Credibility] Registry track record: resolved bets (${whale.resolvedBetsCount}) >= ${MIN_WALLET_RESOLVED_BETS}, wallet avg EV (${formatWalletEvPct(whale.avgEv)}%) >= +${MIN_WALLET_AVG_EV_THRESHOLD_PCT}%`
+    );
+    return { passed: true };
+  }
+
+  console.log("[Credibility Fail]", {
+    wallet: trade.walletAddress,
+    resolvedBets: whale?.resolvedBetsCount ?? "NOT_IN_DB",
+    avgEv: whale?.avgEv ?? "N/A",
+  });
+
+  const reason: GateRejectionReason =
+    whale && whale.resolvedBetsCount < MIN_RESOLVED_BETS
+      ? "BELOW_RESOLVED_BETS"
+      : "LOW_EV";
+
+  return { passed: false, reason, failedStep: "credibility" };
+}
+
+/** Step 6 — live trade EV gate (runs only after OpenAI / p_true pipeline). */
+export function evaluateTradeEvPreGate(
+  tradeEvPercent: number | null
+): PreGateShortCircuitResult {
+  const tradeEvDecimal = tradeEvPercentToDecimal(tradeEvPercent);
+  const passesEv =
+    tradeEvDecimal != null && tradeEvDecimal >= MIN_TRADE_EV_DECIMAL;
+
+  if (passesEv) {
+    console.log(
+      `[Pass: Trade EV] Live trade EV (${formatTradeEvPct(tradeEvPercent ?? 0)}) >= +${HIGH_EV_TRADE_THRESHOLD_PCT}% (trade.ev >= ${MIN_TRADE_EV_DECIMAL})`
+    );
+    return { passed: true };
+  }
+
+  console.log(
+    tradeEvPercent == null
+      ? "[Skip: Trade EV] Live trade EV unavailable"
+      : `[Skip: Trade EV] Live trade EV (${formatTradeEvPct(tradeEvPercent)}) < +${HIGH_EV_TRADE_THRESHOLD_PCT}% (trade.ev < ${MIN_TRADE_EV_DECIMAL})`
+  );
+
+  return {
+    passed: false,
+    reason: "BELOW_TRADE_EV",
+    failedStep: "trade_ev",
+  };
+}
+
+export async function handlePreGateRejection(
+  trade: TradePayload,
+  result: PreGateShortCircuitResult,
+  options?: TradeEligibilityOptions,
+  whale?: WhaleRegistry | null
+): Promise<void> {
+  if (!result.reason) return;
+
+  const metricsCollector = resolveGateMetricsCollector(options?.metrics);
+  if (metricsCollector) {
+    switch (result.reason) {
+      case "KALSHI_SOURCE_REJECTED":
+      case "STALE_TRADE":
+      case "BELOW_STAKE_FLOOR":
+      case "ILLEGIBLE_MARKET":
+      case "BELOW_TRADE_EV":
+      case "BELOW_RESOLVED_BETS":
+      case "LOW_EV":
+        metricsCollector.recordPreGateFailure(result.reason, whale);
+        break;
+      default:
+        break;
+    }
+  }
+
+  await logGateFailure(trade, result.reason);
 }
 
 async function logGateFailure(

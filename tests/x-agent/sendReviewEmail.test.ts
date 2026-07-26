@@ -3,6 +3,7 @@ import {
   buildQueueActionUrl,
   buildReviewEmailHtml,
   parseReviewEmailRecipients,
+  resolveReviewEmailRecipients,
 } from "@/lib/email/sendReviewEmail";
 import { DEFAULT_APP_URL } from "@/lib/appBaseUrl";
 
@@ -54,6 +55,34 @@ describe("sendReviewEmail", () => {
         "me@example.com, me@example.com, invalid, cofounder@example.com"
       )
     ).toEqual(["me@example.com", "cofounder@example.com"]);
+  });
+
+  it("resolves NOTIFICATION_EMAIL when REVIEW_RECIPIENT_EMAILS is unset", () => {
+    const keys = [
+      "REVIEW_RECIPIENT_EMAILS",
+      "NOTIFICATION_EMAIL",
+      "REVIEW_EMAIL_TO",
+      "EMAIL_REVIEW_TO",
+      "X_AGENT_REVIEW_EMAIL_TO",
+    ] as const;
+    const previous = Object.fromEntries(
+      keys.map((key) => [key, process.env[key]])
+    );
+
+    for (const key of keys) {
+      delete process.env[key];
+    }
+    process.env.NOTIFICATION_EMAIL = "ops@example.com";
+
+    expect(resolveReviewEmailRecipients()).toEqual(["ops@example.com"]);
+
+    for (const key of keys) {
+      if (previous[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = previous[key];
+      }
+    }
   });
 
   it("renders trade summary and draft copy in HTML", () => {

@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { WhaleRegistry } from "@/lib/crossmarket/store/schema";
 import {
+  evaluateDeterministicPreGates,
   evaluateTradeEligibility,
+  evaluateTradeEvPreGate,
   evaluateTradeGateMatrix,
+  evaluateWalletCredibilityPreGate,
+  MAX_TRADE_AGE_MS,
   MIN_AVG_EV,
   MIN_RESOLVED_BETS,
   MIN_STAKE_NOTIONAL,
@@ -41,6 +45,68 @@ function makeTrade(overrides: Partial<TradePayload> = {}): TradePayload {
     ...overrides,
   };
 }
+
+describe("evaluateDeterministicPreGates", () => {
+  it("short-circuits on freshness before stake or alignment", () => {
+    const staleMs = MAX_TRADE_AGE_MS + 60_000;
+    const result = evaluateDeterministicPreGates(
+      makeTrade({
+        stakeNotional: MIN_STAKE_NOTIONAL - 1,
+        timestamp: Math.floor((Date.now() - staleMs) / 1000),
+      }),
+      Date.now()
+    );
+
+    expect(result.passed).toBe(false);
+    expect(result.failedStep).toBe("freshness");
+    expect(result.reason).toBe("STALE_TRADE");
+  });
+
+  it("short-circuits on stake after freshness passes", () => {
+    const result = evaluateDeterministicPreGates(
+      makeTrade({ stakeNotional: MIN_STAKE_NOTIONAL - 1 }),
+      Date.now()
+    );
+
+    expect(result.passed).toBe(false);
+    expect(result.failedStep).toBe("stake");
+    expect(result.reason).toBe("BELOW_STAKE_FLOOR");
+  });
+
+  it("returns translation when freshness, stake, and alignment pass", () => {
+    const result = evaluateDeterministicPreGates(makeTrade(), Date.now());
+
+    expect(result.passed).toBe(true);
+    expect(result.translation).toEqual({
+      side: "buy yes",
+      marketPlain: "China invade Taiwan",
+    });
+  });
+});
+
+describe("evaluateWalletCredibilityPreGate", () => {
+  it("fails when whale is missing from registry", () => {
+    const result = evaluateWalletCredibilityPreGate(makeTrade(), null);
+
+    expect(result.passed).toBe(false);
+    expect(result.failedStep).toBe("credibility");
+  });
+});
+
+describe("evaluateTradeEvPreGate", () => {
+  it("fails when live trade EV is below the floor", () => {
+    const result = evaluateTradeEvPreGate(1.0);
+
+    expect(result.passed).toBe(false);
+    expect(result.reason).toBe("BELOW_TRADE_EV");
+  });
+
+  it("passes when live trade EV meets the floor", () => {
+    const result = evaluateTradeEvPreGate(2.0);
+
+    expect(result.passed).toBe(true);
+  });
+});
 
 describe("evaluateTradeGateMatrix", () => {
   it("evaluates trade EV and wallet credibility independently", () => {

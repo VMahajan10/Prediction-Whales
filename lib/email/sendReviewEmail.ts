@@ -146,11 +146,17 @@ function getReviewEmailRecipients(): string[] {
   if (fromList.length > 0) return fromList;
 
   const single =
+    process.env.NOTIFICATION_EMAIL?.trim() ||
     process.env.REVIEW_EMAIL_TO?.trim() ||
     process.env.EMAIL_REVIEW_TO?.trim() ||
     process.env.X_AGENT_REVIEW_EMAIL_TO?.trim();
 
   return single ? [single.toLowerCase()] : [];
+}
+
+/** Resolved notification inboxes from env (REVIEW_RECIPIENT_EMAILS, NOTIFICATION_EMAIL, etc.). */
+export function resolveReviewEmailRecipients(): string[] {
+  return getReviewEmailRecipients();
 }
 
 function getEmailFromAddress(): string | null {
@@ -174,10 +180,13 @@ export async function sendReviewEmail(
 ): Promise<SendReviewEmailResult> {
   const recipients = getReviewEmailRecipients();
   if (recipients.length === 0) {
+    const error =
+      "No notification recipient configured (set REVIEW_RECIPIENT_EMAILS or NOTIFICATION_EMAIL)";
+    console.error("❌ Review email misconfigured:", error);
     return {
       sent: false,
       skipped: true,
-      error: "REVIEW_RECIPIENT_EMAILS is not configured",
+      error,
     };
   }
 

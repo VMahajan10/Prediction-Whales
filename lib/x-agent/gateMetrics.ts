@@ -112,6 +112,44 @@ export function recordGateMatrixFailures(
   if (!matrix.passesSource) metrics.failedKalshiSource += 1;
 }
 
+/** Record a single pre-EV gate failure after short-circuit evaluation. */
+export function recordPreGateFailure(
+  metrics: GateSummary,
+  reason:
+    | "KALSHI_SOURCE_REJECTED"
+    | "STALE_TRADE"
+    | "BELOW_STAKE_FLOOR"
+    | "ILLEGIBLE_MARKET"
+    | "BELOW_TRADE_EV"
+    | "BELOW_RESOLVED_BETS"
+    | "LOW_EV",
+  whale?: CredibilityGateWhale | null
+): void {
+  switch (reason) {
+    case "KALSHI_SOURCE_REJECTED":
+      metrics.failedKalshiSource += 1;
+      break;
+    case "STALE_TRADE":
+      metrics.failedFreshness += 1;
+      break;
+    case "BELOW_STAKE_FLOOR":
+      metrics.failedStakeFloor += 1;
+      break;
+    case "ILLEGIBLE_MARKET":
+      metrics.failedLegibilityOrAlignment += 1;
+      break;
+    case "BELOW_TRADE_EV":
+      metrics.failedEvThreshold += 1;
+      break;
+    case "BELOW_RESOLVED_BETS":
+    case "LOW_EV":
+      recordCredibilityFailureBreakdown(metrics, whale);
+      break;
+    default:
+      break;
+  }
+}
+
 export function recordQueuedSuccess(metrics: GateSummary): void {
   metrics.queuedSuccessfully += 1;
 }
@@ -121,6 +159,17 @@ export interface GateMetricsCollector {
   recordTradeEvaluated(): void;
   recordGateMatrixFailures(
     matrix: GateMatrixCounters,
+    whale?: CredibilityGateWhale | null
+  ): void;
+  recordPreGateFailure(
+    reason:
+      | "KALSHI_SOURCE_REJECTED"
+      | "STALE_TRADE"
+      | "BELOW_STAKE_FLOOR"
+      | "ILLEGIBLE_MARKET"
+      | "BELOW_TRADE_EV"
+      | "BELOW_RESOLVED_BETS"
+      | "LOW_EV",
     whale?: CredibilityGateWhale | null
   ): void;
   recordQueuedSuccess(): void;
@@ -134,6 +183,8 @@ export function createGateSummaryCollector(
     recordTradeEvaluated: () => recordTradeEvaluated(summary),
     recordGateMatrixFailures: (matrix, whale) =>
       recordGateMatrixFailures(summary, matrix, whale),
+    recordPreGateFailure: (reason, whale) =>
+      recordPreGateFailure(summary, reason, whale),
     recordQueuedSuccess: () => recordQueuedSuccess(summary),
     finalizeTrade: () => {},
   };
@@ -170,6 +221,20 @@ export class RollingGateMatrixTracker implements GateMetricsCollector {
     whale?: CredibilityGateWhale | null
   ): void {
     recordGateMatrixFailures(this.active(), matrix, whale);
+  }
+
+  recordPreGateFailure(
+    reason:
+      | "KALSHI_SOURCE_REJECTED"
+      | "STALE_TRADE"
+      | "BELOW_STAKE_FLOOR"
+      | "ILLEGIBLE_MARKET"
+      | "BELOW_TRADE_EV"
+      | "BELOW_RESOLVED_BETS"
+      | "LOW_EV",
+    whale?: CredibilityGateWhale | null
+  ): void {
+    recordPreGateFailure(this.active(), reason, whale);
   }
 
   recordQueuedSuccess(): void {

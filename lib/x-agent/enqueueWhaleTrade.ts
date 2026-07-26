@@ -9,7 +9,10 @@ import {
 import { getPrisma, isPrismaEnabled } from "@/lib/prisma";
 import type { WhaleTrade } from "@/lib/whaleTrades";
 import {
-  evaluateTradeEligibility,
+  evaluateDeterministicPreGates,
+  evaluateTradeEvPreGate,
+  evaluateWalletCredibilityPreGate,
+  handlePreGateRejection,
   type TradePayload,
 } from "@/lib/x-agent/gates";
 import {
@@ -20,7 +23,6 @@ import {
   HIGH_EV_TRADE_THRESHOLD_PCT,
   resolveGateMetricsCollector,
   recordQueuedSuccess,
-  recordTradeEvaluated,
 } from "@/lib/x-agent/gateMetrics";
 import { dispatchAdminReviewAlert } from "@/lib/x-agent/notifications";
 import { sendReviewEmail } from "@/lib/email/sendReviewEmail";
@@ -106,8 +108,8 @@ function buildTradePayload(
 }
 
 /**
- * High-EV whale ingestion hook: resolve trade EV, auto-register unknown wallets
- * in WhaleRegistry via Prisma, then enqueue an X post draft when all gates pass.
+ * High-EV whale ingestion hook: cheap deterministic gates first, then trade EV
+ * (OpenAI / p_true pipeline), then enqueue an X post draft when all gates pass.
  */
 export async function processWhaleTradeForXAgent(
   trade: WhaleTrade,
@@ -123,17 +125,23 @@ export async function processWhaleTradeForXAgent(
   const walletAddress = anonymousTrade
     ? ANONYMOUS_WALLET_ADDRESS
     : normalizeWalletAddress(proxyWallet!);
-  const evInput = whaleToEvInput(trade);
-  const lookupKey = evInput ? pipelineEvLookupKey(evInput) : null;
+  const nowMs = Date.now();
+  const payload = buildTradePayload(
+    trade,
+    walletAddress,
+    priceToCents(trade.price)
+  );
+  const metricsOptions = { metrics: metricsCollector ?? metrics };
 
-  let tradeEvPercent: number | null = null;
-  let pipelinePmMid: number | null = null;
-  if (evInput && lookupKey) {
-    const pipelineEv = await ensureFullyComputedTradeEv(lookupKey, evInput);
-    tradeEvPercent = coalesceDisplayEvPercent(pipelineEv);
-    pipelinePmMid = pipelineEv.pMarket ?? null;
+  // Steps 1–3 (+ Polymarket source): freshness → stake → alignment. Short-circuit.
+  const preGate = evaluateDeterministicPreGates(payload, nowMs);
+  if (!preGate.passed || !preGate.translation) {
+    await handlePreGateRejection(payload, preGate, metricsOptions);
+    return;
   }
+  const translation = preGate.translation;
 
+  // Step 4: wallet credibility (DB / Polymarket RPC — no OpenAI).
   let whaleForGates: Awaited<
     ReturnType<typeof resolveWhaleForCredibilityGate>
   >["whale"] = null;
@@ -152,18 +160,17 @@ export async function processWhaleTradeForXAgent(
     }
   }
 
-  const nowCents =
-    pipelinePmMid != null ? priceToCents(pipelinePmMid) : priceToCents(trade.price);
-  const payload = buildTradePayload(trade, walletAddress, nowCents);
-
-  const eligibility = await evaluateTradeEligibility(
+  const credibilityGate = evaluateWalletCredibilityPreGate(
     payload,
-    whaleForGates,
-    Date.now(),
-    { tradeEvPercent, metrics: metricsCollector ?? metrics }
+    whaleForGates
   );
-
-  if (!eligibility.matrix.passesAll || !eligibility.translation) {
+  if (!credibilityGate.passed) {
+    await handlePreGateRejection(
+      payload,
+      credibilityGate,
+      metricsOptions,
+      whaleForGates
+    );
     return;
   }
 
@@ -177,6 +184,59 @@ export async function processWhaleTradeForXAgent(
     logEnqueueSkip(trade, "[Skip: Setup] Prisma client unavailable");
     return;
   }
+
+  // Step 5: dedupe — active x_post_queue row for whale-market pair.
+  const duplicateQueue = await hasActiveWhaleMarketQueueItem(
+    prisma,
+    walletAddress,
+    payload.marketSlug
+  );
+  if (duplicateQueue) {
+    logEnqueueSkip(
+      trade,
+      "[Skip: Dedupe] Active x_post_queue row exists for whale-market pair"
+    );
+    await handlePreGateRejection(
+      payload,
+      {
+        passed: false,
+        reason: "RECENT_MARKET_POST",
+        failedStep: "dedupe",
+      },
+      metricsOptions,
+      whaleForGates
+    );
+    return;
+  }
+
+  // Step 6: trade EV via p_true / sentiment pipeline (OpenAI — only after steps 1–5).
+  const evInput = whaleToEvInput(trade);
+  const lookupKey = evInput ? pipelineEvLookupKey(evInput) : null;
+
+  let tradeEvPercent: number | null = null;
+  let pipelinePmMid: number | null = null;
+  if (evInput && lookupKey) {
+    const pipelineEv = await ensureFullyComputedTradeEv(lookupKey, evInput);
+    tradeEvPercent = coalesceDisplayEvPercent(pipelineEv);
+    pipelinePmMid = pipelineEv.pMarket ?? null;
+  }
+
+  const evGate = evaluateTradeEvPreGate(tradeEvPercent);
+  if (!evGate.passed) {
+    await handlePreGateRejection(
+      payload,
+      evGate,
+      metricsOptions,
+      whaleForGates
+    );
+    return;
+  }
+
+  const pricedPayload: TradePayload = {
+    ...payload,
+    nowCents:
+      pipelinePmMid != null ? priceToCents(pipelinePmMid) : payload.nowCents,
+  };
 
   const whaleRegistry =
     !anonymousTrade &&
@@ -199,19 +259,6 @@ export async function processWhaleTradeForXAgent(
     );
   }
 
-  const duplicateQueue = await hasActiveWhaleMarketQueueItem(
-    prisma,
-    walletAddress,
-    payload.marketSlug
-  );
-  if (duplicateQueue) {
-    logEnqueueSkip(
-      trade,
-      "[Skip: Dedupe] Active x_post_queue row exists for whale-market pair"
-    );
-    return;
-  }
-
   let lastTemplateFamily: string | undefined;
   try {
     lastTemplateFamily = await fetchLastTemplateFamily(prisma);
@@ -226,17 +273,17 @@ export async function processWhaleTradeForXAgent(
     templateSelection = selectPostTemplate(
       {
         whale: whaleRegistry.whale.pseudonym,
-        side: eligibility.translation.side,
-        entry: payload.entryCents,
-        now: payload.nowCents,
+        side: translation.side,
+        entry: pricedPayload.entryCents,
+        now: pricedPayload.nowCents,
         avg_ev: whaleRegistry.whale.avgEv,
-        marketPlain: eligibility.translation.marketPlain,
-        stakeNotional: payload.stakeNotional,
+        marketPlain: translation.marketPlain,
+        stakeNotional: pricedPayload.stakeNotional,
         avgStakeNotional: whaleRegistry.whale.avgStakeNotional,
         postedCount30d: whaleRegistry.whale.postedCount30d,
         resolvedBetsCount: whaleRegistry.whale.resolvedBetsCount,
         winRate: whaleRegistry.whale.winRate,
-        category: eligibility.translation.marketPlain,
+        category: translation.marketPlain,
       },
       { lastTemplateFamily }
     );
@@ -259,15 +306,15 @@ export async function processWhaleTradeForXAgent(
       data: {
         id: randomUUID(),
         walletAddress,
-        tradeId: payload.tradeId,
+        tradeId: pricedPayload.tradeId,
         templateFamily: family,
         variantId,
         copyText,
-        marketSlug: payload.marketSlug,
-        side: eligibility.translation.side,
-        entryCents: payload.entryCents,
-        nowCents: payload.nowCents,
-        stakeNotional: payload.stakeNotional,
+        marketSlug: pricedPayload.marketSlug,
+        side: translation.side,
+        entryCents: pricedPayload.entryCents,
+        nowCents: pricedPayload.nowCents,
+        stakeNotional: pricedPayload.stakeNotional,
         status: "PENDING_REVIEW",
         reviewToken: randomUUID(),
       },
@@ -278,7 +325,7 @@ export async function processWhaleTradeForXAgent(
   }
 
   console.log(
-    `[QUEUED TO X_POST_QUEUE] Trade ID: ${payload.tradeId} | Whale: ${whaleRegistry.whale.pseudonym} | Template: ${family}/${variantId} | Stake: $${Math.round(payload.stakeNotional).toLocaleString("en-US")}`
+    `[QUEUED TO X_POST_QUEUE] Trade ID: ${pricedPayload.tradeId} | Whale: ${whaleRegistry.whale.pseudonym} | Template: ${family}/${variantId} | Stake: $${Math.round(pricedPayload.stakeNotional).toLocaleString("en-US")}`
   );
   if (metricsCollector) {
     metricsCollector.recordQueuedSuccess();
@@ -288,11 +335,12 @@ export async function processWhaleTradeForXAgent(
 
   void dispatchAdminReviewAlert(queued as XPostQueue).catch((err) => {
     console.error("[x-agent/enqueue] admin alert failed", {
-      tradeId: payload.tradeId,
+      tradeId: pricedPayload.tradeId,
       error: err instanceof Error ? err.message : err,
     });
   });
 
+  // Review email is sent synchronously immediately after x_post_queue insert.
   try {
     const emailResult = await sendReviewEmail({
       id: queued.id,
@@ -302,23 +350,23 @@ export async function processWhaleTradeForXAgent(
       variantId,
       stakeNotional: queued.stakeNotional,
       evPercent: tradeEvPercent,
-      marketTitle: eligibility.translation.marketPlain,
+      marketTitle: translation.marketPlain,
     });
 
     if (emailResult.sent) {
-      console.log(
-        `Successfully queued trade ID ${payload.tradeId} and sent email`
-      );
+      console.log("✅ Email sent for trade ID:", pricedPayload.tradeId);
     } else {
       console.error(
-        `Failed to send email for trade ID ${payload.tradeId}`,
-        emailResult.skipped
-          ? { skipped: true, reason: emailResult.error }
-          : { error: emailResult.error }
+        "❌ Failed to send email for trade ID:",
+        pricedPayload.tradeId,
+        emailResult.error ?? "unknown error"
       );
     }
   } catch (error) {
-    console.error("Email send failed:", error);
-    console.error(`Failed to send email for trade ID ${payload.tradeId}`);
+    console.error(
+      "❌ Failed to send email for trade ID:",
+      pricedPayload.tradeId,
+      error
+    );
   }
 }
