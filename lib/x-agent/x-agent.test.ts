@@ -138,6 +138,6 @@ assert.ok(links.edit.endsWith("/api/x-agent/review/edit?token=tok-123"));
 
 const scheduled = computeApprovalScheduledFor(() => 0);
 const deltaMin = (scheduled.getTime() - Date.now()) / 60_000;
-assert.ok(deltaMin >= 119 && deltaMin <= 121, "approval jitter starts at 120 minutes");
+assert.ok(deltaMin >= 14 && deltaMin <= 16, "approval jitter starts at 15 minutes");
 
 console.log("✓ x-agent tests passed");

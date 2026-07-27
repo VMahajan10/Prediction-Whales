@@ -186,6 +186,7 @@ model XPostQueue {
   status         String    @default("PENDING_REVIEW")
   reviewToken    String    @unique @map("review_token")
   scheduledFor   DateTime? @map("scheduled_for")
+  xTweetId       String?   @map("x_tweet_id")
   dispatchedAt   DateTime? @map("dispatched_at")
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @updatedAt @map("updated_at")

@@ -1,18 +1,24 @@
-import { desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, lte, or } from "drizzle-orm";
 import { getDb, isDatabaseEnabled } from "@/lib/crossmarket/store/db";
 import {
   xPostQueue,
   type XPostQueue,
   type XPostQueueStatus,
 } from "@/lib/crossmarket/store/schema";
+import { isDraftQueueStatus } from "@/lib/x-agent/postStatus";
+import { getRandomScheduledTime } from "@/lib/x-agent/reviewSchedule";
 
 const REVIEWABLE_STATUSES = new Set<XPostQueueStatus>([
   "PENDING_REVIEW",
   "EDITED",
+  "DRAFT",
 ]);
 
 export function canMutateReviewItem(item: XPostQueue): boolean {
-  return REVIEWABLE_STATUSES.has(item.status as XPostQueueStatus);
+  return (
+    REVIEWABLE_STATUSES.has(item.status as XPostQueueStatus) ||
+    isDraftQueueStatus(item.status)
+  );
 }
 
 /** Newest-first ordering for all multi-row x_post_queue reads. */
@@ -85,6 +91,7 @@ export async function updateQueueById(
     copyText?: string;
     scheduledFor?: Date | null;
     dispatchedAt?: Date | null;
+    xTweetId?: string | null;
   }
 ): Promise<XPostQueue | null> {
   const trimmed = id.trim();
@@ -110,6 +117,7 @@ export async function updateQueueByReviewToken(
     copyText?: string;
     scheduledFor?: Date | null;
     dispatchedAt?: Date | null;
+    xTweetId?: string | null;
   }
 ): Promise<XPostQueue | null> {
   const trimmed = token.trim();
@@ -128,12 +136,34 @@ export async function updateQueueByReviewToken(
   return row ?? null;
 }
 
-/** Randomized dispatch window 120–180 minutes from now. */
+/** Randomized dispatch window 15–120 minutes from now. */
 export function computeApprovalScheduledFor(
   random = Math.random
 ): Date {
-  const minMs = 120 * 60 * 1000;
-  const maxMs = 180 * 60 * 1000;
-  const jitterMs = minMs + random() * (maxMs - minMs);
-  return new Date(Date.now() + jitterMs);
+  return getRandomScheduledTime(random);
+}
+
+/** Posts ready for the cron publisher (scheduledAt <= now). */
+export async function listScheduledPostsReadyToPublish(
+  limit = 20
+): Promise<XPostQueue[]> {
+  if (!isDatabaseEnabled()) return [];
+
+  const db = getDb();
+  const now = new Date();
+
+  return db
+    .select()
+    .from(xPostQueue)
+    .where(
+      and(
+        lte(xPostQueue.scheduledFor, now),
+        or(
+          eq(xPostQueue.status, "SCHEDULED"),
+          eq(xPostQueue.status, "APPROVED")
+        )
+      )
+    )
+    .orderBy(xPostQueue.scheduledFor)
+    .limit(limit);
 }

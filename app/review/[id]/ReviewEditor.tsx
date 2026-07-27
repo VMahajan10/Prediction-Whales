@@ -1,13 +1,16 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { buildScheduleApprovalUiMessage, formatScheduledClockTime } from "@/lib/x-agent/scheduleMessages";
+import { isDraftQueueStatus } from "@/lib/x-agent/postStatus";
 import {
-  formatReviewEvLabel,
   formatReviewStakeUsd,
   humanizeMarketSlug,
 } from "@/lib/reviewDisplay";
 
 const MAX_POST_CHARS = 280;
+
+type ScheduleMode = "default" | "immediate" | "custom";
 
 export interface ReviewEditorProps {
   queueId: string;
@@ -17,9 +20,24 @@ export interface ReviewEditorProps {
   whaleName: string;
   generatedPostText: string;
   status: string;
+  defaultScheduledAtIso: string;
 }
 
 export { formatReviewStakeUsd as formatStakeUsd, humanizeMarketSlug } from "@/lib/reviewDisplay";
+
+function toDatetimeLocalValue(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function fromDatetimeLocalValue(value: string): string | null {
+  if (!value.trim()) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+}
 
 export default function ReviewEditor({
   queueId,
@@ -29,8 +47,13 @@ export default function ReviewEditor({
   whaleName,
   generatedPostText,
   status,
+  defaultScheduledAtIso,
 }: ReviewEditorProps) {
   const [text, setText] = useState(generatedPostText);
+  const [scheduleMode, setScheduleMode] = useState<ScheduleMode>("default");
+  const [customScheduledAt, setCustomScheduledAt] = useState(
+    toDatetimeLocalValue(defaultScheduledAtIso)
+  );
   const [submitting, setSubmitting] = useState<"approve" | "reject" | null>(
     null
   );
@@ -39,7 +62,9 @@ export default function ReviewEditor({
 
   const charCount = text.length;
   const overLimit = charCount > MAX_POST_CHARS;
-  const canEdit = status === "PENDING_REVIEW" || status === "EDITED";
+  const canEdit = isDraftQueueStatus(status);
+
+  const defaultScheduledLabel = formatScheduledClockTime(defaultScheduledAtIso);
 
   const counterClass = useMemo(() => {
     if (overLimit) return "text-red-400";
@@ -55,6 +80,17 @@ export default function ReviewEditor({
     setError(null);
     setMessage(null);
 
+    const customIso =
+      scheduleMode === "custom"
+        ? fromDatetimeLocalValue(customScheduledAt)
+        : null;
+
+    if (action === "approve" && scheduleMode === "custom" && !customIso) {
+      setError("Pick a valid custom schedule time.");
+      setSubmitting(null);
+      return;
+    }
+
     try {
       const res = await fetch("/api/x-agent/review/edit", {
         method: "POST",
@@ -63,14 +99,17 @@ export default function ReviewEditor({
           id: queueId,
           updatedText: text,
           action,
+          scheduleMode,
+          ...(customIso ? { scheduledAt: customIso } : {}),
         }),
       });
 
       const data = (await res.json()) as {
         ok?: boolean;
         error?: string;
-        status?: string;
-        publish?: { ok?: boolean; error?: string; tweetId?: string };
+        scheduledAt?: string;
+        message?: string;
+        scheduledTimeLabel?: string;
       };
 
       if (!res.ok || !data.ok) {
@@ -83,19 +122,13 @@ export default function ReviewEditor({
         return;
       }
 
-      if (data.publish?.ok) {
-        setMessage(
-          data.publish.tweetId
-            ? `Approved and posted to X (tweet ${data.publish.tweetId}).`
-            : "Approved and posted to X."
-        );
-        return;
-      }
-
       setMessage(
-        data.publish?.error
-          ? `Approved, but posting failed: ${data.publish.error}`
-          : "Approved. Posting will be retried."
+        data.message ??
+          (data.scheduledAt
+            ? buildScheduleApprovalUiMessage(data.scheduledAt)
+            : data.scheduledTimeLabel
+              ? `Approved! Scheduled for X at ${data.scheduledTimeLabel}.`
+              : "Approved! Scheduled for X.")
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Request failed");
@@ -160,6 +193,61 @@ export default function ReviewEditor({
           </p>
         </div>
 
+        {canEdit && (
+          <div className="mt-6 space-y-3">
+            <p className="pulse-label">Schedule publish</p>
+            <div className="space-y-2">
+              <label className="flex items-start gap-3 text-sm text-pulse-muted">
+                <input
+                  type="radio"
+                  name="schedule-mode"
+                  checked={scheduleMode === "default"}
+                  onChange={() => setScheduleMode("default")}
+                  disabled={submitting != null}
+                  className="mt-1"
+                />
+                <span>
+                  Default window (15–120 min){" "}
+                  <span className="text-white">(~{defaultScheduledLabel})</span>
+                </span>
+              </label>
+              <label className="flex items-start gap-3 text-sm text-pulse-muted">
+                <input
+                  type="radio"
+                  name="schedule-mode"
+                  checked={scheduleMode === "immediate"}
+                  onChange={() => setScheduleMode("immediate")}
+                  disabled={submitting != null}
+                  className="mt-1"
+                />
+                <span>Post as soon as possible (next cron tick, ~1 min)</span>
+              </label>
+              <label className="flex items-start gap-3 text-sm text-pulse-muted">
+                <input
+                  type="radio"
+                  name="schedule-mode"
+                  checked={scheduleMode === "custom"}
+                  onChange={() => setScheduleMode("custom")}
+                  disabled={submitting != null}
+                  className="mt-1"
+                />
+                <span className="flex-1">
+                  Custom time
+                  {scheduleMode === "custom" && (
+                    <input
+                      type="datetime-local"
+                      value={customScheduledAt}
+                      onChange={(e) => setCustomScheduledAt(e.target.value)}
+                      disabled={submitting != null}
+                      className="mt-2 w-full rounded-pulse border border-pulse-border bg-black px-3 py-2 text-sm text-white outline-none focus:border-pulse-accent"
+                    />
+                  )}
+                </span>
+              </label>
+            </div>
+          </div>
+        )}
+
         {error && (
           <p className="mt-4 rounded-pulse border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">
             {error}
@@ -178,7 +266,7 @@ export default function ReviewEditor({
             disabled={!canEdit || submitting != null || overLimit || !text.trim()}
             className="pulse-btn-primary disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {submitting === "approve" ? "Posting…" : "Approve & Post"}
+            {submitting === "approve" ? "SCHEDULING…" : "APPROVE & SCHEDULE"}
           </button>
           <button
             type="button"

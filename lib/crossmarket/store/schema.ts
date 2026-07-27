@@ -471,9 +471,12 @@ export type TraderEvAnalyticInsert = typeof traderEvAnalytics.$inferInsert;
 
 export const X_POST_QUEUE_STATUSES = [
   "PENDING_REVIEW",
+  "DRAFT",
   "APPROVED",
   "EDITED",
   "KILLED",
+  "SCHEDULED",
+  "PUBLISHED",
   "DISPATCHED",
   "EXPIRED",
 ] as const;
@@ -523,6 +526,8 @@ export const xPostQueue = pgTable(
       withTimezone: true,
       mode: "date",
     }),
+    /** X tweet id after successful publish (TradePost.xTweetId). */
+    xTweetId: text("x_tweet_id"),
     dispatchedAt: timestamp("dispatched_at", {
       withTimezone: true,
       mode: "date",

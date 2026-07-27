@@ -1,5 +1,6 @@
 import { TwitterApi } from "twitter-api-v2";
 import type { XPostQueue } from "@/lib/crossmarket/store/schema";
+import { POST_STATUS } from "@/lib/x-agent/postStatus";
 import { updateQueueById } from "@/lib/x-agent/reviewDb";
 
 const TWITTER_CREDENTIAL_KEYS = [
@@ -49,8 +50,8 @@ function validateTwitterCredentials():
 }
 
 /**
- * Post an approved queue item to X and mark it DISPATCHED on success.
- * Failures leave the row in APPROVED so a retry worker can pick it up.
+ * Post a scheduled queue item to X and mark it PUBLISHED on success.
+ * Failures leave the row in SCHEDULED so the cron worker can retry.
  */
 export async function publishXPostQueueItem(
   item: XPostQueue
@@ -81,7 +82,8 @@ export async function publishXPostQueueItem(
     const dispatchedAt = new Date();
 
     await updateQueueById(item.id, {
-      status: "DISPATCHED",
+      status: POST_STATUS.PUBLISHED,
+      xTweetId: data.id,
       dispatchedAt,
     });
 

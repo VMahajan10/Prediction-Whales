@@ -1,5 +1,6 @@
 import { getTradeEvLookupRedisOnly } from "@/lib/evPipeline/redisCache";
 import { isDatabaseEnabled } from "@/lib/crossmarket/store/db";
+import { getRandomScheduledTime } from "@/lib/x-agent/reviewSchedule";
 import { findQueueById } from "@/lib/x-agent/reviewDb";
 import {
   ANONYMOUS_WHALE_PSEUDONYM,
@@ -22,6 +23,7 @@ export interface ReviewPageEditorProps {
   whaleName: string;
   generatedPostText: string;
   status: string;
+  defaultScheduledAtIso: string;
 }
 
 export type ReviewPageLoadResult =
@@ -95,6 +97,7 @@ export async function loadReviewPageData(
         whaleName,
         generatedPostText: item.copyText,
         status: item.status,
+        defaultScheduledAtIso: getRandomScheduledTime().toISOString(),
       },
     };
   } catch (error) {

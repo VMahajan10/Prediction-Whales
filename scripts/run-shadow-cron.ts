@@ -34,6 +34,7 @@ import {
   type XAgentShadowPipelineResult,
 } from "../lib/x-agent/runShadowPipeline";
 import { disconnectPrisma, getPrisma } from "../lib/prisma";
+import { runCronPublisher } from "../lib/x-agent/cronPublisher";
 
 loadEnvFiles();
 logReviewEmailEnvAtStartup();
@@ -43,11 +44,14 @@ const PENDING_QUEUE_STATUSES = [
   "PENDING",
   "PENDING_REVIEW",
   "EDITED",
+  "DRAFT",
   "APPROVED",
+  "SCHEDULED",
 ] as const;
 
 const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
 const KEEP_ALIVE_INTERVAL_MS = 60_000;
+const SCHEDULED_PUBLISHER_INTERVAL_MS = 60_000;
 
 type ShadowMode = "daemon" | "batch" | "backfill";
 
@@ -55,6 +59,8 @@ let daemon: ShadowCronDaemon | null = null;
 let summaryTicker: NodeJS.Timeout | null = null;
 let heartbeatTicker: NodeJS.Timeout | null = null;
 let keepAliveTicker: NodeJS.Timeout | null = null;
+let scheduledPublisherTicker: NodeJS.Timeout | null = null;
+let scheduledPublisherRunning = false;
 let shuttingDown = false;
 
 function formatTimestamp(date = new Date()): string {
@@ -110,6 +116,11 @@ async function shutdown(signal: string, exitCode = 0): Promise<void> {
     keepAliveTicker = null;
   }
 
+  if (scheduledPublisherTicker) {
+    clearInterval(scheduledPublisherTicker);
+    scheduledPublisherTicker = null;
+  }
+
   if (summaryTicker) {
     clearInterval(summaryTicker);
     summaryTicker = null;
@@ -150,6 +161,49 @@ function startKeepAlive(): void {
   }, KEEP_ALIVE_INTERVAL_MS);
 }
 
+/** Publish SCHEDULED x_post_queue rows whose scheduledAt has elapsed. */
+async function runScheduledXPublisherTick(): Promise<void> {
+  if (scheduledPublisherRunning) {
+    console.log(
+      `[${formatTimestamp()}] [Shadow Cron] [X Publisher] tick skipped — prior run still in progress`
+    );
+    return;
+  }
+
+  scheduledPublisherRunning = true;
+  const startedAt = Date.now();
+
+  console.log(
+    `[${formatTimestamp()}] [Shadow Cron] [X Publisher] tick started`
+  );
+
+  try {
+    const result = await runCronPublisher();
+    console.log(
+      `[${formatTimestamp()}] [Shadow Cron] [X Publisher] tick complete | duration=${formatDuration(Date.now() - startedAt)} | scanned=${result.scanned} published=${result.published} failed=${result.failed} skipped=${result.skipped}`
+    );
+  } catch (error) {
+    console.error(
+      `[${formatTimestamp()}] [Shadow Cron] [X Publisher] tick failed:`,
+      error
+    );
+  } finally {
+    scheduledPublisherRunning = false;
+  }
+}
+
+function startScheduledPublisherTicker(): void {
+  void runScheduledXPublisherTick();
+
+  scheduledPublisherTicker = setInterval(() => {
+    void runScheduledXPublisherTick();
+  }, SCHEDULED_PUBLISHER_INTERVAL_MS);
+
+  console.log(
+    `[${formatTimestamp()}] [Shadow Cron] [X Publisher] scheduled — every ${SCHEDULED_PUBLISHER_INTERVAL_MS / 1000}s`
+  );
+}
+
 async function runBatchShadowPipeline(): Promise<XAgentShadowPipelineResult> {
   const liveOptions = parseLiveShadowOptionsFromEnv();
   console.log(
@@ -177,6 +231,7 @@ async function runDaemon(): Promise<void> {
   summaryTicker = daemon.startSummaryTicker();
   startHeartbeat();
   startKeepAlive();
+  startScheduledPublisherTicker();
 
   console.log(
     `[${formatTimestamp()}] [Shadow Cron] worker online — listening indefinitely (SIGINT/SIGTERM to stop)`
@@ -232,6 +287,8 @@ async function runOneShot(): Promise<void> {
     );
 
     printGateSummaryBox(result.gateSummary);
+
+    await runScheduledXPublisherTick();
   } catch (error) {
     console.error("[Shadow Cron] Error executing pipeline:", error);
     exitCode = 1;

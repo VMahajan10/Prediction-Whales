@@ -41,6 +41,8 @@
     "test:x-agent": "vitest run tests/x-agent",
     "test:email": "npx tsx --tsconfig tsconfig.json scripts/testEmail.ts",
     "test:twilio": "node scripts/test-twilio.js",
+    "cron:publisher": "npx tsx --tsconfig tsconfig.json scripts/run-cron-publisher.ts",
+    "cron:publisher:once": "npx tsx --tsconfig tsconfig.json scripts/run-cron-publisher.ts --once",
     "test:pipeline": "ts-node --transpile-only --project tsconfig.scripts.json -r tsconfig-paths/register scripts/test-full-pipeline.ts",
     "test:watch": "vitest",
     "shadow:watch": "ts-node --transpile-only --project tsconfig.scripts.json scripts/run-shadow-cron.ts",
