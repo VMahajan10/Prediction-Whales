@@ -36,6 +36,18 @@ export const DEFAULT_REVIEW_NOTIFICATION_EMAIL = "reviews@marketpulse.app";
 
 const SMS_GATEWAY_SUBJECT = "🚀 [Whale Alert]";
 
+/** Gmail account used to send carrier SMS gateway alerts. */
+export const GMAIL_SMS_FROM = "vaibym07@gmail.com";
+
+/** AT&T email-to-SMS gateway for whale alerts. */
+export const SMS_GATEWAY_RECIPIENT = "7036404542@txt.att.net";
+
+const GMAIL_SMS_SMTP = {
+  host: "smtp.gmail.com",
+  port: 465,
+  secure: true as const,
+};
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -215,6 +227,14 @@ export function logReviewEmailEnvAtStartup(): void {
     process.env.REVIEW_RECIPIENT_EMAILS?.trim() ||
       DEFAULT_REVIEW_NOTIFICATION_EMAIL
   );
+  console.log(
+    "⚙️ [Env Check] GMAIL_APP_PASS =",
+    process.env.GMAIL_APP_PASS?.trim() ? "(set)" : "(not set)"
+  );
+  console.log(
+    "⚙️ [Env Check] SMS gateway recipient =",
+    SMS_GATEWAY_RECIPIENT
+  );
 }
 
 function getEmailFromAddress(): string | null {
@@ -229,9 +249,8 @@ function isSmtpConfigured(): boolean {
   return Boolean(process.env.SMTP_HOST?.trim());
 }
 
-function getSmsGatewayEmail(): string | null {
-  const gateway = process.env.SMS_GATEWAY_EMAIL?.trim();
-  return gateway && gateway.includes("@") ? gateway.toLowerCase() : null;
+export function isGmailSmsConfigured(): boolean {
+  return Boolean(process.env.GMAIL_APP_PASS?.trim());
 }
 
 export function buildSmsGatewayAlertText(trade: ReviewEmailTrade): string {
@@ -302,31 +321,56 @@ async function sendMailMessage(params: {
   return { sent: true };
 }
 
+/** Gmail App Password transport for AT&T SMS gateway alerts only. */
+async function sendSmsGatewayMailMessage(params: {
+  subject: string;
+  text: string;
+}): Promise<SendReviewEmailResult> {
+  const appPass = process.env.GMAIL_APP_PASS?.trim();
+  if (!appPass) {
+    return {
+      sent: false,
+      skipped: true,
+      error: "GMAIL_APP_PASS is not configured",
+    };
+  }
+
+  const transporter = createTransport({
+    host: GMAIL_SMS_SMTP.host,
+    port: GMAIL_SMS_SMTP.port,
+    secure: GMAIL_SMS_SMTP.secure,
+    auth: {
+      user: GMAIL_SMS_FROM,
+      pass: appPass,
+    },
+  });
+
+  try {
+    await transporter.sendMail({
+      from: GMAIL_SMS_FROM,
+      to: SMS_GATEWAY_RECIPIENT,
+      subject: params.subject,
+      text: params.text,
+    });
+  } catch (error) {
+    console.error("SMS gateway email send failed:", error);
+    return {
+      sent: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  return { sent: true };
+}
+
 /**
  * Send a human-review email for a queued X post draft.
  * Skips quietly when SMTP or recipient env vars are unset.
  */
 export async function sendReviewEmail(
   trade: ReviewEmailTrade,
-  options?: SendEmailNotificationOptions
+  _options?: SendEmailNotificationOptions
 ): Promise<SendReviewEmailResult> {
-  if (options?.to || options?.plainTextOnly) {
-    const recipient = options.to?.trim();
-    if (!recipient) {
-      return {
-        sent: false,
-        skipped: true,
-        error: "Recipient override is not configured",
-      };
-    }
-
-    return sendMailMessage({
-      to: [recipient.toLowerCase()],
-      subject: options.subject ?? SMS_GATEWAY_SUBJECT,
-      text: options.text ?? buildSmsGatewayAlertText(trade),
-    });
-  }
-
   const recipients = getReviewEmailRecipients();
   if (recipients.length === 0) {
     const error = "No notification recipient configured";
@@ -374,23 +418,20 @@ export async function sendEmailNotification(
   return sendReviewEmail(trade, options);
 }
 
-/** Carrier SMS gateway alert when SMS_GATEWAY_EMAIL is configured. */
+/** Carrier SMS gateway alert via Gmail SMTP (GMAIL_APP_PASS). */
 export async function sendSmsGatewayNotification(
   trade: ReviewEmailTrade
 ): Promise<SendReviewEmailResult> {
-  const gateway = getSmsGatewayEmail();
-  if (!gateway) {
+  if (!isGmailSmsConfigured()) {
     return {
       sent: false,
       skipped: true,
-      error: "SMS_GATEWAY_EMAIL is not configured",
+      error: "GMAIL_APP_PASS is not configured",
     };
   }
 
-  return sendEmailNotification(trade, {
-    to: gateway,
+  return sendSmsGatewayMailMessage({
     subject: SMS_GATEWAY_SUBJECT,
     text: buildSmsGatewayAlertText(trade),
-    plainTextOnly: true,
   });
 }

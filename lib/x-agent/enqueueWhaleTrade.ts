@@ -29,6 +29,8 @@ import {
   sendEmailNotification,
   sendSmsGatewayNotification,
   getEffectiveNotificationEmailForLog,
+  isGmailSmsConfigured,
+  SMS_GATEWAY_RECIPIENT,
 } from "@/lib/email/sendReviewEmail";
 import { logStderr, logStdout } from "@/lib/utils";
 import { selectPostTemplate } from "@/lib/templates/postTemplates";
@@ -366,7 +368,7 @@ export async function processWhaleTradeForXAgent(
     );
   }
 
-  if (process.env.SMS_GATEWAY_EMAIL?.trim()) {
+  if (isGmailSmsConfigured()) {
     const smsTradePayload = {
       id: insertedRecord.id,
       copyText: insertedRecord.copyText,
@@ -382,7 +384,7 @@ export async function processWhaleTradeForXAgent(
     try {
       logStdout(
         "📱 [Queue SMS] Dispatching carrier gateway alert to:",
-        process.env.SMS_GATEWAY_EMAIL.trim()
+        SMS_GATEWAY_RECIPIENT
       );
       const smsRes = await sendSmsGatewayNotification(smsTradePayload);
       if (smsRes.sent) {

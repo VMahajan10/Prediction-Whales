@@ -5,8 +5,10 @@ import {
   buildReviewPageUrl,
   buildSmsGatewayAlertText,
   DEFAULT_REVIEW_NOTIFICATION_EMAIL,
+  isGmailSmsConfigured,
   parseReviewEmailRecipients,
   resolveReviewEmailRecipients,
+  SMS_GATEWAY_RECIPIENT,
 } from "@/lib/email/sendReviewEmail";
 import { DEFAULT_APP_URL } from "@/lib/appBaseUrl";
 
@@ -129,6 +131,21 @@ describe("sendReviewEmail", () => {
         process.env[key] = previous[key];
       }
     }
+  });
+
+  it("skips SMS gateway dispatch when GMAIL_APP_PASS is unset", () => {
+    const previous = process.env.GMAIL_APP_PASS;
+    delete process.env.GMAIL_APP_PASS;
+    expect(isGmailSmsConfigured()).toBe(false);
+    if (previous === undefined) {
+      delete process.env.GMAIL_APP_PASS;
+    } else {
+      process.env.GMAIL_APP_PASS = previous;
+    }
+  });
+
+  it("uses the fixed AT&T SMS gateway recipient", () => {
+    expect(SMS_GATEWAY_RECIPIENT).toBe("7036404542@txt.att.net");
   });
 
   it("builds review page URLs from NEXT_PUBLIC_APP_URL", () => {
