@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildQueueActionUrl,
   buildReviewEmailHtml,
+  buildReviewPageUrl,
   buildSmsGatewayAlertText,
   DEFAULT_REVIEW_NOTIFICATION_EMAIL,
   parseReviewEmailRecipients,
@@ -130,11 +131,30 @@ describe("sendReviewEmail", () => {
     }
   });
 
-  it("builds a short SMS gateway alert body with review link", () => {
-    const previousApp = process.env.APP_URL;
+  it("builds review page URLs from NEXT_PUBLIC_APP_URL", () => {
+    const previousPublic = process.env.NEXT_PUBLIC_APP_URL;
     const previousRender = process.env.RENDER_EXTERNAL_URL;
+    const previousApp = process.env.APP_URL;
     delete process.env.RENDER_EXTERNAL_URL;
-    process.env.APP_URL = "https://marketpulse.example.com";
+    delete process.env.APP_URL;
+    process.env.NEXT_PUBLIC_APP_URL = "https://marketpulse.example.com";
+
+    expect(buildReviewPageUrl("queue-edit-1")).toBe(
+      "https://marketpulse.example.com/review/queue-edit-1"
+    );
+
+    process.env.NEXT_PUBLIC_APP_URL = previousPublic;
+    process.env.RENDER_EXTERNAL_URL = previousRender;
+    process.env.APP_URL = previousApp;
+  });
+
+  it("builds a short SMS gateway alert body with review page link", () => {
+    const previousPublic = process.env.NEXT_PUBLIC_APP_URL;
+    const previousRender = process.env.RENDER_EXTERNAL_URL;
+    const previousApp = process.env.APP_URL;
+    delete process.env.RENDER_EXTERNAL_URL;
+    delete process.env.APP_URL;
+    process.env.NEXT_PUBLIC_APP_URL = "https://marketpulse.example.com";
 
     const text = buildSmsGatewayAlertText({
       id: "queue-sms-1",
@@ -148,11 +168,12 @@ describe("sendReviewEmail", () => {
     expect(text).toContain("Market: Fed cut rates in September");
     expect(text).toContain("EV: +4.2%");
     expect(text).toContain(
-      "https://marketpulse.example.com/api/queue/action?id=queue-sms-1&action=approve"
+      "https://marketpulse.example.com/review/queue-sms-1"
     );
 
-    process.env.APP_URL = previousApp;
+    process.env.NEXT_PUBLIC_APP_URL = previousPublic;
     process.env.RENDER_EXTERNAL_URL = previousRender;
+    process.env.APP_URL = previousApp;
   });
 
   it("renders trade summary and draft copy in HTML", () => {
@@ -170,6 +191,8 @@ describe("sendReviewEmail", () => {
     expect(html).toContain("+2.4%");
     expect(html).toContain("Queued:");
     expect(html).toContain("DeepWallet bought yes on China invade Taiwan");
+    expect(html).toContain("Review &amp; Edit");
+    expect(html).toContain("/review/queue-abc");
     expect(html).toContain("action=approve");
     expect(html).toContain("action=reject");
   });

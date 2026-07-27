@@ -79,6 +79,7 @@ export async function updateQueueById(
     status?: XPostQueueStatus;
     copyText?: string;
     scheduledFor?: Date | null;
+    dispatchedAt?: Date | null;
   }
 ): Promise<XPostQueue | null> {
   const trimmed = id.trim();
@@ -103,6 +104,7 @@ export async function updateQueueByReviewToken(
     status?: XPostQueueStatus;
     copyText?: string;
     scheduledFor?: Date | null;
+    dispatchedAt?: Date | null;
   }
 ): Promise<XPostQueue | null> {
   const trimmed = token.trim();

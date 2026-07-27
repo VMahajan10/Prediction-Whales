@@ -1,5 +1,5 @@
 import { createTransport } from "nodemailer";
-import { getAppBaseUrl } from "@/lib/appBaseUrl";
+import { getAppBaseUrl, getPublicAppUrl } from "@/lib/appBaseUrl";
 import { formatToEST } from "@/lib/client-utils";
 
 export interface ReviewEmailTrade {
@@ -67,9 +67,15 @@ export function buildQueueActionUrl(
   return `${base}/api/queue/action?${params.toString()}`;
 }
 
+/** Direct link to the human review + edit page for a queued post. */
+export function buildReviewPageUrl(queueId: string): string {
+  return `${getPublicAppUrl()}/review/${encodeURIComponent(queueId)}`;
+}
+
 export function buildReviewEmailHtml(trade: ReviewEmailTrade): string {
   const approveUrl = buildQueueActionUrl(trade.id, "approve");
   const rejectUrl = buildQueueActionUrl(trade.id, "reject");
+  const reviewUrl = buildReviewPageUrl(trade.id);
   const market = escapeHtml(trade.marketTitle);
   const draft = escapeHtml(trade.renderedDraft ?? trade.copyText);
   const templateMeta = escapeHtml(
@@ -124,6 +130,13 @@ export function buildReviewEmailHtml(trade: ReviewEmailTrade): string {
           </tr>
           <tr>
             <td style="padding:0 28px 28px;">
+              <table role="presentation" cellspacing="0" cellpadding="0" style="margin-bottom:16px;">
+                <tr>
+                  <td>
+                    <a href="${reviewUrl}" style="display:inline-block;padding:12px 20px;background:#2563eb;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:600;font-size:14px;">Review &amp; Edit</a>
+                  </td>
+                </tr>
+              </table>
               <table role="presentation" cellspacing="0" cellpadding="0">
                 <tr>
                   <td style="padding-right:12px;">
@@ -222,7 +235,7 @@ function getSmsGatewayEmail(): string | null {
 }
 
 export function buildSmsGatewayAlertText(trade: ReviewEmailTrade): string {
-  const reviewUrl = buildQueueActionUrl(trade.id, "approve");
+  const reviewUrl = buildReviewPageUrl(trade.id);
   const stake = formatStakeUsd(trade.stakeNotional);
   const ev = formatEvLabel(trade.evPercent);
   return `Stake: ${stake} | Market: ${trade.marketTitle} | EV: ${ev} | Review: ${reviewUrl}`;
@@ -340,6 +353,7 @@ export async function sendReviewEmail(
     "Drafted X post:",
     trade.renderedDraft ?? trade.copyText,
     "",
+    `Review & Edit: ${buildReviewPageUrl(trade.id)}`,
     `Approve: ${buildQueueActionUrl(trade.id, "approve")}`,
     `Reject: ${buildQueueActionUrl(trade.id, "reject")}`,
   ].join("\n");

@@ -14,3 +14,10 @@ export function getAppBaseUrl(): string {
 
   return DEFAULT_APP_URL;
 }
+
+/** Client-facing origin for review links (NEXT_PUBLIC_APP_URL → getAppBaseUrl). */
+export function getPublicAppUrl(): string {
+  const publicUrl = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  if (publicUrl) return publicUrl.replace(/\/$/, "");
+  return getAppBaseUrl();
+}

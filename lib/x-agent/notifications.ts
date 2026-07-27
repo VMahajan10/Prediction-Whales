@@ -1,5 +1,5 @@
 import type { XPostQueue } from "@/lib/crossmarket/store/schema";
-import { getAppBaseUrl } from "@/lib/appBaseUrl";
+import { getAppBaseUrl, getPublicAppUrl } from "@/lib/appBaseUrl";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 import { formatToEST } from "@/lib/client-utils";
 
@@ -38,7 +38,8 @@ export interface AdminReviewAlertResult {
 /** Build 1-tap admin review URLs for a queued X post. */
 export function buildReviewActionLinks(
   reviewToken: string,
-  baseUrl?: string
+  baseUrl?: string,
+  queueId?: string
 ): ReviewActionLinks {
   const base = (baseUrl ?? getAppBaseUrl()).replace(/\/$/, "");
   const token = encodeURIComponent(reviewToken);
@@ -46,7 +47,9 @@ export function buildReviewActionLinks(
   return {
     approve: `${base}/api/x-agent/review/action?token=${token}&action=approve`,
     kill: `${base}/api/x-agent/review/action?token=${token}&action=kill`,
-    edit: `${base}/api/x-agent/review/edit?token=${token}`,
+    edit: queueId
+      ? `${getPublicAppUrl()}/review/${encodeURIComponent(queueId)}`
+      : `${base}/api/x-agent/review/edit?token=${token}`,
   };
 }
 
@@ -132,7 +135,11 @@ async function postAdminEndpoint(
 export async function dispatchAdminReviewAlert(
   queueItem: XPostQueue
 ): Promise<AdminReviewAlertResult> {
-  const links = buildReviewActionLinks(queueItem.reviewToken);
+  const links = buildReviewActionLinks(
+    queueItem.reviewToken,
+    undefined,
+    queueItem.id
+  );
   const payload = buildAlertPayload(queueItem, links);
 
   const [webhook, sms, email] = await Promise.all([
