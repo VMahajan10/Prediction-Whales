@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { Suspense, useEffect, useState, type ReactNode } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import DemoAuthScreen from "@/components/DemoAuthScreen";
+import { sanitizeRedirectPath } from "@/lib/authRedirect";
 import { DemoAuthProvider, useDemoAuth } from "@/lib/DemoAuthGateContext";
 
 function DemoAuthGatePlaceholder() {
@@ -17,12 +19,28 @@ function DemoAuthGatePlaceholder() {
 
 function DemoAuthGateInner({ children }: { children: ReactNode }) {
   const { entered, checking } = useDemoAuth();
-  const [mode, setMode] = useState<"signup" | "login">("signup");
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const [mode, setMode] = useState<"signup" | "login">(
+    pathname === "/login" ? "login" : "signup"
+  );
   const [hasMounted, setHasMounted] = useState(false);
+
+  const redirectTo = sanitizeRedirectPath(searchParams.get("redirectTo"));
 
   useEffect(() => {
     setHasMounted(true);
   }, []);
+
+  useEffect(() => {
+    if (!hasMounted || checking || entered) return;
+    if (!pathname.startsWith("/review/")) return;
+
+    const query = searchParams.toString();
+    const target = query ? `${pathname}?${query}` : pathname;
+    router.replace(`/login?redirectTo=${encodeURIComponent(target)}`);
+  }, [hasMounted, checking, entered, pathname, searchParams, router]);
 
   // Server + first client paint must match — defer auth branching until mounted.
   if (!hasMounted || checking) {
@@ -30,9 +48,14 @@ function DemoAuthGateInner({ children }: { children: ReactNode }) {
   }
 
   if (!entered) {
+    if (pathname.startsWith("/review/")) {
+      return <DemoAuthGatePlaceholder />;
+    }
+
     return (
       <DemoAuthScreen
-        mode={mode}
+        mode={pathname === "/login" ? "login" : mode}
+        redirectTo={redirectTo}
         onToggleMode={() =>
           setMode((m) => (m === "signup" ? "login" : "signup"))
         }
@@ -46,7 +69,9 @@ function DemoAuthGateInner({ children }: { children: ReactNode }) {
 export default function DemoAuthGate({ children }: { children: ReactNode }) {
   return (
     <DemoAuthProvider>
-      <DemoAuthGateInner>{children}</DemoAuthGateInner>
+      <Suspense fallback={<DemoAuthGatePlaceholder />}>
+        <DemoAuthGateInner>{children}</DemoAuthGateInner>
+      </Suspense>
     </DemoAuthProvider>
   );
 }

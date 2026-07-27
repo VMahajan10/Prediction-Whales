@@ -13,6 +13,7 @@ type AuthMode = "signup" | "login";
 interface DemoAuthScreenProps {
   mode: AuthMode;
   onToggleMode: () => void;
+  redirectTo?: string;
 }
 
 function BrandLogo() {
@@ -53,6 +54,7 @@ function AppleIcon() {
 export default function DemoAuthScreen({
   mode,
   onToggleMode,
+  redirectTo = "/",
 }: DemoAuthScreenProps) {
   const { enter } = useDemoAuth();
   const router = useRouter();
@@ -70,9 +72,9 @@ export default function DemoAuthScreen({
       ? "Password empty (demo only)"
       : null;
 
-  const goToFeed = () => {
+  const goToDestination = () => {
     enter();
-    router.push("/");
+    router.push(redirectTo);
     router.refresh();
   };
 
@@ -101,7 +103,7 @@ export default function DemoAuthScreen({
           className="mt-10 space-y-4"
           onSubmit={(e) => {
             e.preventDefault();
-            goToFeed();
+            goToDestination();
           }}
         >
           <div>
@@ -171,7 +173,7 @@ export default function DemoAuthScreen({
         <div className="grid grid-cols-2 gap-3">
           <button
             type="button"
-            onClick={goToFeed}
+            onClick={goToDestination}
             className="flex aspect-square items-center justify-center rounded-pulse border border-pulse-border bg-pulse-card transition-colors hover:border-pulse-muted"
             aria-label="Continue with Google"
           >
@@ -179,7 +181,7 @@ export default function DemoAuthScreen({
           </button>
           <button
             type="button"
-            onClick={goToFeed}
+            onClick={goToDestination}
             className="flex aspect-square items-center justify-center rounded-pulse border border-pulse-border bg-pulse-card transition-colors hover:border-pulse-muted"
             aria-label="Continue with Apple"
           >

@@ -1,4 +1,5 @@
 import { createTransport } from "nodemailer";
+import { buildReviewEditLoginUrl } from "@/lib/authRedirect";
 import { getAppBaseUrl, getPublicAppUrl } from "@/lib/appBaseUrl";
 import { formatToEST } from "@/lib/client-utils";
 import {
@@ -81,10 +82,12 @@ export function buildReviewPageUrl(queueId: string): string {
   return `${getPublicAppUrl()}/review/${encodeURIComponent(queueId)}`;
 }
 
+export { buildReviewEditLoginUrl } from "@/lib/authRedirect";
+
 export function buildReviewEmailHtml(trade: ReviewEmailTrade): string {
   const approveUrl = buildQueueActionUrl(trade.id, "approve");
   const rejectUrl = buildQueueActionUrl(trade.id, "reject");
-  const reviewUrl = buildReviewPageUrl(trade.id);
+  const reviewUrl = buildReviewEditLoginUrl(trade.id);
   const market = escapeHtml(trade.marketTitle);
   const draft = escapeHtml(trade.renderedDraft ?? trade.copyText);
   const templateMeta = escapeHtml(
@@ -251,7 +254,7 @@ function isSmtpConfigured(): boolean {
 }
 
 export function buildSmsGatewayAlertText(trade: ReviewEmailTrade): string {
-  const reviewUrl = buildReviewPageUrl(trade.id);
+  const reviewUrl = buildReviewEditLoginUrl(trade.id);
   const stake = formatStakeUsd(trade.stakeNotional);
   const ev = formatEvLabel(trade.evPercent);
   return `Stake: ${stake} | Market: ${trade.marketTitle} | EV: ${ev} | Review: ${reviewUrl}`;
@@ -352,7 +355,7 @@ export async function sendReviewEmail(
     "Drafted X post:",
     trade.renderedDraft ?? trade.copyText,
     "",
-    `Review & Edit: ${buildReviewPageUrl(trade.id)}`,
+    `Review & Edit: ${buildReviewEditLoginUrl(trade.id)}`,
     `Approve: ${buildQueueActionUrl(trade.id, "approve")}`,
     `Reject: ${buildQueueActionUrl(trade.id, "reject")}`,
   ].join("\n");

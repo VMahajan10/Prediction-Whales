@@ -1,5 +1,6 @@
 import type { XPostQueue } from "@/lib/crossmarket/store/schema";
-import { getAppBaseUrl, getPublicAppUrl } from "@/lib/appBaseUrl";
+import { buildReviewEditLoginUrl } from "@/lib/authRedirect";
+import { getAppBaseUrl } from "@/lib/appBaseUrl";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 import { formatToEST } from "@/lib/client-utils";
 
@@ -48,7 +49,7 @@ export function buildReviewActionLinks(
     approve: `${base}/api/x-agent/review/action?token=${token}&action=approve`,
     kill: `${base}/api/x-agent/review/action?token=${token}&action=kill`,
     edit: queueId
-      ? `${getPublicAppUrl()}/review/${encodeURIComponent(queueId)}`
+      ? buildReviewEditLoginUrl(queueId)
       : `${base}/api/x-agent/review/edit?token=${token}`,
   };
 }
