@@ -27,6 +27,7 @@ import {
 import { dispatchAdminReviewAlert } from "@/lib/x-agent/notifications";
 import {
   sendEmailNotification,
+  sendSmsGatewayNotification,
   getEffectiveNotificationEmailForLog,
 } from "@/lib/email/sendReviewEmail";
 import { logStderr, logStdout } from "@/lib/utils";
@@ -363,6 +364,43 @@ export async function processWhaleTradeForXAgent(
       insertedRecord.id,
       emailErr
     );
+  }
+
+  if (process.env.SMS_GATEWAY_EMAIL?.trim()) {
+    const smsTradePayload = {
+      id: insertedRecord.id,
+      copyText: insertedRecord.copyText,
+      renderedDraft: insertedRecord.copyText,
+      templateFamily: family,
+      variantId,
+      stakeNotional: insertedRecord.stakeNotional,
+      evPercent: tradeEvPercent,
+      marketTitle: translation.marketPlain,
+      queuedAt: insertedRecord.createdAt,
+    };
+
+    try {
+      logStdout(
+        "📱 [Queue SMS] Dispatching carrier gateway alert to:",
+        process.env.SMS_GATEWAY_EMAIL.trim()
+      );
+      const smsRes = await sendSmsGatewayNotification(smsTradePayload);
+      if (smsRes.sent) {
+        logStdout("✅ [Queue SMS Success] Result:", smsRes);
+      } else if (!smsRes.skipped) {
+        logStderr(
+          "❌ [Queue SMS Error] Failed for ID:",
+          insertedRecord.id,
+          smsRes
+        );
+      }
+    } catch (smsErr) {
+      logStderr(
+        "❌ [Queue SMS Error] Failed for ID:",
+        insertedRecord.id,
+        smsErr
+      );
+    }
   }
 
   logStdout(

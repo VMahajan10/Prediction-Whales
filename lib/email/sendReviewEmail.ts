@@ -22,8 +22,19 @@ export interface SendReviewEmailResult {
   error?: string;
 }
 
+export interface SendEmailNotificationOptions {
+  /** Override recipient (e.g. carrier SMS gateway address). */
+  to?: string;
+  subject?: string;
+  /** Plain-text body; skips HTML review template when set. */
+  text?: string;
+  plainTextOnly?: boolean;
+}
+
 /** Used when NOTIFICATION_EMAIL / REVIEW_RECIPIENT_EMAILS are unset. */
 export const DEFAULT_REVIEW_NOTIFICATION_EMAIL = "reviews@marketpulse.app";
+
+const SMS_GATEWAY_SUBJECT = "🚀 [Whale Alert]";
 
 function escapeHtml(value: string): string {
   return value
@@ -205,24 +216,24 @@ function isSmtpConfigured(): boolean {
   return Boolean(process.env.SMTP_HOST?.trim());
 }
 
-/**
- * Send a human-review email for a queued X post draft.
- * Skips quietly when SMTP or recipient env vars are unset.
- */
-export async function sendReviewEmail(
-  trade: ReviewEmailTrade
-): Promise<SendReviewEmailResult> {
-  const recipients = getReviewEmailRecipients();
-  if (recipients.length === 0) {
-    const error = "No notification recipient configured";
-    console.error("❌ Review email misconfigured:", error);
-    return {
-      sent: false,
-      skipped: true,
-      error,
-    };
-  }
+function getSmsGatewayEmail(): string | null {
+  const gateway = process.env.SMS_GATEWAY_EMAIL?.trim();
+  return gateway && gateway.includes("@") ? gateway.toLowerCase() : null;
+}
 
+export function buildSmsGatewayAlertText(trade: ReviewEmailTrade): string {
+  const reviewUrl = buildQueueActionUrl(trade.id, "approve");
+  const stake = formatStakeUsd(trade.stakeNotional);
+  const ev = formatEvLabel(trade.evPercent);
+  return `Stake: ${stake} | Market: ${trade.marketTitle} | EV: ${ev} | Review: ${reviewUrl}`;
+}
+
+async function sendMailMessage(params: {
+  to: string[];
+  subject: string;
+  text: string;
+  html?: string;
+}): Promise<SendReviewEmailResult> {
   const from = getEmailFromAddress();
   if (!from) {
     return {
@@ -259,6 +270,61 @@ export async function sendReviewEmail(
         : undefined,
   });
 
+  try {
+    await transporter.sendMail({
+      from,
+      to: params.to,
+      subject: params.subject,
+      text: params.text,
+      ...(params.html ? { html: params.html } : {}),
+    });
+  } catch (error) {
+    console.error("Email send failed:", error);
+    return {
+      sent: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  return { sent: true };
+}
+
+/**
+ * Send a human-review email for a queued X post draft.
+ * Skips quietly when SMTP or recipient env vars are unset.
+ */
+export async function sendReviewEmail(
+  trade: ReviewEmailTrade,
+  options?: SendEmailNotificationOptions
+): Promise<SendReviewEmailResult> {
+  if (options?.to || options?.plainTextOnly) {
+    const recipient = options.to?.trim();
+    if (!recipient) {
+      return {
+        sent: false,
+        skipped: true,
+        error: "Recipient override is not configured",
+      };
+    }
+
+    return sendMailMessage({
+      to: [recipient.toLowerCase()],
+      subject: options.subject ?? SMS_GATEWAY_SUBJECT,
+      text: options.text ?? buildSmsGatewayAlertText(trade),
+    });
+  }
+
+  const recipients = getReviewEmailRecipients();
+  if (recipients.length === 0) {
+    const error = "No notification recipient configured";
+    console.error("❌ Review email misconfigured:", error);
+    return {
+      sent: false,
+      skipped: true,
+      error,
+    };
+  }
+
   const subject = `Review: ${trade.marketTitle} (${formatStakeUsd(trade.stakeNotional)})`;
   const html = buildReviewEmailHtml(trade);
   const text = [
@@ -278,24 +344,39 @@ export async function sendReviewEmail(
     `Reject: ${buildQueueActionUrl(trade.id, "reject")}`,
   ].join("\n");
 
-  try {
-    await transporter.sendMail({
-      from,
-      to: recipients,
-      subject,
-      text,
-      html,
-    });
-  } catch (error) {
-    console.error("Email send failed:", error);
-    return {
-      sent: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
-
-  return { sent: true };
+  return sendMailMessage({
+    to: recipients,
+    subject,
+    text,
+    html,
+  });
 }
 
 /** Queue review email dispatch (alias used after x_post_queue insert). */
-export const sendEmailNotification = sendReviewEmail;
+export async function sendEmailNotification(
+  trade: ReviewEmailTrade,
+  options?: SendEmailNotificationOptions
+): Promise<SendReviewEmailResult> {
+  return sendReviewEmail(trade, options);
+}
+
+/** Carrier SMS gateway alert when SMS_GATEWAY_EMAIL is configured. */
+export async function sendSmsGatewayNotification(
+  trade: ReviewEmailTrade
+): Promise<SendReviewEmailResult> {
+  const gateway = getSmsGatewayEmail();
+  if (!gateway) {
+    return {
+      sent: false,
+      skipped: true,
+      error: "SMS_GATEWAY_EMAIL is not configured",
+    };
+  }
+
+  return sendEmailNotification(trade, {
+    to: gateway,
+    subject: SMS_GATEWAY_SUBJECT,
+    text: buildSmsGatewayAlertText(trade),
+    plainTextOnly: true,
+  });
+}

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildQueueActionUrl,
   buildReviewEmailHtml,
+  buildSmsGatewayAlertText,
   DEFAULT_REVIEW_NOTIFICATION_EMAIL,
   parseReviewEmailRecipients,
   resolveReviewEmailRecipients,
@@ -127,6 +128,31 @@ describe("sendReviewEmail", () => {
         process.env[key] = previous[key];
       }
     }
+  });
+
+  it("builds a short SMS gateway alert body with review link", () => {
+    const previousApp = process.env.APP_URL;
+    const previousRender = process.env.RENDER_EXTERNAL_URL;
+    delete process.env.RENDER_EXTERNAL_URL;
+    process.env.APP_URL = "https://marketpulse.example.com";
+
+    const text = buildSmsGatewayAlertText({
+      id: "queue-sms-1",
+      copyText: "draft",
+      stakeNotional: 25_000,
+      evPercent: 4.2,
+      marketTitle: "Fed cut rates in September",
+    });
+
+    expect(text).toContain("Stake: $25,000");
+    expect(text).toContain("Market: Fed cut rates in September");
+    expect(text).toContain("EV: +4.2%");
+    expect(text).toContain(
+      "https://marketpulse.example.com/api/queue/action?id=queue-sms-1&action=approve"
+    );
+
+    process.env.APP_URL = previousApp;
+    process.env.RENDER_EXTERNAL_URL = previousRender;
   });
 
   it("renders trade summary and draft copy in HTML", () => {
