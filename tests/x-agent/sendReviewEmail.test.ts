@@ -5,10 +5,9 @@ import {
   buildReviewPageUrl,
   buildSmsGatewayAlertText,
   DEFAULT_REVIEW_NOTIFICATION_EMAIL,
-  isGmailSmsConfigured,
+  isTwilioSmsConfigured,
   parseReviewEmailRecipients,
   resolveReviewEmailRecipients,
-  SMS_GATEWAY_RECIPIENT,
 } from "@/lib/email/sendReviewEmail";
 import { DEFAULT_APP_URL } from "@/lib/appBaseUrl";
 
@@ -133,19 +132,57 @@ describe("sendReviewEmail", () => {
     }
   });
 
-  it("skips SMS gateway dispatch when GMAIL_APP_PASS is unset", () => {
-    const previous = process.env.GMAIL_APP_PASS;
-    delete process.env.GMAIL_APP_PASS;
-    expect(isGmailSmsConfigured()).toBe(false);
-    if (previous === undefined) {
-      delete process.env.GMAIL_APP_PASS;
-    } else {
-      process.env.GMAIL_APP_PASS = previous;
+  it("skips Twilio SMS dispatch when env vars are unset", () => {
+    const keys = [
+      "TWILIO_ACCOUNT_SID",
+      "TWILIO_AUTH_TOKEN",
+      "TWILIO_PHONE_NUMBER",
+      "ALERT_SMS_TO",
+    ] as const;
+    const previous = Object.fromEntries(
+      keys.map((key) => [key, process.env[key]])
+    );
+
+    for (const key of keys) {
+      delete process.env[key];
+    }
+
+    expect(isTwilioSmsConfigured()).toBe(false);
+
+    for (const key of keys) {
+      if (previous[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = previous[key];
+      }
     }
   });
 
-  it("uses the fixed AT&T SMS gateway recipient", () => {
-    expect(SMS_GATEWAY_RECIPIENT).toBe("7036404542@txt.att.net");
+  it("detects Twilio SMS when all env vars are set", () => {
+    const keys = [
+      "TWILIO_ACCOUNT_SID",
+      "TWILIO_AUTH_TOKEN",
+      "TWILIO_PHONE_NUMBER",
+      "ALERT_SMS_TO",
+    ] as const;
+    const previous = Object.fromEntries(
+      keys.map((key) => [key, process.env[key]])
+    );
+
+    process.env.TWILIO_ACCOUNT_SID = "ACtest";
+    process.env.TWILIO_AUTH_TOKEN = "token";
+    process.env.TWILIO_PHONE_NUMBER = "+15551234567";
+    process.env.ALERT_SMS_TO = "+17036404542";
+
+    expect(isTwilioSmsConfigured()).toBe(true);
+
+    for (const key of keys) {
+      if (previous[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = previous[key];
+      }
+    }
   });
 
   it("builds review page URLs from NEXT_PUBLIC_APP_URL", () => {

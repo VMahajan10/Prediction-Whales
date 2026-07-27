@@ -1,6 +1,16 @@
 import { createTransport } from "nodemailer";
 import { getAppBaseUrl, getPublicAppUrl } from "@/lib/appBaseUrl";
 import { formatToEST } from "@/lib/client-utils";
+import {
+  getTwilioAlertSmsTo,
+  isTwilioSmsConfigured,
+  sendTwilioSmsAlert,
+} from "@/lib/sms/twilioAlert";
+
+export {
+  getTwilioAlertSmsTo,
+  isTwilioSmsConfigured,
+} from "@/lib/sms/twilioAlert";
 
 export interface ReviewEmailTrade {
   id: string;
@@ -20,6 +30,7 @@ export interface SendReviewEmailResult {
   sent: boolean;
   skipped?: boolean;
   error?: string;
+  messageSid?: string;
 }
 
 export interface SendEmailNotificationOptions {
@@ -33,20 +44,6 @@ export interface SendEmailNotificationOptions {
 
 /** Used when NOTIFICATION_EMAIL / REVIEW_RECIPIENT_EMAILS are unset. */
 export const DEFAULT_REVIEW_NOTIFICATION_EMAIL = "reviews@marketpulse.app";
-
-const SMS_GATEWAY_SUBJECT = "🚀 [Whale Alert]";
-
-/** Gmail account used to send carrier SMS gateway alerts. */
-export const GMAIL_SMS_FROM = "vaibym07@gmail.com";
-
-/** AT&T email-to-SMS gateway for whale alerts. */
-export const SMS_GATEWAY_RECIPIENT = "7036404542@txt.att.net";
-
-const GMAIL_SMS_SMTP = {
-  host: "smtp.gmail.com",
-  port: 465,
-  secure: true as const,
-};
 
 function escapeHtml(value: string): string {
   return value
@@ -228,12 +225,16 @@ export function logReviewEmailEnvAtStartup(): void {
       DEFAULT_REVIEW_NOTIFICATION_EMAIL
   );
   console.log(
-    "⚙️ [Env Check] GMAIL_APP_PASS =",
-    process.env.GMAIL_APP_PASS?.trim() ? "(set)" : "(not set)"
+    "⚙️ [Env Check] TWILIO_ACCOUNT_SID =",
+    process.env.TWILIO_ACCOUNT_SID?.trim() ? "(set)" : "(not set)"
   );
   console.log(
-    "⚙️ [Env Check] SMS gateway recipient =",
-    SMS_GATEWAY_RECIPIENT
+    "⚙️ [Env Check] TWILIO_PHONE_NUMBER =",
+    process.env.TWILIO_PHONE_NUMBER?.trim() || "(not set)"
+  );
+  console.log(
+    "⚙️ [Env Check] ALERT_SMS_TO =",
+    getTwilioAlertSmsTo() || "(not set)"
   );
 }
 
@@ -247,10 +248,6 @@ function getEmailFromAddress(): string | null {
 
 function isSmtpConfigured(): boolean {
   return Boolean(process.env.SMTP_HOST?.trim());
-}
-
-export function isGmailSmsConfigured(): boolean {
-  return Boolean(process.env.GMAIL_APP_PASS?.trim());
 }
 
 export function buildSmsGatewayAlertText(trade: ReviewEmailTrade): string {
@@ -321,48 +318,6 @@ async function sendMailMessage(params: {
   return { sent: true };
 }
 
-/** Gmail App Password transport for AT&T SMS gateway alerts only. */
-async function sendSmsGatewayMailMessage(params: {
-  subject: string;
-  text: string;
-}): Promise<SendReviewEmailResult> {
-  const appPass = process.env.GMAIL_APP_PASS?.trim();
-  if (!appPass) {
-    return {
-      sent: false,
-      skipped: true,
-      error: "GMAIL_APP_PASS is not configured",
-    };
-  }
-
-  const transporter = createTransport({
-    host: GMAIL_SMS_SMTP.host,
-    port: GMAIL_SMS_SMTP.port,
-    secure: GMAIL_SMS_SMTP.secure,
-    auth: {
-      user: GMAIL_SMS_FROM,
-      pass: appPass,
-    },
-  });
-
-  try {
-    await transporter.sendMail({
-      from: GMAIL_SMS_FROM,
-      to: SMS_GATEWAY_RECIPIENT,
-      subject: params.subject,
-      text: params.text,
-    });
-  } catch (error) {
-    console.error("SMS gateway email send failed:", error);
-    return {
-      sent: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
-
-  return { sent: true };
-}
-
 /**
  * Send a human-review email for a queued X post draft.
  * Skips quietly when SMTP or recipient env vars are unset.
@@ -418,20 +373,11 @@ export async function sendEmailNotification(
   return sendReviewEmail(trade, options);
 }
 
-/** Carrier SMS gateway alert via Gmail SMTP (GMAIL_APP_PASS). */
+/** Whale alert SMS via Twilio (TWILIO_* + ALERT_SMS_TO). */
 export async function sendSmsGatewayNotification(
   trade: ReviewEmailTrade
 ): Promise<SendReviewEmailResult> {
-  if (!isGmailSmsConfigured()) {
-    return {
-      sent: false,
-      skipped: true,
-      error: "GMAIL_APP_PASS is not configured",
-    };
-  }
-
-  return sendSmsGatewayMailMessage({
-    subject: SMS_GATEWAY_SUBJECT,
-    text: buildSmsGatewayAlertText(trade),
-  });
+  const alertMessage = buildSmsGatewayAlertText(trade);
+  const result = await sendTwilioSmsAlert(alertMessage);
+  return result;
 }

@@ -29,8 +29,8 @@ import {
   sendEmailNotification,
   sendSmsGatewayNotification,
   getEffectiveNotificationEmailForLog,
-  isGmailSmsConfigured,
-  SMS_GATEWAY_RECIPIENT,
+  isTwilioSmsConfigured,
+  getTwilioAlertSmsTo,
 } from "@/lib/email/sendReviewEmail";
 import { logStderr, logStdout } from "@/lib/utils";
 import { selectPostTemplate } from "@/lib/templates/postTemplates";
@@ -368,7 +368,7 @@ export async function processWhaleTradeForXAgent(
     );
   }
 
-  if (isGmailSmsConfigured()) {
+  if (isTwilioSmsConfigured()) {
     const smsTradePayload = {
       id: insertedRecord.id,
       copyText: insertedRecord.copyText,
@@ -383,17 +383,20 @@ export async function processWhaleTradeForXAgent(
 
     try {
       logStdout(
-        "📱 [Queue SMS] Dispatching carrier gateway alert to:",
-        SMS_GATEWAY_RECIPIENT
+        "📱 [Queue SMS] Dispatching Twilio alert to:",
+        getTwilioAlertSmsTo()
       );
       const smsRes = await sendSmsGatewayNotification(smsTradePayload);
       if (smsRes.sent) {
-        logStdout("✅ [Queue SMS Success] Result:", smsRes);
+        logStdout(
+          "✅ [Queue SMS Success] Twilio message SID:",
+          smsRes.messageSid ?? "(unknown)"
+        );
       } else if (!smsRes.skipped) {
         logStderr(
           "❌ [Queue SMS Error] Failed for ID:",
           insertedRecord.id,
-          smsRes
+          smsRes.error ?? smsRes
         );
       }
     } catch (smsErr) {
