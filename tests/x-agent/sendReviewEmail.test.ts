@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   buildQueueActionUrl,
-  buildReviewEditLoginUrl,
   buildReviewEmailHtml,
   buildReviewPageUrl,
   buildSmsGatewayAlertText,
@@ -186,29 +185,14 @@ describe("sendReviewEmail", () => {
     }
   });
 
-  it("builds review edit login URLs for unauthenticated email links", () => {
+  it("builds direct review page URLs from NEXT_PUBLIC_APP_URL", () => {
     const previousPublic = process.env.NEXT_PUBLIC_APP_URL;
+    const previousReviewBase = process.env.REVIEW_PUBLIC_BASE_URL;
     const previousRender = process.env.RENDER_EXTERNAL_URL;
     const previousApp = process.env.APP_URL;
     delete process.env.RENDER_EXTERNAL_URL;
     delete process.env.APP_URL;
-    process.env.NEXT_PUBLIC_APP_URL = "https://marketpulse.example.com";
-
-    expect(buildReviewEditLoginUrl("queue-edit-1")).toBe(
-      "https://marketpulse.example.com/login?redirectTo=%2Freview%2Fqueue-edit-1"
-    );
-
-    process.env.NEXT_PUBLIC_APP_URL = previousPublic;
-    process.env.RENDER_EXTERNAL_URL = previousRender;
-    process.env.APP_URL = previousApp;
-  });
-
-  it("builds direct review page URLs", () => {
-    const previousPublic = process.env.NEXT_PUBLIC_APP_URL;
-    const previousRender = process.env.RENDER_EXTERNAL_URL;
-    const previousApp = process.env.APP_URL;
-    delete process.env.RENDER_EXTERNAL_URL;
-    delete process.env.APP_URL;
+    delete process.env.REVIEW_PUBLIC_BASE_URL;
     process.env.NEXT_PUBLIC_APP_URL = "https://marketpulse.example.com";
 
     expect(buildReviewPageUrl("queue-edit-1")).toBe(
@@ -216,16 +200,39 @@ describe("sendReviewEmail", () => {
     );
 
     process.env.NEXT_PUBLIC_APP_URL = previousPublic;
+    process.env.REVIEW_PUBLIC_BASE_URL = previousReviewBase;
+    process.env.RENDER_EXTERNAL_URL = previousRender;
+    process.env.APP_URL = previousApp;
+  });
+
+  it("falls back to production Render URL for review links", () => {
+    const previousPublic = process.env.NEXT_PUBLIC_APP_URL;
+    const previousReviewBase = process.env.REVIEW_PUBLIC_BASE_URL;
+    const previousRender = process.env.RENDER_EXTERNAL_URL;
+    const previousApp = process.env.APP_URL;
+    delete process.env.NEXT_PUBLIC_APP_URL;
+    delete process.env.REVIEW_PUBLIC_BASE_URL;
+    delete process.env.RENDER_EXTERNAL_URL;
+    delete process.env.APP_URL;
+
+    expect(buildReviewPageUrl("queue-prod-1")).toBe(
+      `${DEFAULT_APP_URL}/review/queue-prod-1`
+    );
+
+    process.env.NEXT_PUBLIC_APP_URL = previousPublic;
+    process.env.REVIEW_PUBLIC_BASE_URL = previousReviewBase;
     process.env.RENDER_EXTERNAL_URL = previousRender;
     process.env.APP_URL = previousApp;
   });
 
   it("builds a short SMS gateway alert body with review page link", () => {
     const previousPublic = process.env.NEXT_PUBLIC_APP_URL;
+    const previousReviewBase = process.env.REVIEW_PUBLIC_BASE_URL;
     const previousRender = process.env.RENDER_EXTERNAL_URL;
     const previousApp = process.env.APP_URL;
     delete process.env.RENDER_EXTERNAL_URL;
     delete process.env.APP_URL;
+    delete process.env.REVIEW_PUBLIC_BASE_URL;
     process.env.NEXT_PUBLIC_APP_URL = "https://marketpulse.example.com";
 
     const text = buildSmsGatewayAlertText({
@@ -240,10 +247,11 @@ describe("sendReviewEmail", () => {
     expect(text).toContain("Market: Fed cut rates in September");
     expect(text).toContain("EV: +4.2%");
     expect(text).toContain(
-      "https://marketpulse.example.com/login?redirectTo=%2Freview%2Fqueue-sms-1"
+      "https://marketpulse.example.com/review/queue-sms-1"
     );
 
     process.env.NEXT_PUBLIC_APP_URL = previousPublic;
+    process.env.REVIEW_PUBLIC_BASE_URL = previousReviewBase;
     process.env.RENDER_EXTERNAL_URL = previousRender;
     process.env.APP_URL = previousApp;
   });
@@ -264,7 +272,7 @@ describe("sendReviewEmail", () => {
     expect(html).toContain("Queued:");
     expect(html).toContain("DeepWallet bought yes on China invade Taiwan");
     expect(html).toContain("Review &amp; Edit");
-    expect(html).toContain("/login?redirectTo=%2Freview%2Fqueue-abc");
+    expect(html).toContain("/review/queue-abc");
     expect(html).toContain("action=approve");
     expect(html).toContain("action=reject");
   });

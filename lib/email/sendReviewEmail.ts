@@ -1,6 +1,5 @@
 import { createTransport } from "nodemailer";
-import { buildReviewEditLoginUrl } from "@/lib/authRedirect";
-import { getAppBaseUrl, getPublicAppUrl } from "@/lib/appBaseUrl";
+import { DEFAULT_APP_URL, getAppBaseUrl } from "@/lib/appBaseUrl";
 import { formatToEST } from "@/lib/client-utils";
 import {
   getTwilioAlertSmsTo,
@@ -77,17 +76,32 @@ export function buildQueueActionUrl(
   return `${base}/api/queue/action?${params.toString()}`;
 }
 
-/** Direct link to the human review + edit page for a queued post. */
-export function buildReviewPageUrl(queueId: string): string {
-  return `${getPublicAppUrl()}/review/${encodeURIComponent(queueId)}`;
+function resolveReviewPublicBaseUrl(): string {
+  const candidates = [
+    process.env.REVIEW_PUBLIC_BASE_URL,
+    process.env.NEXT_PUBLIC_APP_URL,
+    DEFAULT_APP_URL,
+  ];
+
+  for (const raw of candidates) {
+    const trimmed = raw?.trim();
+    if (trimmed && trimmed !== "undefined") {
+      return trimmed.replace(/\/$/, "");
+    }
+  }
+
+  return DEFAULT_APP_URL;
 }
 
-export { buildReviewEditLoginUrl } from "@/lib/authRedirect";
+/** Direct public link to the review editor (no login required). */
+export function buildReviewPageUrl(queueId: string): string {
+  return `${resolveReviewPublicBaseUrl()}/review/${encodeURIComponent(queueId)}`;
+}
 
 export function buildReviewEmailHtml(trade: ReviewEmailTrade): string {
   const approveUrl = buildQueueActionUrl(trade.id, "approve");
   const rejectUrl = buildQueueActionUrl(trade.id, "reject");
-  const reviewUrl = buildReviewEditLoginUrl(trade.id);
+  const reviewUrl = buildReviewPageUrl(trade.id);
   const market = escapeHtml(trade.marketTitle);
   const draft = escapeHtml(trade.renderedDraft ?? trade.copyText);
   const templateMeta = escapeHtml(
@@ -254,7 +268,7 @@ function isSmtpConfigured(): boolean {
 }
 
 export function buildSmsGatewayAlertText(trade: ReviewEmailTrade): string {
-  const reviewUrl = buildReviewEditLoginUrl(trade.id);
+  const reviewUrl = buildReviewPageUrl(trade.id);
   const stake = formatStakeUsd(trade.stakeNotional);
   const ev = formatEvLabel(trade.evPercent);
   return `Stake: ${stake} | Market: ${trade.marketTitle} | EV: ${ev} | Review: ${reviewUrl}`;
@@ -355,7 +369,7 @@ export async function sendReviewEmail(
     "Drafted X post:",
     trade.renderedDraft ?? trade.copyText,
     "",
-    `Review & Edit: ${buildReviewEditLoginUrl(trade.id)}`,
+    `Review & Edit: ${buildReviewPageUrl(trade.id)}`,
     `Approve: ${buildQueueActionUrl(trade.id, "approve")}`,
     `Reject: ${buildQueueActionUrl(trade.id, "reject")}`,
   ].join("\n");

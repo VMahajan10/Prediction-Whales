@@ -63,14 +63,19 @@ export async function findQueueById(id: string): Promise<XPostQueue | null> {
   const trimmed = id.trim();
   if (!trimmed || !isDatabaseEnabled()) return null;
 
-  const db = getDb();
-  const [row] = await db
-    .select()
-    .from(xPostQueue)
-    .where(eq(xPostQueue.id, trimmed))
-    .limit(1);
+  try {
+    const db = getDb();
+    const [row] = await db
+      .select()
+      .from(xPostQueue)
+      .where(eq(xPostQueue.id, trimmed))
+      .limit(1);
 
-  return row ?? null;
+    return row ?? null;
+  } catch (error) {
+    console.error("[reviewDb] findQueueById failed:", error);
+    throw error;
+  }
 }
 
 export async function updateQueueById(

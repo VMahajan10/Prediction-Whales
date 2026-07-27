@@ -40,6 +40,7 @@
     "test": "vitest run",
     "test:x-agent": "vitest run tests/x-agent",
     "test:email": "npx tsx --tsconfig tsconfig.json scripts/testEmail.ts",
+    "test:twilio": "node scripts/test-twilio.js",
     "test:pipeline": "ts-node --transpile-only --project tsconfig.scripts.json -r tsconfig-paths/register scripts/test-full-pipeline.ts",
     "test:watch": "vitest",
     "shadow:watch": "ts-node --transpile-only --project tsconfig.scripts.json scripts/run-shadow-cron.ts",

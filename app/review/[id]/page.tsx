@@ -1,17 +1,7 @@
 import { notFound } from "next/navigation";
-import { getTradeEvLookupRedisOnly } from "@/lib/evPipeline/redisCache";
-import { findQueueById } from "@/lib/x-agent/reviewDb";
-import {
-  ANONYMOUS_WHALE_PSEUDONYM,
-  findWhaleByWallet,
-  formatWalletPseudonym,
-  isAnonymousWalletAddress,
-} from "@/lib/x-agent/whaleRegistryDb";
-import ReviewEditor, {
-  formatEvLabel,
-  formatStakeUsd,
-  humanizeMarketSlug,
-} from "./ReviewEditor";
+import { loadReviewPageData } from "@/lib/x-agent/loadReviewPageData";
+import ReviewEditor from "./ReviewEditor";
+import ReviewLoadError from "./ReviewLoadError";
 
 export const dynamic = "force-dynamic";
 
@@ -20,35 +10,42 @@ interface ReviewPageProps {
 }
 
 export default async function ReviewPage({ params }: ReviewPageProps) {
-  const { id } = await params;
-  const item = await findQueueById(id);
+  let queueId: string;
 
-  if (!item) {
-    notFound();
-  }
-
-  const whale = await findWhaleByWallet(item.walletAddress);
-  const whaleName = isAnonymousWalletAddress(item.walletAddress)
-    ? ANONYMOUS_WHALE_PSEUDONYM
-    : whale?.pseudonym ?? formatWalletPseudonym(item.walletAddress);
-
-  let evPercent: number | null = null;
   try {
-    const evLookup = await getTradeEvLookupRedisOnly(item.tradeId);
-    evPercent = evLookup?.netEvPercent ?? null;
-  } catch {
-    evPercent = null;
+    const resolved = await params;
+    queueId = resolved.id;
+  } catch (error) {
+    console.error("[review/[id]] Failed to resolve route params:", error);
+    return (
+      <ReviewLoadError
+        title="Could not open review"
+        message="The review link could not be parsed. Try opening the link from your email again."
+      />
+    );
   }
 
-  return (
-    <ReviewEditor
-      queueId={item.id}
-      marketName={humanizeMarketSlug(item.marketSlug)}
-      stakeLabel={formatStakeUsd(item.stakeNotional)}
-      evLabel={formatEvLabel(evPercent)}
-      whaleName={whaleName}
-      generatedPostText={item.copyText}
-      status={item.status}
-    />
-  );
+  try {
+    const result = await loadReviewPageData(queueId);
+
+    if (result.kind === "not_found") {
+      notFound();
+    }
+
+    if (result.kind === "unavailable") {
+      return (
+        <ReviewLoadError title={result.title} message={result.message} />
+      );
+    }
+
+    return <ReviewEditor {...result.props} />;
+  } catch (error) {
+    console.error("[review/[id]] Unexpected server error:", error);
+    return (
+      <ReviewLoadError
+        title="Could not load review"
+        message="An unexpected error occurred while loading this post. Try again in a moment."
+      />
+    );
+  }
 }

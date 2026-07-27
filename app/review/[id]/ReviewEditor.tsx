@@ -1,6 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import {
+  formatReviewEvLabel,
+  formatReviewStakeUsd,
+  humanizeMarketSlug,
+} from "@/lib/reviewDisplay";
 
 const MAX_POST_CHARS = 280;
 
@@ -14,21 +19,7 @@ export interface ReviewEditorProps {
   status: string;
 }
 
-function formatEvLabel(evPercent: number | null): string {
-  if (evPercent == null || !Number.isFinite(evPercent)) return "N/A";
-  const sign = evPercent >= 0 ? "+" : "";
-  return `${sign}${evPercent.toFixed(1)}%`;
-}
-
-export function formatStakeUsd(stakeNotional: number): string {
-  return `$${Math.round(stakeNotional).toLocaleString("en-US")}`;
-}
-
-export function humanizeMarketSlug(slug: string): string {
-  return slug
-    .replace(/[-_]+/g, " ")
-    .replace(/\b\w/g, (char) => char.toUpperCase());
-}
+export { formatReviewStakeUsd as formatStakeUsd, humanizeMarketSlug } from "@/lib/reviewDisplay";
 
 export default function ReviewEditor({
   queueId,
@@ -202,5 +193,3 @@ export default function ReviewEditor({
     </main>
   );
 }
-
-export { formatEvLabel };

@@ -73,9 +73,20 @@ export default function DemoAuthScreen({
       : null;
 
   const goToDestination = () => {
-    enter();
-    router.push(redirectTo);
-    router.refresh();
+    try {
+      enter();
+      router.push(redirectTo);
+      router.refresh();
+    } catch (error) {
+      console.error("[login] Sign-in redirect failed:", error);
+      try {
+        enter();
+        router.push("/");
+        router.refresh();
+      } catch (fallbackError) {
+        console.error("[login] Fallback sign-in redirect failed:", fallbackError);
+      }
+    }
   };
 
   const isSignup = mode === "signup";

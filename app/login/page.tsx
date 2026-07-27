@@ -11,8 +11,18 @@ function LoginPageInner() {
   const searchParams = useSearchParams();
 
   useEffect(() => {
-    if (!checking && entered) {
-      router.replace(sanitizeRedirectPath(searchParams.get("redirectTo")));
+    if (checking || !entered) return;
+
+    try {
+      const redirectTo = sanitizeRedirectPath(searchParams.get("redirectTo"));
+      router.replace(redirectTo);
+    } catch (error) {
+      console.error("[login] Post-auth redirect failed:", error);
+      try {
+        router.replace("/");
+      } catch (fallbackError) {
+        console.error("[login] Fallback redirect failed:", fallbackError);
+      }
     }
   }, [entered, checking, router, searchParams]);
 
