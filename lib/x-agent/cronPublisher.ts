@@ -1,11 +1,18 @@
 import { listScheduledPostsReadyToPublish } from "@/lib/x-agent/reviewDb";
 import { publishXPostQueueItem } from "@/lib/x-agent/publishQueuePost";
+import {
+  formatDailyLimitLogMessage,
+  getDailyPostLimitStatus,
+} from "@/lib/x-agent/dailyPostLimit";
 
 export interface CronPublisherResult {
   scanned: number;
   published: number;
   failed: number;
   skipped: number;
+  dailyLimitReached?: boolean;
+  publishedToday?: number;
+  maxDailyPosts?: number;
   errors: Array<{ id: string; error: string }>;
 }
 
@@ -32,16 +39,53 @@ export async function runCronPublisher(): Promise<CronPublisherResult> {
   const ready = await listScheduledPostsReadyToPublish();
   result.scanned = ready.length;
 
+  const limitStatus = await getDailyPostLimitStatus();
+  result.publishedToday = limitStatus.publishedToday;
+  result.maxDailyPosts = limitStatus.maxDailyPosts;
+
+  if (limitStatus.limited) {
+    result.dailyLimitReached = true;
+    result.skipped = ready.length;
+    console.log(
+      formatDailyLimitLogMessage(
+        limitStatus.publishedToday,
+        limitStatus.maxDailyPosts
+      )
+    );
+    console.log(
+      `${LOG_PREFIX} Run complete — scanned=${result.scanned} published=${result.published} failed=${result.failed} skipped=${result.skipped} (daily limit)`
+    );
+    return result;
+  }
+
   if (ready.length === 0) {
     console.log(`${LOG_PREFIX} No scheduled posts ready to publish`);
     return result;
   }
 
   console.log(
-    `${LOG_PREFIX} Found ${ready.length} scheduled post(s) ready to publish`
+    `${LOG_PREFIX} Found ${ready.length} scheduled post(s) ready to publish | publishedToday=${limitStatus.publishedToday}/${limitStatus.maxDailyPosts}`
   );
 
   for (const item of ready) {
+    const currentLimit = await getDailyPostLimitStatus();
+    result.publishedToday = currentLimit.publishedToday;
+    result.maxDailyPosts = currentLimit.maxDailyPosts;
+
+    if (currentLimit.limited) {
+      result.dailyLimitReached = true;
+      const remaining =
+        ready.length - result.published - result.failed - result.skipped;
+      result.skipped += remaining;
+      console.log(
+        formatDailyLimitLogMessage(
+          currentLimit.publishedToday,
+          currentLimit.maxDailyPosts
+        )
+      );
+      break;
+    }
+
     const scheduledLabel = item.scheduledFor?.toISOString() ?? "unknown";
     console.log(
       `${LOG_PREFIX} Publishing queue id=${item.id} tradeId=${item.tradeId} scheduledAt=${scheduledLabel}`

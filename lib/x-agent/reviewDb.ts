@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, lte, or } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
 import { getDb, isDatabaseEnabled } from "@/lib/crossmarket/store/db";
 import {
   xPostQueue,
@@ -166,4 +166,31 @@ export async function listScheduledPostsReadyToPublish(
     )
     .orderBy(xPostQueue.scheduledFor)
     .limit(limit);
+}
+
+const PUBLISHED_QUEUE_STATUSES: XPostQueueStatus[] = ["PUBLISHED", "DISPATCHED"];
+
+/** Count posts published to X since `since` (typically UTC day start). */
+export async function countPublishedPostsSince(since: Date): Promise<number> {
+  if (!isDatabaseEnabled()) return 0;
+
+  const db = getDb();
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(xPostQueue)
+    .where(
+      and(
+        inArray(xPostQueue.status, PUBLISHED_QUEUE_STATUSES),
+        gte(xPostQueue.dispatchedAt, since)
+      )
+    );
+
+  return row?.count ?? 0;
+}
+
+export async function countPublishedPostsTodayUtc(now = new Date()): Promise<number> {
+  const utcDayStart = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+  );
+  return countPublishedPostsSince(utcDayStart);
 }
