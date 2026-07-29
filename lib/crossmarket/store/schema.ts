@@ -528,6 +528,12 @@ export const xPostQueue = pgTable(
     }),
     /** X tweet id after successful publish (TradePost.xTweetId). */
     xTweetId: text("x_tweet_id"),
+    /** Cofounder email/name who accepted or rejected the draft. */
+    decidedBy: text("decided_by"),
+    decidedAt: timestamp("decided_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
     dispatchedAt: timestamp("dispatched_at", {
       withTimezone: true,
       mode: "date",

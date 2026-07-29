@@ -5,21 +5,25 @@ import {
   type XPostQueue,
   type XPostQueueStatus,
 } from "@/lib/crossmarket/store/schema";
-import { isDraftQueueStatus } from "@/lib/x-agent/postStatus";
+import { isPendingReviewStatus, PENDING_REVIEW_STATUSES } from "@/lib/x-agent/reviewDecision";
 import { getRandomScheduledTime } from "@/lib/x-agent/reviewSchedule";
 
-const REVIEWABLE_STATUSES = new Set<XPostQueueStatus>([
-  "PENDING_REVIEW",
-  "EDITED",
-  "DRAFT",
-]);
-
 export function canMutateReviewItem(item: XPostQueue): boolean {
-  return (
-    REVIEWABLE_STATUSES.has(item.status as XPostQueueStatus) ||
-    isDraftQueueStatus(item.status)
-  );
+  return isPendingReviewStatus(item.status);
 }
+
+export interface FinalizeQueuePatch {
+  status: XPostQueueStatus;
+  copyText?: string;
+  scheduledFor?: Date | null;
+  decidedBy: string;
+  decidedAt?: Date;
+}
+
+export type FinalizeQueueResult =
+  | { ok: true; row: XPostQueue }
+  | { ok: false; conflict: true; current: XPostQueue }
+  | { ok: false; conflict: false; current: XPostQueue | null };
 
 /** Newest-first ordering for all multi-row x_post_queue reads. */
 export const xPostQueueOrderByCreatedDesc = desc(xPostQueue.createdAt);
@@ -92,6 +96,8 @@ export async function updateQueueById(
     scheduledFor?: Date | null;
     dispatchedAt?: Date | null;
     xTweetId?: string | null;
+    decidedBy?: string | null;
+    decidedAt?: Date | null;
   }
 ): Promise<XPostQueue | null> {
   const trimmed = id.trim();
@@ -118,6 +124,8 @@ export async function updateQueueByReviewToken(
     scheduledFor?: Date | null;
     dispatchedAt?: Date | null;
     xTweetId?: string | null;
+    decidedBy?: string | null;
+    decidedAt?: Date | null;
   }
 ): Promise<XPostQueue | null> {
   const trimmed = token.trim();
@@ -134,6 +142,93 @@ export async function updateQueueByReviewToken(
     .returning();
 
   return row ?? null;
+}
+
+/** Atomically finalize a pending review row (optimistic concurrency guard). */
+export async function finalizeQueueByIdIfPending(
+  id: string,
+  patch: FinalizeQueuePatch
+): Promise<FinalizeQueueResult> {
+  const trimmed = id.trim();
+  if (!trimmed || !isDatabaseEnabled()) {
+    return { ok: false, conflict: false, current: null };
+  }
+
+  const db = getDb();
+  const decidedAt = patch.decidedAt ?? new Date();
+
+  const [row] = await db
+    .update(xPostQueue)
+    .set({
+      status: patch.status,
+      ...(patch.copyText !== undefined ? { copyText: patch.copyText } : {}),
+      ...(patch.scheduledFor !== undefined
+        ? { scheduledFor: patch.scheduledFor }
+        : {}),
+      decidedBy: patch.decidedBy,
+      decidedAt,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(eq(xPostQueue.id, trimmed), inArray(xPostQueue.status, PENDING_REVIEW_STATUSES))
+    )
+    .returning();
+
+  if (row) {
+    return { ok: true, row };
+  }
+
+  const current = await findQueueById(trimmed);
+  if (current && !isPendingReviewStatus(current.status)) {
+    return { ok: false, conflict: true, current };
+  }
+
+  return { ok: false, conflict: false, current };
+}
+
+/** Atomically finalize a pending review row by review token. */
+export async function finalizeQueueByReviewTokenIfPending(
+  token: string,
+  patch: FinalizeQueuePatch
+): Promise<FinalizeQueueResult> {
+  const trimmed = token.trim();
+  if (!trimmed || !isDatabaseEnabled()) {
+    return { ok: false, conflict: false, current: null };
+  }
+
+  const db = getDb();
+  const decidedAt = patch.decidedAt ?? new Date();
+
+  const [row] = await db
+    .update(xPostQueue)
+    .set({
+      status: patch.status,
+      ...(patch.copyText !== undefined ? { copyText: patch.copyText } : {}),
+      ...(patch.scheduledFor !== undefined
+        ? { scheduledFor: patch.scheduledFor }
+        : {}),
+      decidedBy: patch.decidedBy,
+      decidedAt,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(xPostQueue.reviewToken, trimmed),
+        inArray(xPostQueue.status, PENDING_REVIEW_STATUSES)
+      )
+    )
+    .returning();
+
+  if (row) {
+    return { ok: true, row };
+  }
+
+  const current = await findQueueByReviewToken(trimmed);
+  if (current && !isPendingReviewStatus(current.status)) {
+    return { ok: false, conflict: true, current };
+  }
+
+  return { ok: false, conflict: false, current };
 }
 
 /** Randomized dispatch window 15–120 minutes from now. */

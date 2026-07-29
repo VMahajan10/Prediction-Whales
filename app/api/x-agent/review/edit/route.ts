@@ -1,7 +1,6 @@
 import {
-  canMutateReviewItem,
+  finalizeQueueByIdIfPending,
   findQueueById,
-  updateQueueById,
 } from "@/lib/x-agent/reviewDb";
 import { POST_STATUS } from "@/lib/x-agent/postStatus";
 import {
@@ -13,6 +12,10 @@ import {
   resolveImmediateScheduledAt,
   resolveScheduledAt,
 } from "@/lib/x-agent/reviewSchedule";
+import {
+  normalizeDecidedBy,
+} from "@/lib/x-agent/reviewDecision";
+import { reviewDecisionConflictResponse } from "@/lib/x-agent/reviewApiHelpers";
 import { sanitizeXPostCopy } from "@/lib/x-agent/templates";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -27,6 +30,7 @@ interface ReviewEditBody {
   action?: string;
   scheduledAt?: string;
   scheduleMode?: string;
+  decidedBy?: string;
 }
 
 function parseAction(value: string | undefined): ReviewEditAction | null {
@@ -52,6 +56,7 @@ export async function POST(request: NextRequest) {
   const updatedText =
     typeof body.updatedText === "string" ? body.updatedText : "";
   const scheduleMode = parseScheduleMode(body.scheduleMode);
+  const decidedBy = normalizeDecidedBy(body.decidedBy);
 
   if (!id || !action) {
     return NextResponse.json(
@@ -66,27 +71,30 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, error: "Not found" }, { status: 404 });
     }
 
-    if (!canMutateReviewItem(item)) {
-      return NextResponse.json(
-        { ok: false, error: `Queue item is already ${item.status}` },
-        { status: 409 }
-      );
-    }
-
     if (action === "reject") {
-      const updated = await updateQueueById(id, { status: "KILLED" });
-      if (!updated) {
-        return NextResponse.json(
-          { ok: false, error: "Database unavailable" },
-          { status: 503 }
-        );
+      const result = await finalizeQueueByIdIfPending(id, {
+        status: "KILLED",
+        decidedBy,
+      });
+
+      if (result.ok) {
+        return NextResponse.json({
+          ok: true,
+          status: result.row.status,
+          tradeId: result.row.tradeId,
+          decidedBy: result.row.decidedBy,
+          decidedAt: result.row.decidedAt?.toISOString() ?? null,
+        });
       }
 
-      return NextResponse.json({
-        ok: true,
-        status: updated.status,
-        tradeId: updated.tradeId,
-      });
+      if (result.conflict && result.current) {
+        return reviewDecisionConflictResponse(result.current);
+      }
+
+      return NextResponse.json(
+        { ok: false, error: "Database unavailable" },
+        { status: 503 }
+      );
     }
 
     const copyText = sanitizeXPostCopy(updatedText);
@@ -105,28 +113,35 @@ export async function POST(request: NextRequest) {
           ? resolveScheduledAt(body.scheduledAt, defaultScheduledAt)
           : defaultScheduledAt;
 
-    const updated = await updateQueueById(id, {
+    const result = await finalizeQueueByIdIfPending(id, {
       copyText,
       status: POST_STATUS.SCHEDULED,
       scheduledFor: scheduledAt,
+      decidedBy,
     });
 
-    if (!updated) {
-      return NextResponse.json(
-        { ok: false, error: "Database unavailable" },
-        { status: 503 }
-      );
+    if (result.ok) {
+      return NextResponse.json({
+        ok: true,
+        status: result.row.status,
+        tradeId: result.row.tradeId,
+        copyText: result.row.copyText,
+        scheduledAt: scheduledAt.toISOString(),
+        scheduledTimeLabel: formatScheduledClockTime(scheduledAt),
+        message: buildScheduleApprovalApiMessage(scheduledAt),
+        decidedBy: result.row.decidedBy,
+        decidedAt: result.row.decidedAt?.toISOString() ?? null,
+      });
     }
 
-    return NextResponse.json({
-      ok: true,
-      status: updated.status,
-      tradeId: updated.tradeId,
-      copyText: updated.copyText,
-      scheduledAt: scheduledAt.toISOString(),
-      scheduledTimeLabel: formatScheduledClockTime(scheduledAt),
-      message: buildScheduleApprovalApiMessage(scheduledAt),
-    });
+    if (result.conflict && result.current) {
+      return reviewDecisionConflictResponse(result.current);
+    }
+
+    return NextResponse.json(
+      { ok: false, error: "Database unavailable" },
+      { status: 503 }
+    );
   } catch (error) {
     console.error("[review/edit] Unexpected error:", error);
     return NextResponse.json(

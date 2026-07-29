@@ -1,14 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { buildScheduleApprovalUiMessage, formatScheduledClockTime } from "@/lib/x-agent/scheduleMessages";
 import { isDraftQueueStatus } from "@/lib/x-agent/postStatus";
+import { formatReviewDecisionBadge } from "@/lib/x-agent/reviewDecision";
 import {
   formatReviewStakeUsd,
   humanizeMarketSlug,
 } from "@/lib/reviewDisplay";
 
 const MAX_POST_CHARS = 280;
+const DECIDER_STORAGE_KEY = "marketpulse.reviewDeciderName";
 
 type ScheduleMode = "default" | "immediate" | "custom";
 
@@ -21,6 +23,9 @@ export interface ReviewEditorProps {
   generatedPostText: string;
   status: string;
   defaultScheduledAtIso: string;
+  decisionBadge: string | null;
+  decidedBy: string | null;
+  decidedAtIso: string | null;
 }
 
 export { formatReviewStakeUsd as formatStakeUsd, humanizeMarketSlug } from "@/lib/reviewDisplay";
@@ -46,8 +51,11 @@ export default function ReviewEditor({
   evLabel,
   whaleName,
   generatedPostText,
-  status,
+  status: initialStatus,
   defaultScheduledAtIso,
+  decisionBadge: initialDecisionBadge,
+  decidedBy: initialDecidedBy,
+  decidedAtIso: initialDecidedAtIso,
 }: ReviewEditorProps) {
   const [text, setText] = useState(generatedPostText);
   const [scheduleMode, setScheduleMode] = useState<ScheduleMode>("default");
@@ -59,10 +67,22 @@ export default function ReviewEditor({
   );
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [itemStatus, setItemStatus] = useState(initialStatus);
+  const [decisionBadge, setDecisionBadge] = useState(initialDecisionBadge);
+  const [deciderName, setDeciderName] = useState("");
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(DECIDER_STORAGE_KEY);
+      if (stored?.trim()) setDeciderName(stored.trim());
+    } catch {
+      // Ignore localStorage errors (private mode, etc.).
+    }
+  }, []);
 
   const charCount = text.length;
   const overLimit = charCount > MAX_POST_CHARS;
-  const canEdit = isDraftQueueStatus(status);
+  const canEdit = isDraftQueueStatus(itemStatus);
 
   const defaultScheduledLabel = formatScheduledClockTime(defaultScheduledAtIso);
 
@@ -71,6 +91,48 @@ export default function ReviewEditor({
     if (charCount > MAX_POST_CHARS - 20) return "text-amber-400";
     return "text-pulse-label";
   }, [charCount, overLimit]);
+
+  function persistDeciderName(value: string) {
+    setDeciderName(value);
+    try {
+      if (value.trim()) {
+        window.localStorage.setItem(DECIDER_STORAGE_KEY, value.trim());
+      } else {
+        window.localStorage.removeItem(DECIDER_STORAGE_KEY);
+      }
+    } catch {
+      // Ignore localStorage errors.
+    }
+  }
+
+  function applyFinalizedState(
+    status: string,
+    decidedBy: string | null,
+    decidedAtIso: string | null
+  ) {
+    setItemStatus(status);
+    setDecisionBadge(
+      formatReviewDecisionBadge(status, decidedBy, decidedAtIso)
+    );
+  }
+
+  function handleConflictResponse(data: {
+    error?: string;
+    status?: string;
+    decidedBy?: string | null;
+    decidedAt?: string | null;
+  }) {
+    const conflictMessage =
+      data.error ?? "This trade decision has already been finalized.";
+    setError(conflictMessage);
+    if (data.status) {
+      applyFinalizedState(
+        data.status,
+        data.decidedBy ?? null,
+        data.decidedAt ?? null
+      );
+    }
+  }
 
   async function submitAction(action: "approve" | "reject") {
     if (!canEdit || submitting) return;
@@ -100,6 +162,7 @@ export default function ReviewEditor({
           updatedText: text,
           action,
           scheduleMode,
+          decidedBy: deciderName.trim() || undefined,
           ...(customIso ? { scheduledAt: customIso } : {}),
         }),
       });
@@ -107,14 +170,31 @@ export default function ReviewEditor({
       const data = (await res.json()) as {
         ok?: boolean;
         error?: string;
+        conflict?: boolean;
+        status?: string;
+        decidedBy?: string | null;
+        decidedAt?: string | null;
         scheduledAt?: string;
         message?: string;
         scheduledTimeLabel?: string;
       };
 
+      if (res.status === 409 || data.conflict) {
+        handleConflictResponse(data);
+        return;
+      }
+
       if (!res.ok || !data.ok) {
         setError(data.error ?? "Request failed");
         return;
+      }
+
+      if (data.status) {
+        applyFinalizedState(
+          data.status,
+          data.decidedBy ?? (deciderName.trim() || null),
+          data.decidedAt ?? null
+        );
       }
 
       if (action === "reject") {
@@ -142,13 +222,35 @@ export default function ReviewEditor({
       <div className="mb-6">
         <p className="pulse-label mb-2">X Post Review</p>
         <h1 className="text-2xl font-bold text-white">Edit queued post</h1>
-        {!canEdit && (
+        {decisionBadge && (
+          <p className="mt-3 rounded-pulse border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm font-medium text-amber-200">
+            {decisionBadge}
+          </p>
+        )}
+        {!canEdit && !decisionBadge && (
           <p className="mt-2 text-sm text-amber-400">
-            This draft is {status.toLowerCase().replace(/_/g, " ")} and can no
-            longer be edited.
+            This draft is {itemStatus.toLowerCase().replace(/_/g, " ")} and can
+            no longer be edited.
           </p>
         )}
       </div>
+
+      {canEdit && (
+        <section className="pulse-card mb-6 p-4">
+          <label htmlFor="decider-name" className="pulse-label mb-2 block">
+            Your name (for audit trail)
+          </label>
+          <input
+            id="decider-name"
+            type="text"
+            value={deciderName}
+            onChange={(event) => persistDeciderName(event.target.value)}
+            disabled={submitting != null}
+            placeholder="e.g. Vaibhav"
+            className="w-full rounded-pulse border border-pulse-border bg-black px-3 py-2 text-sm text-white outline-none focus:border-pulse-accent"
+          />
+        </section>
+      )}
 
       <section className="pulse-card mb-6 space-y-3 p-5">
         <div className="grid gap-3 sm:grid-cols-2">
