@@ -32,6 +32,10 @@ import {
   isTwilioSmsConfigured,
   getTwilioAlertSmsTo,
 } from "@/lib/email/sendReviewEmail";
+import {
+  isTelegramConfigured,
+  sendTradeTelegramAlert,
+} from "@/lib/notifications/telegram";
 import { logStderr, logStdout } from "@/lib/utils";
 import { selectPostTemplate } from "@/lib/templates/postTemplates";
 import {
@@ -407,6 +411,34 @@ export async function processWhaleTradeForXAgent(
         "❌ [Queue SMS Error] Failed for ID:",
         insertedRecord.id,
         smsErr
+      );
+    }
+  }
+
+  if (isTelegramConfigured()) {
+    try {
+      logStdout("📲 [Queue Telegram] Dispatching trade alert");
+      const telegramRes = await sendTradeTelegramAlert({
+        whaleName: whaleRegistry.whale.pseudonym,
+        stakeNotional: insertedRecord.stakeNotional,
+        marketTitle: translation.marketPlain,
+        evPercent: tradeEvPercent,
+        queueId: insertedRecord.id,
+      });
+      if (telegramRes.sent) {
+        logStdout("✅ [Queue Telegram Success]");
+      } else if (!telegramRes.skipped) {
+        logStderr(
+          "❌ [Queue Telegram Error] Failed for ID:",
+          insertedRecord.id,
+          telegramRes.error ?? telegramRes
+        );
+      }
+    } catch (telegramErr) {
+      logStderr(
+        "❌ [Queue Telegram Error] Failed for ID:",
+        insertedRecord.id,
+        telegramErr
       );
     }
   }

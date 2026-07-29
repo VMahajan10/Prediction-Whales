@@ -253,6 +253,14 @@ export function logReviewEmailEnvAtStartup(): void {
     "⚙️ [Env Check] ALERT_SMS_TO =",
     getTwilioAlertSmsTo() || "(not set)"
   );
+  console.log(
+    "⚙️ [Env Check] TELEGRAM_BOT_TOKEN =",
+    process.env.TELEGRAM_BOT_TOKEN?.trim() ? "(set)" : "(not set)"
+  );
+  console.log(
+    "⚙️ [Env Check] TELEGRAM_CHAT_ID =",
+    process.env.TELEGRAM_CHAT_ID?.trim() || "(not set)"
+  );
 }
 
 function getEmailFromAddress(): string | null {
