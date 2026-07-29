@@ -27,10 +27,7 @@ import {
 import { dispatchAdminReviewAlert } from "@/lib/x-agent/notifications";
 import {
   sendEmailNotification,
-  sendSmsGatewayNotification,
   getEffectiveNotificationEmailForLog,
-  isTwilioSmsConfigured,
-  getTwilioAlertSmsTo,
 } from "@/lib/email/sendReviewEmail";
 import {
   isTelegramConfigured,
@@ -373,46 +370,6 @@ export async function processWhaleTradeForXAgent(
       insertedRecord.id,
       emailErr
     );
-  }
-
-  if (isTwilioSmsConfigured()) {
-    const smsTradePayload = {
-      id: insertedRecord.id,
-      copyText: insertedRecord.copyText,
-      renderedDraft: insertedRecord.copyText,
-      templateFamily: family,
-      variantId,
-      stakeNotional: insertedRecord.stakeNotional,
-      evPercent: tradeEvPercent,
-      marketTitle: translation.marketPlain,
-      queuedAt: insertedRecord.createdAt,
-    };
-
-    try {
-      logStdout(
-        "📱 [Queue SMS] Dispatching Twilio alert to:",
-        getTwilioAlertSmsTo()
-      );
-      const smsRes = await sendSmsGatewayNotification(smsTradePayload);
-      if (smsRes.sent) {
-        logStdout(
-          "✅ [Queue SMS Success] Twilio message SID:",
-          smsRes.messageSid ?? "(unknown)"
-        );
-      } else if (!smsRes.skipped) {
-        logStderr(
-          "❌ [Queue SMS Error] Failed for ID:",
-          insertedRecord.id,
-          smsRes.error ?? smsRes
-        );
-      }
-    } catch (smsErr) {
-      logStderr(
-        "❌ [Queue SMS Error] Failed for ID:",
-        insertedRecord.id,
-        smsErr
-      );
-    }
   }
 
   if (isTelegramConfigured()) {

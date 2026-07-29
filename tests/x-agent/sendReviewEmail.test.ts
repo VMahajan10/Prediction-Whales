@@ -3,9 +3,7 @@ import {
   buildQueueActionUrl,
   buildReviewEmailHtml,
   buildReviewPageUrl,
-  buildSmsGatewayAlertText,
   DEFAULT_REVIEW_NOTIFICATION_EMAIL,
-  isTwilioSmsConfigured,
   parseReviewEmailRecipients,
   resolveReviewEmailRecipients,
 } from "@/lib/email/sendReviewEmail";
@@ -132,59 +130,6 @@ describe("sendReviewEmail", () => {
     }
   });
 
-  it("skips Twilio SMS dispatch when env vars are unset", () => {
-    const keys = [
-      "TWILIO_ACCOUNT_SID",
-      "TWILIO_AUTH_TOKEN",
-      "TWILIO_PHONE_NUMBER",
-      "ALERT_SMS_TO",
-    ] as const;
-    const previous = Object.fromEntries(
-      keys.map((key) => [key, process.env[key]])
-    );
-
-    for (const key of keys) {
-      delete process.env[key];
-    }
-
-    expect(isTwilioSmsConfigured()).toBe(false);
-
-    for (const key of keys) {
-      if (previous[key] === undefined) {
-        delete process.env[key];
-      } else {
-        process.env[key] = previous[key];
-      }
-    }
-  });
-
-  it("detects Twilio SMS when all env vars are set", () => {
-    const keys = [
-      "TWILIO_ACCOUNT_SID",
-      "TWILIO_AUTH_TOKEN",
-      "TWILIO_PHONE_NUMBER",
-      "ALERT_SMS_TO",
-    ] as const;
-    const previous = Object.fromEntries(
-      keys.map((key) => [key, process.env[key]])
-    );
-
-    process.env.TWILIO_ACCOUNT_SID = "ACtest";
-    process.env.TWILIO_AUTH_TOKEN = "token";
-    process.env.TWILIO_PHONE_NUMBER = "+15551234567";
-    process.env.ALERT_SMS_TO = "+17036404542";
-
-    expect(isTwilioSmsConfigured()).toBe(true);
-
-    for (const key of keys) {
-      if (previous[key] === undefined) {
-        delete process.env[key];
-      } else {
-        process.env[key] = previous[key];
-      }
-    }
-  });
-
   it("builds direct review page URLs from NEXT_PUBLIC_APP_URL", () => {
     const previousPublic = process.env.NEXT_PUBLIC_APP_URL;
     const previousReviewBase = process.env.REVIEW_PUBLIC_BASE_URL;
@@ -217,37 +162,6 @@ describe("sendReviewEmail", () => {
 
     expect(buildReviewPageUrl("queue-prod-1")).toBe(
       `${DEFAULT_APP_URL}/review/queue-prod-1`
-    );
-
-    process.env.NEXT_PUBLIC_APP_URL = previousPublic;
-    process.env.REVIEW_PUBLIC_BASE_URL = previousReviewBase;
-    process.env.RENDER_EXTERNAL_URL = previousRender;
-    process.env.APP_URL = previousApp;
-  });
-
-  it("builds a short SMS gateway alert body with review page link", () => {
-    const previousPublic = process.env.NEXT_PUBLIC_APP_URL;
-    const previousReviewBase = process.env.REVIEW_PUBLIC_BASE_URL;
-    const previousRender = process.env.RENDER_EXTERNAL_URL;
-    const previousApp = process.env.APP_URL;
-    delete process.env.RENDER_EXTERNAL_URL;
-    delete process.env.APP_URL;
-    delete process.env.REVIEW_PUBLIC_BASE_URL;
-    process.env.NEXT_PUBLIC_APP_URL = "https://marketpulse.example.com";
-
-    const text = buildSmsGatewayAlertText({
-      id: "queue-sms-1",
-      copyText: "draft",
-      stakeNotional: 25_000,
-      evPercent: 4.2,
-      marketTitle: "Fed cut rates in September",
-    });
-
-    expect(text).toContain("Stake: $25,000");
-    expect(text).toContain("Market: Fed cut rates in September");
-    expect(text).toContain("EV: +4.2%");
-    expect(text).toContain(
-      "https://marketpulse.example.com/review/queue-sms-1"
     );
 
     process.env.NEXT_PUBLIC_APP_URL = previousPublic;

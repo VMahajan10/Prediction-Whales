@@ -1,4 +1,7 @@
-import twilio from "twilio";
+/**
+ * Twilio SMS alerts removed — trade notifications use Telegram + Resend email.
+ * This module is retained only as a tombstone; do not re-enable without review.
+ */
 
 export interface TwilioSmsResult {
   sent: boolean;
@@ -8,53 +11,20 @@ export interface TwilioSmsResult {
 }
 
 export function isTwilioSmsConfigured(): boolean {
-  return Boolean(
-    process.env.TWILIO_ACCOUNT_SID?.trim() &&
-      process.env.TWILIO_AUTH_TOKEN?.trim() &&
-      process.env.TWILIO_PHONE_NUMBER?.trim() &&
-      process.env.ALERT_SMS_TO?.trim()
-  );
+  return false;
 }
 
 export function getTwilioAlertSmsTo(): string | null {
-  const to = process.env.ALERT_SMS_TO?.trim();
-  return to || null;
+  return null;
 }
 
-function createTwilioClient(): ReturnType<typeof twilio> {
-  const accountSid = process.env.TWILIO_ACCOUNT_SID!.trim();
-  const authToken = process.env.TWILIO_AUTH_TOKEN!.trim();
-  return twilio(accountSid, authToken);
-}
-
-/** Send a whale alert SMS via the official Twilio API. */
+/** Disabled — use Telegram (`lib/notifications/telegram.ts`) instead. */
 export async function sendTwilioSmsAlert(
-  body: string
+  _body: string
 ): Promise<TwilioSmsResult> {
-  if (!isTwilioSmsConfigured()) {
-    return {
-      sent: false,
-      skipped: true,
-      error: "Twilio SMS env vars are not configured",
-    };
-  }
-
-  const from = process.env.TWILIO_PHONE_NUMBER!.trim();
-  const to = process.env.ALERT_SMS_TO!.trim();
-
-  try {
-    const message = await createTwilioClient().messages.create({
-      body,
-      from,
-      to,
-    });
-
-    return { sent: true, messageSid: message.sid };
-  } catch (error) {
-    console.error("Twilio SMS send failed:", error);
-    return {
-      sent: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
+  return {
+    sent: false,
+    skipped: true,
+    error: "Twilio SMS alerts are disabled",
+  };
 }

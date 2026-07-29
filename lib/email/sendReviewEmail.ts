@@ -1,16 +1,6 @@
 import { createTransport } from "nodemailer";
 import { DEFAULT_APP_URL, getAppBaseUrl } from "@/lib/appBaseUrl";
 import { formatToEST } from "@/lib/client-utils";
-import {
-  getTwilioAlertSmsTo,
-  isTwilioSmsConfigured,
-  sendTwilioSmsAlert,
-} from "@/lib/sms/twilioAlert";
-
-export {
-  getTwilioAlertSmsTo,
-  isTwilioSmsConfigured,
-} from "@/lib/sms/twilioAlert";
 
 export interface ReviewEmailTrade {
   id: string;
@@ -34,7 +24,7 @@ export interface SendReviewEmailResult {
 }
 
 export interface SendEmailNotificationOptions {
-  /** Override recipient (e.g. carrier SMS gateway address). */
+  /** Override recipient. */
   to?: string;
   subject?: string;
   /** Plain-text body; skips HTML review template when set. */
@@ -242,16 +232,12 @@ export function logReviewEmailEnvAtStartup(): void {
       DEFAULT_REVIEW_NOTIFICATION_EMAIL
   );
   console.log(
-    "⚙️ [Env Check] TWILIO_ACCOUNT_SID =",
-    process.env.TWILIO_ACCOUNT_SID?.trim() ? "(set)" : "(not set)"
+    "⚙️ [Env Check] EMAIL_FROM =",
+    process.env.EMAIL_FROM?.trim() || "(not set)"
   );
   console.log(
-    "⚙️ [Env Check] TWILIO_PHONE_NUMBER =",
-    process.env.TWILIO_PHONE_NUMBER?.trim() || "(not set)"
-  );
-  console.log(
-    "⚙️ [Env Check] ALERT_SMS_TO =",
-    getTwilioAlertSmsTo() || "(not set)"
+    "⚙️ [Env Check] SMTP_HOST =",
+    process.env.SMTP_HOST?.trim() ? "(set)" : "(not set)"
   );
   console.log(
     "⚙️ [Env Check] TELEGRAM_BOT_TOKEN =",
@@ -273,13 +259,6 @@ function getEmailFromAddress(): string | null {
 
 function isSmtpConfigured(): boolean {
   return Boolean(process.env.SMTP_HOST?.trim());
-}
-
-export function buildSmsGatewayAlertText(trade: ReviewEmailTrade): string {
-  const reviewUrl = buildReviewPageUrl(trade.id);
-  const stake = formatStakeUsd(trade.stakeNotional);
-  const ev = formatEvLabel(trade.evPercent);
-  return `Stake: ${stake} | Market: ${trade.marketTitle} | EV: ${ev} | Review: ${reviewUrl}`;
 }
 
 async function sendMailMessage(params: {
@@ -396,13 +375,4 @@ export async function sendEmailNotification(
   options?: SendEmailNotificationOptions
 ): Promise<SendReviewEmailResult> {
   return sendReviewEmail(trade, options);
-}
-
-/** Whale alert SMS via Twilio (TWILIO_* + ALERT_SMS_TO). */
-export async function sendSmsGatewayNotification(
-  trade: ReviewEmailTrade
-): Promise<SendReviewEmailResult> {
-  const alertMessage = buildSmsGatewayAlertText(trade);
-  const result = await sendTwilioSmsAlert(alertMessage);
-  return result;
 }
