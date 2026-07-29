@@ -215,6 +215,9 @@ export async function processWhaleTradeForXAgent(
     );
     return;
   }
+  console.log(
+    `[Gate] tradeId=${payload.tradeId} [Pass: Dedupe] No active x_post_queue row for whale-market pair`
+  );
 
   // Step 6: trade EV via p_true / sentiment pipeline (OpenAI — only after steps 1–5).
   const evInput = whaleToEvInput(trade);
@@ -228,7 +231,7 @@ export async function processWhaleTradeForXAgent(
     pipelinePmMid = pipelineEv.pMarket ?? null;
   }
 
-  const evGate = evaluateTradeEvPreGate(tradeEvPercent);
+  const evGate = evaluateTradeEvPreGate(tradeEvPercent, payload.tradeId);
   if (!evGate.passed) {
     await handlePreGateRejection(
       payload,

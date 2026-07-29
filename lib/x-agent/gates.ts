@@ -15,6 +15,11 @@ import {
   resolveGateMetricsCollector,
 } from "@/lib/x-agent/gateMetrics";
 import {
+  formatStakeFloorTierLabel,
+  resolveStakeFloorUsd,
+  type StakeFloorTier,
+} from "@/lib/x-agent/stakeFloor";
+import {
   translateMarketAndSide,
   type RawPolymarketTrade,
 } from "@/lib/x-agent/translator";
@@ -53,10 +58,10 @@ export interface TradePayload {
 }
 
 export interface TradeGateMatrix {
-  /** Live trade EV from pipeline (trade.ev >= 0.015). */
+  /** Live trade EV from pipeline (trade.ev >= 0.025). */
   passesEv: boolean;
   passesStake: boolean;
-  /** Wallet registry track record (resolvedBets >= 100, avgEv >= 0.025). */
+  /** Wallet registry track record (resolvedBets >= 300, avgEv >= 0.025). */
   passesCredibility: boolean;
   passesAlignment: boolean;
   passesFreshness: boolean;
@@ -65,6 +70,8 @@ export interface TradeGateMatrix {
   tradeEvDecimal: number | null;
   walletResolvedBets: number | null;
   walletAvgEv: number | null;
+  stakeFloorUsd?: number;
+  stakeFloorTier?: StakeFloorTier;
   translation?: { side: string; marketPlain: string };
   primaryFailureReason?: GateRejectionReason;
 }
@@ -80,7 +87,7 @@ export interface EvaluateTradeGateMatrixInput {
   trade: TradePayload;
   /** Historical wallet registry row — not seeded from the live trade EV. */
   whale?: WhaleRegistry | null;
-  /** Live trade EV as display percent (+1.5 = +1.5%). */
+  /** Live trade EV as display percent (+2.5 = +2.5%). */
   tradeEvPercent: number | null;
   nowMs?: number;
 }
@@ -108,8 +115,17 @@ export interface PreGateShortCircuitResult {
 
 export const MIN_RESOLVED_BETS = MIN_WALLET_RESOLVED_BETS;
 export const MIN_AVG_EV = MIN_WALLET_AVG_EV_DECIMAL;
+/** Default-tier stake floor; tiered floors use `resolveStakeFloorUsd()`. */
 export const MIN_STAKE_NOTIONAL = STAKE_FLOOR_USD;
 export const MAX_TRADE_AGE_MS = 10 * 60 * 1000;
+
+function gateLog(tradeId: string, message: string): void {
+  console.log(`[Gate] tradeId=${tradeId} ${message}`);
+}
+
+function resolveTradeStakeFloor(trade: TradePayload) {
+  return resolveStakeFloorUsd(trade.title, trade.slug, trade.eventSlug);
+}
 
 function tradeTimestampMs(timestamp: number): number {
   return timestamp < 1_000_000_000_000 ? timestamp * 1000 : timestamp;
@@ -129,13 +145,36 @@ function formatTradeEvPct(pct: number): string {
 }
 
 export function logGateCheck(tradeId: string): void {
-  console.log("[Gate Check] Trade ID:", tradeId);
+  gateLog(tradeId, "evaluating post-queue gates");
 }
 
-export function logSourceSkip(): void {
-  console.log(
-    "[Skip: Source] Trade is from Kalshi (Polymarket required)"
-  );
+export function logSourceSkip(tradeId?: string): void {
+  const message = "[Fail: Source] Trade is from Kalshi (Polymarket required)";
+  if (tradeId) {
+    gateLog(tradeId, message);
+    return;
+  }
+  console.log(message);
+}
+
+function logStakeGate(
+  trade: TradePayload,
+  passed: boolean,
+  stakeFloorUsd: number,
+  tier: StakeFloorTier
+): void {
+  const tierLabel = formatStakeFloorTierLabel(tier);
+  if (passed) {
+    gateLog(
+      trade.tradeId,
+      `[Pass: Stake] ${formatStake(trade.stakeNotional)} >= ${formatStake(stakeFloorUsd)} (${tierLabel} tier)`
+    );
+  } else {
+    gateLog(
+      trade.tradeId,
+      `[Fail: Stake] ${formatStake(trade.stakeNotional)} < ${formatStake(stakeFloorUsd)} (${tierLabel} tier)`
+    );
+  }
 }
 
 function toRawPolymarketTrade(trade: TradePayload): RawPolymarketTrade {
@@ -182,69 +221,80 @@ function logGateMatrix(
   matrix: TradeGateMatrix,
   nowMs: number
 ): void {
+  const stakeFloorUsd = matrix.stakeFloorUsd ?? MIN_STAKE_NOTIONAL;
+  const stakeTier = matrix.stakeFloorTier ?? "default";
+
   if (matrix.passesSource) {
-    console.log("[Pass: Source] Polymarket trade");
+    gateLog(trade.tradeId, "[Pass: Source] Polymarket trade");
   } else {
-    logSourceSkip();
+    logSourceSkip(trade.tradeId);
   }
 
   if (matrix.passesEv) {
-    console.log(
+    gateLog(
+      trade.tradeId,
       `[Pass: Trade EV] Live trade EV (${formatTradeEvPct(tradeEvPercent ?? 0)}) >= +${HIGH_EV_TRADE_THRESHOLD_PCT}% (trade.ev >= ${MIN_TRADE_EV_DECIMAL})`
     );
   } else {
-    console.log(
+    gateLog(
+      trade.tradeId,
       tradeEvPercent == null
-        ? "[Skip: Trade EV] Live trade EV unavailable"
-        : `[Skip: Trade EV] Live trade EV (${formatTradeEvPct(tradeEvPercent)}) < +${HIGH_EV_TRADE_THRESHOLD_PCT}% (trade.ev < ${MIN_TRADE_EV_DECIMAL})`
+        ? "[Fail: Trade EV] Live trade EV unavailable"
+        : `[Fail: Trade EV] Live trade EV (${formatTradeEvPct(tradeEvPercent)}) < +${HIGH_EV_TRADE_THRESHOLD_PCT}% (trade.ev < ${MIN_TRADE_EV_DECIMAL})`
     );
   }
 
-  if (matrix.passesStake) {
-    console.log(
-      `[Pass: Stake] ${formatStake(trade.stakeNotional)} >= ${formatStake(MIN_STAKE_NOTIONAL)} threshold`
-    );
-  } else {
-    console.log(
-      `[Skip: Stake] ${formatStake(trade.stakeNotional)} < ${formatStake(MIN_STAKE_NOTIONAL)} threshold`
-    );
-  }
+  logStakeGate(trade, matrix.passesStake, stakeFloorUsd, stakeTier);
 
   if (isAnonymousWalletAddress(trade.walletAddress)) {
-    console.log(
+    gateLog(
+      trade.tradeId,
       "[Pass: Credibility] Anonymous trade (zero address) skipped wallet check"
     );
   } else if (matrix.passesCredibility && whale) {
-    console.log(
+    gateLog(
+      trade.tradeId,
       `[Pass: Wallet Credibility] Registry track record: resolved bets (${whale.resolvedBetsCount}) >= ${MIN_WALLET_RESOLVED_BETS}, wallet avg EV (${formatWalletEvPct(whale.avgEv)}%) >= +${MIN_WALLET_AVG_EV_THRESHOLD_PCT}%`
     );
   } else {
-    console.log("[Credibility Fail]", {
-      wallet: trade.walletAddress,
-      resolvedBets: whale?.resolvedBetsCount ?? "NOT_IN_DB",
-      avgEv: whale?.avgEv ?? "N/A",
-    });
+    gateLog(
+      trade.tradeId,
+      `[Fail: Wallet Credibility] wallet=${trade.walletAddress} resolvedBets=${whale?.resolvedBetsCount ?? "NOT_IN_DB"} avgEv=${whale?.avgEv ?? "N/A"}`
+    );
   }
 
   if (matrix.passesAlignment && matrix.translation) {
-    console.log(
+    gateLog(
+      trade.tradeId,
       `[Pass: Alignment] Translated to "${matrix.translation.side}" on "${matrix.translation.marketPlain}"`
     );
   } else {
-    console.log(
-      "[Skip: Alignment] Market cannot be translated to plain-English side"
+    gateLog(
+      trade.tradeId,
+      "[Fail: Alignment] Market cannot be translated to plain-English side"
     );
   }
 
   const tradeAgeMs = nowMs - tradeTimestampMs(trade.timestamp);
   if (matrix.passesFreshness) {
-    console.log(
+    gateLog(
+      trade.tradeId,
       `[Pass: Freshness] Trade age (${Math.round(tradeAgeMs / 60_000)}m) within ${MAX_TRADE_AGE_MS / 60_000}m window`
     );
   } else {
     const ageMin = Math.round(tradeAgeMs / 60_000);
-    console.log(
-      `[Skip: Freshness] Trade age (${ageMin}m) > ${MAX_TRADE_AGE_MS / 60_000}m threshold`
+    gateLog(
+      trade.tradeId,
+      `[Fail: Freshness] Trade age (${ageMin}m) > ${MAX_TRADE_AGE_MS / 60_000}m threshold`
+    );
+  }
+
+  if (matrix.passesAll) {
+    gateLog(trade.tradeId, "[Pass: All Gates] Trade eligible for x_post_queue");
+  } else {
+    gateLog(
+      trade.tradeId,
+      `[Fail: Gate Matrix] Primary rejection: ${matrix.primaryFailureReason ?? "unknown"}`
     );
   }
 }
@@ -265,7 +315,8 @@ export function evaluateTradeGateMatrix(
   const passesSource = trade.source === "polymarket";
   const passesEv =
     tradeEvDecimal != null && tradeEvDecimal >= MIN_TRADE_EV_DECIMAL;
-  const passesStake = trade.stakeNotional >= MIN_STAKE_NOTIONAL;
+  const stakeFloor = resolveTradeStakeFloor(trade);
+  const passesStake = trade.stakeNotional >= stakeFloor.floorUsd;
   const anonymousTrade = isAnonymousWalletAddress(trade.walletAddress);
   const passesCredibility =
     anonymousTrade ||
@@ -299,6 +350,8 @@ export function evaluateTradeGateMatrix(
     tradeEvDecimal,
     walletResolvedBets,
     walletAvgEv,
+    stakeFloorUsd: stakeFloor.floorUsd,
+    stakeFloorTier: stakeFloor.tier,
     translation: translation || undefined,
   };
 
@@ -320,20 +373,21 @@ export function evaluateDeterministicPreGates(
   logGateCheck(trade.tradeId);
 
   if (trade.source !== "polymarket") {
-    logSourceSkip();
+    logSourceSkip(trade.tradeId);
     return {
       passed: false,
       reason: "KALSHI_SOURCE_REJECTED",
       failedStep: "source",
     };
   }
-  console.log("[Pass: Source] Polymarket trade");
+  gateLog(trade.tradeId, "[Pass: Source] Polymarket trade");
 
   const tradeAgeMs = nowMs - tradeTimestampMs(trade.timestamp);
   if (tradeAgeMs > MAX_TRADE_AGE_MS) {
     const ageMin = Math.round(tradeAgeMs / 60_000);
-    console.log(
-      `[Skip: Freshness] Trade age (${ageMin}m) > ${MAX_TRADE_AGE_MS / 60_000}m threshold`
+    gateLog(
+      trade.tradeId,
+      `[Fail: Freshness] Trade age (${ageMin}m) > ${MAX_TRADE_AGE_MS / 60_000}m threshold`
     );
     return {
       passed: false,
@@ -341,28 +395,27 @@ export function evaluateDeterministicPreGates(
       failedStep: "freshness",
     };
   }
-  console.log(
+  gateLog(
+    trade.tradeId,
     `[Pass: Freshness] Trade age (${Math.round(tradeAgeMs / 60_000)}m) within ${MAX_TRADE_AGE_MS / 60_000}m window`
   );
 
-  if (trade.stakeNotional < MIN_STAKE_NOTIONAL) {
-    console.log(
-      `[Skip: Stake] ${formatStake(trade.stakeNotional)} < ${formatStake(MIN_STAKE_NOTIONAL)} threshold`
-    );
+  const stakeFloor = resolveTradeStakeFloor(trade);
+  if (trade.stakeNotional < stakeFloor.floorUsd) {
+    logStakeGate(trade, false, stakeFloor.floorUsd, stakeFloor.tier);
     return {
       passed: false,
       reason: "BELOW_STAKE_FLOOR",
       failedStep: "stake",
     };
   }
-  console.log(
-    `[Pass: Stake] ${formatStake(trade.stakeNotional)} >= ${formatStake(MIN_STAKE_NOTIONAL)} threshold`
-  );
+  logStakeGate(trade, true, stakeFloor.floorUsd, stakeFloor.tier);
 
   const translation = translateMarketAndSide(toRawPolymarketTrade(trade));
   if (!translation) {
-    console.log(
-      "[Skip: Alignment] Market cannot be translated to plain-English side"
+    gateLog(
+      trade.tradeId,
+      "[Fail: Alignment] Market cannot be translated to plain-English side"
     );
     return {
       passed: false,
@@ -370,7 +423,8 @@ export function evaluateDeterministicPreGates(
       failedStep: "alignment",
     };
   }
-  console.log(
+  gateLog(
+    trade.tradeId,
     `[Pass: Alignment] Translated to "${translation.side}" on "${translation.marketPlain}"`
   );
 
@@ -383,7 +437,8 @@ export function evaluateWalletCredibilityPreGate(
   whale: WhaleRegistry | null | undefined
 ): PreGateShortCircuitResult {
   if (isAnonymousWalletAddress(trade.walletAddress)) {
-    console.log(
+    gateLog(
+      trade.tradeId,
       "[Pass: Credibility] Anonymous trade (zero address) skipped wallet check"
     );
     return { passed: true };
@@ -395,17 +450,17 @@ export function evaluateWalletCredibilityPreGate(
     whale.avgEv >= MIN_AVG_EV;
 
   if (passesCredibility && whale) {
-    console.log(
+    gateLog(
+      trade.tradeId,
       `[Pass: Wallet Credibility] Registry track record: resolved bets (${whale.resolvedBetsCount}) >= ${MIN_WALLET_RESOLVED_BETS}, wallet avg EV (${formatWalletEvPct(whale.avgEv)}%) >= +${MIN_WALLET_AVG_EV_THRESHOLD_PCT}%`
     );
     return { passed: true };
   }
 
-  console.log("[Credibility Fail]", {
-    wallet: trade.walletAddress,
-    resolvedBets: whale?.resolvedBetsCount ?? "NOT_IN_DB",
-    avgEv: whale?.avgEv ?? "N/A",
-  });
+  gateLog(
+    trade.tradeId,
+    `[Fail: Wallet Credibility] wallet=${trade.walletAddress} resolvedBets=${whale?.resolvedBetsCount ?? "NOT_IN_DB"} avgEv=${whale?.avgEv ?? "N/A"}`
+  );
 
   const reason: GateRejectionReason =
     whale && whale.resolvedBetsCount < MIN_RESOLVED_BETS
@@ -417,24 +472,26 @@ export function evaluateWalletCredibilityPreGate(
 
 /** Step 6 — live trade EV gate (runs only after OpenAI / p_true pipeline). */
 export function evaluateTradeEvPreGate(
-  tradeEvPercent: number | null
+  tradeEvPercent: number | null,
+  tradeId?: string
 ): PreGateShortCircuitResult {
   const tradeEvDecimal = tradeEvPercentToDecimal(tradeEvPercent);
   const passesEv =
     tradeEvDecimal != null && tradeEvDecimal >= MIN_TRADE_EV_DECIMAL;
 
   if (passesEv) {
-    console.log(
-      `[Pass: Trade EV] Live trade EV (${formatTradeEvPct(tradeEvPercent ?? 0)}) >= +${HIGH_EV_TRADE_THRESHOLD_PCT}% (trade.ev >= ${MIN_TRADE_EV_DECIMAL})`
-    );
+    const message = `[Pass: Trade EV] Live trade EV (${formatTradeEvPct(tradeEvPercent ?? 0)}) >= +${HIGH_EV_TRADE_THRESHOLD_PCT}% (trade.ev >= ${MIN_TRADE_EV_DECIMAL})`;
+    if (tradeId) gateLog(tradeId, message);
+    else console.log(message);
     return { passed: true };
   }
 
-  console.log(
+  const failMessage =
     tradeEvPercent == null
-      ? "[Skip: Trade EV] Live trade EV unavailable"
-      : `[Skip: Trade EV] Live trade EV (${formatTradeEvPct(tradeEvPercent)}) < +${HIGH_EV_TRADE_THRESHOLD_PCT}% (trade.ev < ${MIN_TRADE_EV_DECIMAL})`
-  );
+      ? "[Fail: Trade EV] Live trade EV unavailable"
+      : `[Fail: Trade EV] Live trade EV (${formatTradeEvPct(tradeEvPercent)}) < +${HIGH_EV_TRADE_THRESHOLD_PCT}% (trade.ev < ${MIN_TRADE_EV_DECIMAL})`;
+  if (tradeId) gateLog(tradeId, failMessage);
+  else console.log(failMessage);
 
   return {
     passed: false,

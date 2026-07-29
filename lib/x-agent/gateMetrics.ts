@@ -5,11 +5,16 @@
  * `scripts/run-shadow-cron.ts` prints the matrix via `printGateSummaryBox()`.
  */
 
-/** Minimum live trade EV as display percent (+1.5%). */
-export const HIGH_EV_TRADE_THRESHOLD_PCT = 1.5;
+import {
+  formatStakeFloorSummaryLabel,
+  STAKE_FLOOR_DEFAULT_USD,
+} from "@/lib/x-agent/stakeFloor";
 
-/** Minimum live trade EV as decimal (trade.ev >= 0.015). */
-export const MIN_TRADE_EV_DECIMAL = 0.015;
+/** Minimum live trade EV as display percent (+2.5%). */
+export const HIGH_EV_TRADE_THRESHOLD_PCT = 2.5;
+
+/** Minimum live trade EV as decimal (trade.ev >= 0.025). */
+export const MIN_TRADE_EV_DECIMAL = 0.025;
 
 /** Minimum wallet historical avg EV from registry (wallet.avgEv >= 0.025). */
 export const MIN_WALLET_AVG_EV_DECIMAL = 0.025;
@@ -18,17 +23,14 @@ export const MIN_WALLET_AVG_EV_DECIMAL = 0.025;
 export const MIN_WALLET_AVG_EV_THRESHOLD_PCT =
   MIN_WALLET_AVG_EV_DECIMAL * 100;
 
-/** Minimum resolved bets on wallet registry for credibility (default 100). */
+/** Minimum resolved bets on wallet registry for credibility (default 300). */
 export const MIN_WALLET_RESOLVED_BETS = (() => {
   const parsed = Number(process.env.RESOLVED_BETS_FLOOR);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 100;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 300;
 })();
 
-/** Minimum trade stake notional (USD) for post-queue gates (default $1,500). */
-export const STAKE_FLOOR_USD = (() => {
-  const parsed = Number(process.env.STAKE_FLOOR_USD);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1_500;
-})();
+/** Legacy default stake floor (tiered floors use stakeFloor.ts). */
+export const STAKE_FLOOR_USD = STAKE_FLOOR_DEFAULT_USD;
 
 export interface GateSummary {
   totalEvaluated: number;
@@ -293,9 +295,8 @@ function formatGateFraction(count: number, total: number, width = 5): string {
   return `${countStr} / ${totalStr}`;
 }
 
-function formatStakeFloorSummaryLabel(usd: number): string {
-  if (usd >= 1000 && usd % 1000 === 0) return `<$${usd / 1000}k`;
-  return `<$${usd.toLocaleString("en-US")}`;
+function formatStakeFloorSummaryLabelForBox(): string {
+  return formatStakeFloorSummaryLabel();
 }
 
 export function printGateSummaryBox(
@@ -303,7 +304,7 @@ export function printGateSummaryBox(
   options?: { rollingWindow?: number }
 ): void {
   const total = metrics.totalEvaluated;
-  const stakeFloorSummaryLabel = formatStakeFloorSummaryLabel(STAKE_FLOOR_USD);
+  const stakeFloorSummaryLabel = formatStakeFloorSummaryLabelForBox();
   const tradeEvLabel = `+${HIGH_EV_TRADE_THRESHOLD_PCT}%`;
   const walletEvLabel = `+${MIN_WALLET_AVG_EV_THRESHOLD_PCT}%`;
   const rollingLabel =

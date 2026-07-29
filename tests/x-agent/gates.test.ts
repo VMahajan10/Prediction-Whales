@@ -9,9 +9,13 @@ import {
   MAX_TRADE_AGE_MS,
   MIN_AVG_EV,
   MIN_RESOLVED_BETS,
-  MIN_STAKE_NOTIONAL,
   type TradePayload,
 } from "@/lib/x-agent/gates";
+import {
+  STAKE_FLOOR_DEFAULT_USD,
+  STAKE_FLOOR_MACRO_POLITICAL_USD,
+  STAKE_FLOOR_SPORTS_ENTERTAINMENT_USD,
+} from "@/lib/x-agent/stakeFloor";
 import { ANONYMOUS_WALLET_ADDRESS } from "@/lib/x-agent/whaleRegistryDb";
 
 function makeWhale(overrides: Partial<WhaleRegistry> = {}): WhaleRegistry {
@@ -34,7 +38,7 @@ function makeTrade(overrides: Partial<TradePayload> = {}): TradePayload {
     source: "polymarket",
     tradeId: `trade-${Math.random().toString(36).slice(2, 10)}`,
     walletAddress: "0xwhale",
-    stakeNotional: MIN_STAKE_NOTIONAL,
+    stakeNotional: STAKE_FLOOR_DEFAULT_USD,
     timestamp: Math.floor(Date.now() / 1000),
     entryCents: 50,
     nowCents: 52,
@@ -51,7 +55,7 @@ describe("evaluateDeterministicPreGates", () => {
     const staleMs = MAX_TRADE_AGE_MS + 60_000;
     const result = evaluateDeterministicPreGates(
       makeTrade({
-        stakeNotional: MIN_STAKE_NOTIONAL - 1,
+        stakeNotional: STAKE_FLOOR_DEFAULT_USD - 1,
         timestamp: Math.floor((Date.now() - staleMs) / 1000),
       }),
       Date.now()
@@ -64,13 +68,34 @@ describe("evaluateDeterministicPreGates", () => {
 
   it("short-circuits on stake after freshness passes", () => {
     const result = evaluateDeterministicPreGates(
-      makeTrade({ stakeNotional: MIN_STAKE_NOTIONAL - 1 }),
+      makeTrade({ stakeNotional: STAKE_FLOOR_DEFAULT_USD - 1 }),
       Date.now()
     );
 
     expect(result.passed).toBe(false);
     expect(result.failedStep).toBe("stake");
     expect(result.reason).toBe("BELOW_STAKE_FLOOR");
+  });
+
+  it("applies the sports tier stake floor", () => {
+    const belowSportsFloor = evaluateDeterministicPreGates(
+      makeTrade({
+        title: "Lakers vs Celtics NBA",
+        stakeNotional: STAKE_FLOOR_SPORTS_ENTERTAINMENT_USD - 1,
+      }),
+      Date.now()
+    );
+    expect(belowSportsFloor.passed).toBe(false);
+    expect(belowSportsFloor.failedStep).toBe("stake");
+
+    const aboveSportsFloor = evaluateDeterministicPreGates(
+      makeTrade({
+        title: "Lakers vs Celtics NBA",
+        stakeNotional: STAKE_FLOOR_SPORTS_ENTERTAINMENT_USD,
+      }),
+      Date.now()
+    );
+    expect(aboveSportsFloor.passed).toBe(true);
   });
 
   it("returns translation when freshness, stake, and alignment pass", () => {
@@ -95,14 +120,14 @@ describe("evaluateWalletCredibilityPreGate", () => {
 
 describe("evaluateTradeEvPreGate", () => {
   it("fails when live trade EV is below the floor", () => {
-    const result = evaluateTradeEvPreGate(1.0);
+    const result = evaluateTradeEvPreGate(2.0);
 
     expect(result.passed).toBe(false);
     expect(result.reason).toBe("BELOW_TRADE_EV");
   });
 
   it("passes when live trade EV meets the floor", () => {
-    const result = evaluateTradeEvPreGate(2.0);
+    const result = evaluateTradeEvPreGate(2.5);
 
     expect(result.passed).toBe(true);
   });
@@ -123,11 +148,11 @@ describe("evaluateTradeGateMatrix", () => {
     const lowTradeHighWallet = evaluateTradeGateMatrix({
       trade: makeTrade(),
       whale: makeWhale({ resolvedBetsCount: 600, avgEv: 0.04 }),
-      tradeEvPercent: 1.0,
+      tradeEvPercent: 2.0,
     });
     expect(lowTradeHighWallet.passesEv).toBe(false);
     expect(lowTradeHighWallet.passesCredibility).toBe(true);
-    expect(lowTradeHighWallet.tradeEvDecimal).toBe(0.01);
+    expect(lowTradeHighWallet.tradeEvDecimal).toBe(0.02);
     expect(lowTradeHighWallet.walletAvgEv).toBe(0.04);
   });
 
@@ -135,10 +160,10 @@ describe("evaluateTradeGateMatrix", () => {
     const matrix = evaluateTradeGateMatrix({
       trade: makeTrade({
         source: "kalshi",
-        stakeNotional: MIN_STAKE_NOTIONAL - 1,
+        stakeNotional: STAKE_FLOOR_DEFAULT_USD - 1,
       }),
       whale: makeWhale({ resolvedBetsCount: MIN_RESOLVED_BETS - 1, avgEv: 0.01 }),
-      tradeEvPercent: 1.0,
+      tradeEvPercent: 2.0,
     });
 
     expect(matrix.passesSource).toBe(false);
@@ -152,18 +177,32 @@ describe("evaluateTradeGateMatrix", () => {
     const matrix = evaluateTradeGateMatrix({
       trade: makeTrade({ walletAddress: ANONYMOUS_WALLET_ADDRESS }),
       whale: null,
-      tradeEvPercent: 2.0,
+      tradeEvPercent: 3.0,
     });
 
     expect(matrix.passesCredibility).toBe(true);
     expect(matrix.passesAll).toBe(true);
   });
 
+  it("applies the macro/political stake tier", () => {
+    const matrix = evaluateTradeGateMatrix({
+      trade: makeTrade({
+        title: "Will Trump win the election?",
+        stakeNotional: STAKE_FLOOR_MACRO_POLITICAL_USD - 1,
+      }),
+      whale: makeWhale(),
+      tradeEvPercent: 3.0,
+    });
+
+    expect(matrix.stakeFloorTier).toBe("macro_political");
+    expect(matrix.passesStake).toBe(false);
+  });
+
   it("passes all gates when every condition is met", () => {
     const matrix = evaluateTradeGateMatrix({
       trade: makeTrade(),
       whale: makeWhale(),
-      tradeEvPercent: 2.0,
+      tradeEvPercent: 3.0,
     });
 
     expect(matrix.passesAll).toBe(true);
@@ -232,7 +271,7 @@ describe("evaluateTradeEligibility", () => {
       makeTrade({ walletAddress: ANONYMOUS_WALLET_ADDRESS }),
       null,
       Date.now(),
-      { tradeEvPercent: 2.0 }
+      { tradeEvPercent: 3.0 }
     );
 
     expect(result.matrix.passesCredibility).toBe(true);
@@ -241,7 +280,7 @@ describe("evaluateTradeEligibility", () => {
 
   it("rejects trades below the stake floor", async () => {
     const result = await evaluateTradeEligibility(
-      makeTrade({ stakeNotional: MIN_STAKE_NOTIONAL - 1 }),
+      makeTrade({ stakeNotional: STAKE_FLOOR_DEFAULT_USD - 1 }),
       makeWhale(),
       Date.now(),
       { tradeEvPercent: 5 }
