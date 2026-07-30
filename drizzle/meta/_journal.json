@@ -22,6 +22,41 @@
       "when": 1753334400000,
       "tag": "0004_x_detection_engine",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785447276244,
+      "tag": "0004_lean_cyclops",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1785450000000,
+      "tag": "0005_x_post_queue_variant_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785451000000,
+      "tag": "0006_x_post_scheduled_publish",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1785452000000,
+      "tag": "0007_x_post_queue_decision_lock",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1785453000000,
+      "tag": "0008_x_post_queue_ev_gloss",
+      "breakpoints": true
     }
   ]
 }

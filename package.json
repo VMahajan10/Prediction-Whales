@@ -6,7 +6,7 @@
     "dev": "next dev",
     "pipeline:trigger": "wait-on http://localhost:3000 && sh -c 'set -a; [ -f .env.local ] && . ./.env.local; set +a; curl -fsS -H \"Authorization: Bearer $CRON_SECRET\" http://localhost:3000/api/cron/ev-pipeline'",
     "dev:all": "concurrently \"npm run dev\" \"npm run pipeline:trigger\"",
-    "build": "npx prisma generate && next build && npm run build:worker",
+    "build": "npx prisma generate && npm run db:migrate && next build && npm run build:worker",
     "postinstall": "prisma generate",
     "build:worker": "prisma generate && tsc -p tsconfig.server.json",
     "start": "next start",
