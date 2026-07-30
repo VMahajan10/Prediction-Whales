@@ -103,7 +103,7 @@ describe("evaluateDeterministicPreGates", () => {
 
     expect(result.passed).toBe(true);
     expect(result.translation).toEqual({
-      side: "buy yes",
+      side: "bought yes",
       marketPlain: "China invade Taiwan",
     });
   });
@@ -173,15 +173,16 @@ describe("evaluateTradeGateMatrix", () => {
     expect(matrix.passesAll).toBe(false);
   });
 
-  it("passes credibility for anonymous zero-address trades without whale lookup", () => {
+  it("fails credibility for anonymous zero-address trades without whale lookup", () => {
     const matrix = evaluateTradeGateMatrix({
       trade: makeTrade({ walletAddress: ANONYMOUS_WALLET_ADDRESS }),
       whale: null,
       tradeEvPercent: 3.0,
     });
 
-    expect(matrix.passesCredibility).toBe(true);
-    expect(matrix.passesAll).toBe(true);
+    expect(matrix.passesCredibility).toBe(false);
+    expect(matrix.passesAll).toBe(false);
+    expect(matrix.primaryFailureReason).toBe("BELOW_RESOLVED_BETS");
   });
 
   it("applies the macro/political stake tier", () => {
@@ -207,7 +208,7 @@ describe("evaluateTradeGateMatrix", () => {
 
     expect(matrix.passesAll).toBe(true);
     expect(matrix.translation).toEqual({
-      side: "buy yes",
+      side: "bought yes",
       marketPlain: "China invade Taiwan",
     });
   });
@@ -261,12 +262,12 @@ describe("evaluateTradeEligibility", () => {
 
     expect(result.eligible).toBe(true);
     expect(result.translation).toEqual({
-      side: "buy yes",
+      side: "bought yes",
       marketPlain: "China invade Taiwan",
     });
   });
 
-  it("passes credibility for anonymous trades via evaluateTradeEligibility", async () => {
+  it("rejects anonymous trades with zero resolved history", async () => {
     const result = await evaluateTradeEligibility(
       makeTrade({ walletAddress: ANONYMOUS_WALLET_ADDRESS }),
       null,
@@ -274,8 +275,22 @@ describe("evaluateTradeEligibility", () => {
       { tradeEvPercent: 3.0 }
     );
 
-    expect(result.matrix.passesCredibility).toBe(true);
-    expect(result.eligible).toBe(true);
+    expect(result.matrix.passesCredibility).toBe(false);
+    expect(result.eligible).toBe(false);
+    expect(result.reason).toBe("BELOW_RESOLVED_BETS");
+  });
+
+  it("rejects wallets with zero resolved bets", async () => {
+    const result = await evaluateTradeEligibility(
+      makeTrade(),
+      makeWhale({ resolvedBetsCount: 0 }),
+      Date.now(),
+      { tradeEvPercent: 5 }
+    );
+
+    expect(result.eligible).toBe(false);
+    expect(result.matrix.passesCredibility).toBe(false);
+    expect(result.reason).toBe("BELOW_RESOLVED_BETS");
   });
 
   it("rejects trades below the stake floor", async () => {

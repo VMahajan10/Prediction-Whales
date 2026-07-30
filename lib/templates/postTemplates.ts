@@ -32,6 +32,8 @@ export interface PostTemplateInputs {
   /** Minutes from detection to post. */
   agoMinutes?: number;
   evGloss?: string;
+  /** Optional one-sentence matchup background (OpenAI). */
+  context?: string;
   /** Resolution receipt only (V8). */
   gainCents?: number;
 }
@@ -109,6 +111,7 @@ interface RenderContext {
   ago: string;
   gain: string | null;
   hashtag: string;
+  context: string | null;
 }
 
 function assertRequiredBaseSlots(data: PostTemplateInputs): void {
@@ -230,6 +233,7 @@ function buildRenderContext(
         ? `+${Math.round(data.gainCents)}`
         : null,
     hashtag,
+    context: data.context?.trim() ? data.context.trim() : null,
   };
 }
 
@@ -560,6 +564,9 @@ export function selectPostTemplate(
   const { variantId, rendered } = pickVariant(family, ctx, random);
 
   let renderedDraft = sanitizePostDraft(rendered);
+  if (ctx.context) {
+    renderedDraft = sanitizePostDraft(`${renderedDraft} ${ctx.context}`);
+  }
   if (ctx.hashtag && !renderedDraft.toLowerCase().includes(ctx.hashtag.toLowerCase())) {
     renderedDraft = sanitizePostDraft(`${renderedDraft} ${ctx.hashtag}`);
   }

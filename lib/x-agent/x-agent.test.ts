@@ -5,8 +5,8 @@ import { computeApprovalScheduledFor } from "./reviewDb";
 import {
   generateXPostCopy,
   sanitizeXPostCopy,
-  TemplateGenerationError,
 } from "./templates";
+import { PostTemplateError } from "@/lib/templates/postTemplates";
 import { translateMarketAndSide } from "./translator";
 
 assert.equal(
@@ -49,7 +49,7 @@ assert.deepEqual(
     side: "BUY",
   }),
   {
-    side: "buy yes",
+    side: "bought yes",
     marketPlain: "China invade Taiwan",
   }
 );
@@ -62,7 +62,7 @@ assert.equal(
     side: "BUY",
     slug: "fifwc-prt-esp-2026-07-22-prt",
   })?.side,
-  "buy Portugal",
+  "bought Portugal",
   "PM team codes map to country names"
 );
 
@@ -82,13 +82,13 @@ assert.throws(
   () =>
     generateXPostCopy({
       whale: "",
-      side: "buy yes",
+      side: "bought yes",
       entry: 35,
       avg_ev: 0.08,
       marketPlain: "China invade Taiwan",
       stakeNotional: 30_000,
     }),
-  TemplateGenerationError,
+  PostTemplateError,
   "missing whale fails closed"
 );
 
@@ -124,7 +124,7 @@ const moved = generateXPostCopy(
   "V6"
 );
 assert.equal(moved.family, "V3", "line move picks V3 when V6 excluded");
-assert.ok(moved.copyText.includes("line now"));
+assert.ok(moved.copyText.includes("already"), "line move picks V3 when V6 excluded");
 
 assert.equal(
   sanitizeXPostCopy("Check https://evil.com now #WhaleTracker #crypto"),

@@ -29,6 +29,19 @@ export const MIN_WALLET_RESOLVED_BETS = (() => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 300;
 })();
 
+/** Alias used by post-generation filters — same floor as wallet credibility. */
+export const MIN_RESOLVED_THRESHOLD = MIN_WALLET_RESOLVED_BETS;
+
+export function meetsResolvedBetsThreshold(
+  resolvedCount: number | null | undefined
+): boolean {
+  return (
+    resolvedCount != null &&
+    Number.isFinite(resolvedCount) &&
+    resolvedCount >= MIN_RESOLVED_THRESHOLD
+  );
+}
+
 /** Legacy default stake floor (tiered floors use stakeFloor.ts). */
 export const STAKE_FLOOR_USD = STAKE_FLOOR_DEFAULT_USD;
 

@@ -39,9 +39,10 @@ import {
   fetchLastTemplateFamily,
   hasActiveWhaleMarketQueueItem,
 } from "@/lib/templates/queueHelpers";
+import { generateMarketContextSummary } from "@/lib/x-agent/marketContextSummary";
+import { formatWhaleDisplayLabel } from "@/lib/x-agent/whaleDisplay";
 import {
   ANONYMOUS_WALLET_ADDRESS,
-  ANONYMOUS_WHALE_PSEUDONYM,
   ensureWhaleInRegistry,
   isAnonymousWalletAddress,
   normalizeWalletAddress,
@@ -250,13 +251,11 @@ export async function processWhaleTradeForXAgent(
   };
 
   const whaleRegistry =
-    !anonymousTrade &&
     whaleForGates != null &&
     whaleForGates.resolvedBetsCount >= MIN_WALLET_RESOLVED_BETS &&
     whaleForGates.avgEv >= MIN_WALLET_AVG_EV_DECIMAL
       ? { whale: whaleForGates, created: false }
       : await ensureWhaleInRegistry(walletAddress, {
-          pseudonym: anonymousTrade ? ANONYMOUS_WHALE_PSEUDONYM : undefined,
           avgStakeNotional: trade.usdNotional,
         });
   if (!whaleRegistry) {
@@ -264,10 +263,24 @@ export async function processWhaleTradeForXAgent(
     return;
   }
 
-  if (anonymousTrade) {
-    console.log(
-      "[x-agent/enqueue] Unresolved proxy wallet — queuing with anonymous placeholder"
-    );
+  const whaleLabel = formatWhaleDisplayLabel(
+    walletAddress,
+    whaleRegistry.whale.pseudonym
+  );
+
+  let marketContext: string | null = null;
+  try {
+    marketContext = await generateMarketContextSummary({
+      title: trade.title,
+      marketPlain: translation.marketPlain,
+      side: translation.side,
+      slug: trade.slug ?? trade.eventSlug,
+    });
+  } catch (error) {
+    console.warn("[x-agent/enqueue] market context summary failed", {
+      tradeId: payload.tradeId,
+      error: error instanceof Error ? error.message : error,
+    });
   }
 
   let lastTemplateFamily: string | undefined;
@@ -283,7 +296,7 @@ export async function processWhaleTradeForXAgent(
   try {
     templateSelection = selectPostTemplate(
       {
-        whale: whaleRegistry.whale.pseudonym,
+        whale: whaleLabel,
         side: translation.side,
         entry: pricedPayload.entryCents,
         now: pricedPayload.nowCents,
@@ -295,6 +308,7 @@ export async function processWhaleTradeForXAgent(
         resolvedBetsCount: whaleRegistry.whale.resolvedBetsCount,
         winRate: whaleRegistry.whale.winRate,
         category: translation.marketPlain,
+        context: marketContext ?? undefined,
       },
       { lastTemplateFamily }
     );
@@ -376,7 +390,7 @@ export async function processWhaleTradeForXAgent(
     try {
       logStdout("📲 [Queue Telegram] Dispatching trade alert");
       const telegramRes = await sendTradeTelegramAlert({
-        whaleName: whaleRegistry.whale.pseudonym,
+        whaleName: whaleLabel,
         stakeNotional: insertedRecord.stakeNotional,
         marketTitle: translation.marketPlain,
         evPercent: tradeEvPercent,
@@ -401,7 +415,7 @@ export async function processWhaleTradeForXAgent(
   }
 
   logStdout(
-    `[QUEUED TO X_POST_QUEUE] Trade ID: ${pricedPayload.tradeId} | Whale: ${whaleRegistry.whale.pseudonym} | Template: ${family}/${variantId} | Stake: $${Math.round(pricedPayload.stakeNotional).toLocaleString("en-US")}`
+    `[QUEUED TO X_POST_QUEUE] Trade ID: ${pricedPayload.tradeId} | Whale: ${whaleLabel} | Template: ${family}/${variantId} | Stake: $${Math.round(pricedPayload.stakeNotional).toLocaleString("en-US")}`
   );
   if (metricsCollector) {
     metricsCollector.recordQueuedSuccess();

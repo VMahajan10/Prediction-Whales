@@ -4,11 +4,11 @@ import { getRandomScheduledTime } from "@/lib/x-agent/reviewSchedule";
 import { findQueueById } from "@/lib/x-agent/reviewDb";
 import { formatReviewDecisionBadge } from "@/lib/x-agent/reviewDecision";
 import {
-  ANONYMOUS_WHALE_PSEUDONYM,
   findWhaleByWallet,
   formatWalletPseudonym,
   isAnonymousWalletAddress,
 } from "@/lib/x-agent/whaleRegistryDb";
+import { formatWhaleDisplayLabel } from "@/lib/x-agent/whaleDisplay";
 import { logReviewRouteEnvStatus } from "@/lib/serverEnv";
 import {
   formatReviewEvLabel,
@@ -63,21 +63,24 @@ export async function loadReviewPageData(
       return { kind: "not_found" };
     }
 
-    let whaleName = ANONYMOUS_WHALE_PSEUDONYM;
+    let whaleName = formatWhaleDisplayLabel(item.walletAddress);
     try {
-      if (isAnonymousWalletAddress(item.walletAddress)) {
-        whaleName = ANONYMOUS_WHALE_PSEUDONYM;
-      } else {
+      if (!isAnonymousWalletAddress(item.walletAddress)) {
         const whale = await findWhaleByWallet(item.walletAddress);
-        whaleName =
-          whale?.pseudonym ?? formatWalletPseudonym(item.walletAddress);
+        whaleName = formatWhaleDisplayLabel(
+          item.walletAddress,
+          whale?.pseudonym ?? formatWalletPseudonym(item.walletAddress)
+        );
       }
     } catch (whaleError) {
       console.warn(
         "[review/[id]] Whale registry lookup failed:",
         whaleError instanceof Error ? whaleError.message : whaleError
       );
-      whaleName = formatWalletPseudonym(item.walletAddress);
+      whaleName = formatWhaleDisplayLabel(
+        item.walletAddress,
+        formatWalletPseudonym(item.walletAddress)
+      );
     }
 
     let evPercent: number | null = null;

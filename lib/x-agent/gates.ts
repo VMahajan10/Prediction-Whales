@@ -9,6 +9,7 @@ import {
   MIN_WALLET_AVG_EV_DECIMAL,
   MIN_WALLET_AVG_EV_THRESHOLD_PCT,
   MIN_WALLET_RESOLVED_BETS,
+  meetsResolvedBetsThreshold,
   STAKE_FLOOR_USD,
   type GateSummary,
   type GateMetricsCollector,
@@ -114,6 +115,7 @@ export interface PreGateShortCircuitResult {
 }
 
 export const MIN_RESOLVED_BETS = MIN_WALLET_RESOLVED_BETS;
+export const MIN_RESOLVED_THRESHOLD = MIN_WALLET_RESOLVED_BETS;
 export const MIN_AVG_EV = MIN_WALLET_AVG_EV_DECIMAL;
 /** Default-tier stake floor; tiered floors use `resolveStakeFloorUsd()`. */
 export const MIN_STAKE_NOTIONAL = STAKE_FLOOR_USD;
@@ -201,10 +203,7 @@ function resolvePrimaryFailureReason(
   if (!matrix.passesEv) return "BELOW_TRADE_EV";
   if (!matrix.passesStake) return "BELOW_STAKE_FLOOR";
   if (!matrix.passesCredibility) {
-    if (
-      whale &&
-      whale.resolvedBetsCount < MIN_RESOLVED_BETS
-    ) {
+    if (!whale || !meetsResolvedBetsThreshold(whale.resolvedBetsCount)) {
       return "BELOW_RESOLVED_BETS";
     }
     return "LOW_EV";
@@ -249,7 +248,7 @@ function logGateMatrix(
   if (isAnonymousWalletAddress(trade.walletAddress)) {
     gateLog(
       trade.tradeId,
-      "[Pass: Credibility] Anonymous trade (zero address) skipped wallet check"
+      "[Fail: Credibility] Anonymous wallet has no resolved bet history"
     );
   } else if (matrix.passesCredibility && whale) {
     gateLog(
@@ -317,12 +316,10 @@ export function evaluateTradeGateMatrix(
     tradeEvDecimal != null && tradeEvDecimal >= MIN_TRADE_EV_DECIMAL;
   const stakeFloor = resolveTradeStakeFloor(trade);
   const passesStake = trade.stakeNotional >= stakeFloor.floorUsd;
-  const anonymousTrade = isAnonymousWalletAddress(trade.walletAddress);
   const passesCredibility =
-    anonymousTrade ||
-    (whale != null &&
-      whale.resolvedBetsCount >= MIN_WALLET_RESOLVED_BETS &&
-      whale.avgEv >= MIN_WALLET_AVG_EV_DECIMAL);
+    whale != null &&
+    meetsResolvedBetsThreshold(whale.resolvedBetsCount) &&
+    whale.avgEv >= MIN_WALLET_AVG_EV_DECIMAL;
 
   const translation =
     passesSource && translateMarketAndSide(toRawPolymarketTrade(trade));
@@ -439,15 +436,30 @@ export function evaluateWalletCredibilityPreGate(
   if (isAnonymousWalletAddress(trade.walletAddress)) {
     gateLog(
       trade.tradeId,
-      "[Pass: Credibility] Anonymous trade (zero address) skipped wallet check"
+      "[Fail: Credibility] Anonymous wallet has no resolved bet history"
     );
-    return { passed: true };
+    return {
+      passed: false,
+      reason: "BELOW_RESOLVED_BETS",
+      failedStep: "credibility",
+    };
+  }
+
+  const resolvedCount = whale?.resolvedBetsCount ?? 0;
+  if (!meetsResolvedBetsThreshold(resolvedCount)) {
+    gateLog(
+      trade.tradeId,
+      `[Fail: Credibility] wallet=${trade.walletAddress} resolvedBets=${resolvedCount} (< ${MIN_RESOLVED_BETS})`
+    );
+    return {
+      passed: false,
+      reason: "BELOW_RESOLVED_BETS",
+      failedStep: "credibility",
+    };
   }
 
   const passesCredibility =
-    whale != null &&
-    whale.resolvedBetsCount >= MIN_RESOLVED_BETS &&
-    whale.avgEv >= MIN_AVG_EV;
+    whale != null && whale.avgEv >= MIN_AVG_EV;
 
   if (passesCredibility && whale) {
     gateLog(
@@ -463,7 +475,7 @@ export function evaluateWalletCredibilityPreGate(
   );
 
   const reason: GateRejectionReason =
-    whale && whale.resolvedBetsCount < MIN_RESOLVED_BETS
+    !whale || !meetsResolvedBetsThreshold(whale.resolvedBetsCount)
       ? "BELOW_RESOLVED_BETS"
       : "LOW_EV";
 

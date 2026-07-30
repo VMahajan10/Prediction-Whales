@@ -74,4 +74,14 @@ describe("selectPostTemplate", () => {
     expect(selection.variantId).toMatch(/^V\d+-/);
     expect(selection.renderedDraft.length).toBeGreaterThan(0);
   });
+
+  it("appends optional market context to the rendered draft", () => {
+    const selection = selectPostTemplate(
+      baseInputs({ context: "Both teams enter on a five-game win streak." }),
+      { random: () => 0 }
+    );
+    expect(selection.renderedDraft).toContain(
+      "Both teams enter on a five-game win streak."
+    );
+  });
 });

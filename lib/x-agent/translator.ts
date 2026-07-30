@@ -96,7 +96,7 @@ function formatTranslatedSide(
   trade: RawPolymarketTrade,
   outcomeLabel: string
 ): string {
-  const verb = trade.side === "BUY" ? "buy" : "sell";
+  const verb = trade.side === "BUY" ? "bought" : "sold";
   if (BINARY_OUTCOMES.has(outcomeLabel.toLowerCase())) {
     return `${verb} ${outcomeLabel.toLowerCase()}`;
   }

@@ -6,6 +6,7 @@ import {
 import {
   MIN_WALLET_AVG_EV_DECIMAL,
   MIN_WALLET_RESOLVED_BETS,
+  meetsResolvedBetsThreshold,
 } from "@/lib/x-agent/gateMetrics";
 import { calculateAvgEv, type ResolvedBet } from "@/lib/x-agent/math";
 import {
@@ -79,7 +80,7 @@ function writeLowCredibilityCache(
 
 export function walletMeetsCredibilityCriteria(stats: WalletCredibilityStats): boolean {
   return (
-    stats.resolvedBetsCount >= MIN_WALLET_RESOLVED_BETS &&
+    meetsResolvedBetsThreshold(stats.resolvedBetsCount) &&
     stats.avgEv >= MIN_WALLET_AVG_EV_DECIMAL
   );
 }
