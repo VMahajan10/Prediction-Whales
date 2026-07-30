@@ -177,6 +177,7 @@ model XPostQueue {
   tradeId        String    @unique @map("trade_id")
   templateFamily String    @map("template_family")
   variantId      String?   @map("variant_id")
+  evGloss        String?   @map("ev_gloss")
   copyText       String    @map("copy_text")
   marketSlug     String    @map("market_slug")
   side           String

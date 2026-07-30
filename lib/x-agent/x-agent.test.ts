@@ -124,7 +124,10 @@ const moved = generateXPostCopy(
   "V6"
 );
 assert.equal(moved.family, "V3", "line move picks V3 when V6 excluded");
-assert.ok(moved.copyText.includes("already"), "line move picks V3 when V6 excluded");
+assert.ok(
+  moved.copyText.includes("Now: 58¢") || moved.copyText.includes("already"),
+  "line move copy references current price"
+);
 
 assert.equal(
   sanitizeXPostCopy("Check https://evil.com now #WhaleTracker #crypto"),

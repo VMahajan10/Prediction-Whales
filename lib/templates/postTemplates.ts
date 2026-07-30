@@ -1,4 +1,11 @@
-import { formatEvGloss } from "@/lib/x-agent/math";
+import {
+  evGlossForThey,
+  formatAvgEvPercent,
+  formatBoundAvgEv,
+  isEvGloss,
+  selectEvGloss,
+  type EvGloss,
+} from "@/constants/evGlosses";
 
 export const TEMPLATE_FAMILIES = [
   "V1",
@@ -40,6 +47,8 @@ export interface PostTemplateInputs {
 
 export interface PostTemplateSelectionOptions {
   lastTemplateFamily?: string;
+  /** Prior EV gloss — excluded from rotation for this draft. */
+  lastEvGloss?: string | null;
   /** When true, only V8 is eligible (resolved YES follow-up). */
   resolutionReceipt?: boolean;
   random?: () => number;
@@ -49,6 +58,7 @@ export interface PostTemplateSelection {
   templateFamily: TemplateFamily;
   variantId: string;
   renderedDraft: string;
+  evGloss: EvGloss;
 }
 
 export class PostTemplateError extends Error {
@@ -103,6 +113,8 @@ interface RenderContext {
   stake: string;
   avgStake: string | null;
   avgEv: string;
+  /** AVG EV percent always paired with gloss — never bare. */
+  avgEvBound: string;
   winRate: string | null;
   resolved: string | null;
   postedCount: string | null;
@@ -139,23 +151,64 @@ function formatUsd(amount: number): string {
   return `$${Math.round(amount).toLocaleString("en-US")}`;
 }
 
-function formatAvgEvPct(avgEv: number): string {
-  const pct = avgEv * 100;
-  const sign = pct >= 0 ? "+" : "";
-  return `${sign}${pct.toFixed(0)}%`;
-}
-
 function formatWinRate(winRate?: number): string | null {
   if (winRate == null || !Number.isFinite(winRate)) return null;
   return `${Math.round(winRate * 100)}`;
 }
 
-/** EV gloss phrasing for "they …" / "as they …" (plural verb forms). */
-function evGlossForThey(gloss: string): string {
-  return gloss
-    .replace(/^gets\b/, "get")
-    .replace(/^wins\b/, "win")
-    .replace(/^makes\b/, "make");
+function buildRenderContext(
+  data: PostTemplateInputs,
+  random: () => number,
+  lastEvGloss?: string | null
+): { ctx: RenderContext; evGloss: EvGloss } {
+  const hashtag =
+    random() < 0.2
+      ? ROTATING_HASHTAGS[Math.floor(random() * ROTATING_HASHTAGS.length)]
+      : "";
+
+  const evGloss: EvGloss = isEvGloss(data.evGloss)
+    ? data.evGloss
+    : selectEvGloss({ excludeGloss: lastEvGloss, random });
+  const avgEvBound = formatBoundAvgEv(data.avg_ev, evGloss);
+
+  const ctx: RenderContext = {
+    whale: data.whale.trim(),
+    side: data.side.trim(),
+    market: data.marketPlain.trim(),
+    category: (data.category ?? data.marketPlain).trim(),
+    entry: formatCents(data.entry),
+    now:
+      data.now != null && Number.isFinite(data.now)
+        ? formatCents(data.now)
+        : null,
+    stake: formatUsd(data.stakeNotional),
+    avgStake: hasStakeHistory(data) ? formatUsd(data.avgStakeNotional!) : null,
+    avgEv: formatAvgEvPercent(data.avg_ev),
+    avgEvBound,
+    winRate: formatWinRate(data.winRate),
+    resolved:
+      data.resolvedBetsCount != null && Number.isFinite(data.resolvedBetsCount)
+        ? data.resolvedBetsCount.toLocaleString("en-US")
+        : null,
+    postedCount:
+      data.postedCount30d != null && Number.isFinite(data.postedCount30d)
+        ? String(data.postedCount30d)
+        : null,
+    evGloss,
+    evGlossThey: evGlossForThey(evGloss),
+    ago:
+      data.agoMinutes != null && Number.isFinite(data.agoMinutes)
+        ? `${Math.max(1, Math.round(data.agoMinutes))} min`
+        : "moments",
+    gain:
+      data.gainCents != null && Number.isFinite(data.gainCents)
+        ? `+${Math.round(data.gainCents)}`
+        : null,
+    hashtag,
+    context: data.context?.trim() ? data.context.trim() : null,
+  };
+
+  return { ctx, evGloss };
 }
 
 function lineDeltaCents(data: PostTemplateInputs): number | null {
@@ -187,54 +240,6 @@ function hasTrackRecord(data: PostTemplateInputs): boolean {
     Number.isFinite(data.resolvedBetsCount) &&
     data.resolvedBetsCount > 0
   );
-}
-
-function buildRenderContext(
-  data: PostTemplateInputs,
-  random: () => number
-): RenderContext {
-  const hashtag =
-    random() < 0.2
-      ? ROTATING_HASHTAGS[Math.floor(random() * ROTATING_HASHTAGS.length)]
-      : "";
-
-  const evGloss = data.evGloss ?? formatEvGloss(data.avg_ev, random);
-
-  return {
-    whale: data.whale.trim(),
-    side: data.side.trim(),
-    market: data.marketPlain.trim(),
-    category: (data.category ?? data.marketPlain).trim(),
-    entry: formatCents(data.entry),
-    now:
-      data.now != null && Number.isFinite(data.now)
-        ? formatCents(data.now)
-        : null,
-    stake: formatUsd(data.stakeNotional),
-    avgStake: hasStakeHistory(data) ? formatUsd(data.avgStakeNotional!) : null,
-    avgEv: formatAvgEvPct(data.avg_ev),
-    winRate: formatWinRate(data.winRate),
-    resolved:
-      data.resolvedBetsCount != null && Number.isFinite(data.resolvedBetsCount)
-        ? data.resolvedBetsCount.toLocaleString("en-US")
-        : null,
-    postedCount:
-      data.postedCount30d != null && Number.isFinite(data.postedCount30d)
-        ? String(data.postedCount30d)
-        : null,
-    evGloss,
-    evGlossThey: evGlossForThey(evGloss),
-    ago:
-      data.agoMinutes != null && Number.isFinite(data.agoMinutes)
-        ? `${Math.max(1, Math.round(data.agoMinutes))} min`
-        : "moments",
-    gain:
-      data.gainCents != null && Number.isFinite(data.gainCents)
-        ? `+${Math.round(data.gainCents)}`
-        : null,
-    hashtag,
-    context: data.context?.trim() ? data.context.trim() : null,
-  };
 }
 
 function assertVariantSlots(
@@ -280,13 +285,13 @@ const TEMPLATE_FAMILIES_DEF: TemplateFamilyDefinition[] = [
       {
         id: "d",
         render: (ctx) =>
-          `${ctx.whale} just moved ${ctx.stake} to ${ctx.side} at ${ctx.entry}¢. This wallet runs ${ctx.avgEv} AVG EV over ${ctx.resolved ?? "—"} resolved bets.`,
+          `${ctx.whale} just moved ${ctx.stake} to ${ctx.side} at ${ctx.entry}¢. This wallet runs ${ctx.avgEvBound} over ${ctx.resolved ?? "—"} resolved bets.`,
         requiredSlots: ["resolved"],
       },
       {
         id: "e",
         render: (ctx) =>
-          `${ctx.whale} just made a move: ${ctx.side} on ${ctx.market} at ${ctx.entry}¢. Avg EV: ${ctx.avgEv}.`,
+          `${ctx.whale} just made a move: ${ctx.side} on ${ctx.market} at ${ctx.entry}¢. Track record: ${ctx.avgEvBound}.`,
       },
     ],
   },
@@ -309,13 +314,13 @@ const TEMPLATE_FAMILIES_DEF: TemplateFamilyDefinition[] = [
       {
         id: "c",
         render: (ctx) =>
-          `This wallet averages ${ctx.avgEv} EV across ${ctx.resolved} bets. New position: ${ctx.stake} on ${ctx.side} at ${ctx.entry}¢.`,
+          `This wallet averages ${ctx.avgEvBound} across ${ctx.resolved} bets. New position: ${ctx.stake} on ${ctx.side} at ${ctx.entry}¢.`,
         requiredSlots: ["resolved"],
       },
       {
         id: "d",
         render: (ctx) =>
-          `Anyone can win 80% betting favorites. This whale runs ${ctx.avgEv} EV over ${ctx.resolved} bets as they ${ctx.evGlossThey}. Just in: ${ctx.stake} on ${ctx.side}.`,
+          `Anyone can win 80% betting favorites. This whale runs ${ctx.avgEvBound} over ${ctx.resolved} bets. Just in: ${ctx.stake} on ${ctx.side}.`,
         requiredSlots: ["resolved"],
       },
     ],
@@ -339,7 +344,7 @@ const TEMPLATE_FAMILIES_DEF: TemplateFamilyDefinition[] = [
       {
         id: "c",
         render: (ctx) =>
-          `${ctx.whale} entered ${ctx.side} at ${ctx.entry}¢ — it's ${ctx.now}¢ now. Their AVG EV is ${ctx.avgEv}: historically they ${ctx.evGlossThey}. That gap is the edge.`,
+          `${ctx.whale} entered ${ctx.side} at ${ctx.entry}¢ — it's ${ctx.now}¢ now. Their ${ctx.avgEvBound}. That gap is the edge.`,
         requiredSlots: ["now"],
       },
     ],
@@ -363,7 +368,7 @@ const TEMPLATE_FAMILIES_DEF: TemplateFamilyDefinition[] = [
       {
         id: "c",
         render: (ctx) =>
-          `${ctx.stake} on ${ctx.side} — ${ctx.whale}'s biggest swing this month, from a wallet running ${ctx.avgEv} EV across ${ctx.resolved ?? "—"} bets.`,
+          `${ctx.stake} on ${ctx.side} — ${ctx.whale}'s biggest swing this month, from a wallet running ${ctx.avgEvBound} across ${ctx.resolved ?? "—"} bets.`,
         requiredSlots: ["avgStake"],
       },
     ],
@@ -380,7 +385,7 @@ const TEMPLATE_FAMILIES_DEF: TemplateFamilyDefinition[] = [
       {
         id: "b",
         render: (ctx) =>
-          `The crowd has this at ${ctx.now ?? ctx.entry}¢. ${ctx.whale} took ${ctx.side} at ${ctx.entry}¢ with ${ctx.stake} and their ${ctx.avgEv} AVG EV over ${ctx.resolved ?? "—"} bets says they usually ${ctx.evGlossThey}.`,
+          `The crowd has this at ${ctx.now ?? ctx.entry}¢. ${ctx.whale} took ${ctx.side} at ${ctx.entry}¢ with ${ctx.stake} — ${ctx.avgEvBound} over ${ctx.resolved ?? "—"} bets.`,
       },
     ],
   },
@@ -397,7 +402,7 @@ const TEMPLATE_FAMILIES_DEF: TemplateFamilyDefinition[] = [
       {
         id: "b",
         render: (ctx) =>
-          `${ctx.whale} again. Third ${ctx.category} move this week: ${ctx.stake} on ${ctx.side} at ${ctx.entry}¢. Still running ${ctx.avgEv} EV over ${ctx.resolved ?? "—"} bets and still ${ctx.evGloss}.`,
+          `${ctx.whale} again. Third ${ctx.category} move this week: ${ctx.stake} on ${ctx.side} at ${ctx.entry}¢. Still ${ctx.avgEvBound} over ${ctx.resolved ?? "—"} bets.`,
         requiredSlots: ["postedCount"],
       },
     ],
@@ -421,7 +426,7 @@ const TEMPLATE_FAMILIES_DEF: TemplateFamilyDefinition[] = [
       {
         id: "c",
         render: (ctx) =>
-          `${ctx.stake} on ${ctx.side} at ${ctx.entry}¢ from a wallet averaging ${ctx.avgEv} EV across ${ctx.resolved ?? "—"} bets as they ${ctx.evGlossThey}. The market hasn't noticed yet.`,
+          `${ctx.stake} on ${ctx.side} at ${ctx.entry}¢ from a wallet with ${ctx.avgEvBound} across ${ctx.resolved ?? "—"} bets. The market hasn't noticed yet.`,
         requiredSlots: ["now"],
       },
       {
@@ -446,7 +451,7 @@ const TEMPLATE_FAMILIES_DEF: TemplateFamilyDefinition[] = [
       {
         id: "b",
         render: (ctx) =>
-          `Receipt: ${ctx.whale}'s ${ctx.stake} on ${ctx.side} resolved YES. Posted at ${ctx.entry}¢, paid out at 100¢. This is what ${ctx.avgEv} AVG EV looks like — profit per bet, not luck.`,
+          `Receipt: ${ctx.whale}'s ${ctx.stake} on ${ctx.side} resolved YES. Posted at ${ctx.entry}¢, paid out at 100¢. This is what ${ctx.avgEvBound} looks like in practice.`,
         requiredSlots: ["gain"],
       },
     ],
@@ -560,7 +565,11 @@ export function selectPostTemplate(
     random,
     options.resolutionReceipt
   );
-  const ctx = buildRenderContext(data, random);
+  const { ctx, evGloss } = buildRenderContext(
+    data,
+    random,
+    options.lastEvGloss
+  );
   const { variantId, rendered } = pickVariant(family, ctx, random);
 
   let renderedDraft = sanitizePostDraft(rendered);
@@ -579,6 +588,7 @@ export function selectPostTemplate(
     templateFamily: family,
     variantId,
     renderedDraft,
+    evGloss,
   };
 }
 

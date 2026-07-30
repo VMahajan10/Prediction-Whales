@@ -514,6 +514,7 @@ export const xPostQueue = pgTable(
     tradeId: text("trade_id").notNull(),
     templateFamily: text("template_family").notNull(),
     variantId: text("variant_id"),
+    evGloss: text("ev_gloss"),
     copyText: text("copy_text").notNull(),
     marketSlug: text("market_slug").notNull(),
     side: text("side").notNull(),

@@ -40,6 +40,10 @@ import {
   hasActiveWhaleMarketQueueItem,
 } from "@/lib/templates/queueHelpers";
 import { generateMarketContextSummary } from "@/lib/x-agent/marketContextSummary";
+import {
+  fetchLastEvGloss,
+  persistLastEvGloss,
+} from "@/lib/x-agent/evGlossStore";
 import { formatWhaleDisplayLabel } from "@/lib/x-agent/whaleDisplay";
 import {
   ANONYMOUS_WALLET_ADDRESS,
@@ -284,10 +288,12 @@ export async function processWhaleTradeForXAgent(
   }
 
   let lastTemplateFamily: string | undefined;
+  let lastEvGloss: string | null = null;
   try {
     lastTemplateFamily = await fetchLastTemplateFamily(prisma);
+    lastEvGloss = await fetchLastEvGloss(prisma);
   } catch (error) {
-    console.warn("[x-agent/enqueue] failed to load last template family", {
+    console.warn("[x-agent/enqueue] failed to load template rotation state", {
       error: error instanceof Error ? error.message : error,
     });
   }
@@ -310,7 +316,7 @@ export async function processWhaleTradeForXAgent(
         category: translation.marketPlain,
         context: marketContext ?? undefined,
       },
-      { lastTemplateFamily }
+      { lastTemplateFamily, lastEvGloss }
     );
   } catch (error) {
     logEnqueueSkip(
@@ -322,8 +328,12 @@ export async function processWhaleTradeForXAgent(
     return;
   }
 
-  const { renderedDraft: copyText, templateFamily: family, variantId } =
-    templateSelection;
+  const {
+    renderedDraft: copyText,
+    templateFamily: family,
+    variantId,
+    evGloss,
+  } = templateSelection;
 
   let queued: Awaited<ReturnType<typeof prisma.xPostQueue.create>>;
   try {
@@ -334,6 +344,7 @@ export async function processWhaleTradeForXAgent(
         tradeId: pricedPayload.tradeId,
         templateFamily: family,
         variantId,
+        evGloss,
         copyText,
         marketSlug: pricedPayload.marketSlug,
         side: translation.side,
@@ -350,6 +361,15 @@ export async function processWhaleTradeForXAgent(
   }
 
   const insertedRecord = queued;
+
+  try {
+    await persistLastEvGloss(evGloss);
+  } catch (error) {
+    console.warn("[x-agent/enqueue] failed to persist last EV gloss", {
+      tradeId: payload.tradeId,
+      error: error instanceof Error ? error.message : error,
+    });
+  }
 
   logStdout("📌 [Queue Insert] Record created ID:", insertedRecord.id);
 

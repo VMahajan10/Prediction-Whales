@@ -23,20 +23,20 @@ export function calculateAvgEv(resolvedBets: ResolvedBet[]): number {
   return sum / counted;
 }
 
-const EV_GLOSS_OPTIONS = [
-  "profitable on average",
-  "wins at the right price",
-  "gets in at better prices than the market",
-  "paid for disagreeing with the crowd",
-  "makes money per bet, not just wins often",
-] as const;
+import {
+  selectEvGloss,
+  type EvGloss,
+} from "@/constants/evGlosses";
 
 /** Pick a human-readable EV gloss for copy templates. */
 export function formatEvGloss(
   avgEv: number,
-  random = Math.random
-): string {
+  random: () => number = Math.random,
+  options?: { excludeGloss?: string | null }
+): EvGloss {
   void avgEv;
-  const index = Math.floor(random() * EV_GLOSS_OPTIONS.length);
-  return EV_GLOSS_OPTIONS[index] ?? EV_GLOSS_OPTIONS[0];
+  return selectEvGloss({
+    excludeGloss: options?.excludeGloss,
+    random,
+  });
 }

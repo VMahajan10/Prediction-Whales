@@ -26,6 +26,18 @@ export async function listXPostQueueRows(
   });
 }
 
+/** Most recent EV gloss from any queued post (rotation dedupe source). */
+export async function fetchLastEvGlossFromQueue(
+  prisma: PrismaClient
+): Promise<string | null> {
+  const row = await prisma.xPostQueue.findFirst({
+    orderBy: xPostQueuePrismaOrder,
+    select: { evGloss: true },
+    where: { evGloss: { not: null } },
+  });
+  return row?.evGloss ?? null;
+}
+
 /** Most recent template family from any queued or published post. */
 export async function fetchLastTemplateFamily(
   prisma: PrismaClient

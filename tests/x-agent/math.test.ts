@@ -1,13 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { calculateAvgEv, formatEvGloss } from "@/lib/x-agent/math";
-
-const EV_GLOSS_OPTIONS = [
-  "profitable on average",
-  "wins at the right price",
-  "gets in at better prices than the market",
-  "paid for disagreeing with the crowd",
-  "makes money per bet, not just wins often",
-] as const;
+import { EV_GLOSSES } from "@/constants/evGlosses";
 
 describe("calculateAvgEv", () => {
   it("returns 0 for an empty resolved-bet history", () => {
@@ -54,16 +47,24 @@ describe("calculateAvgEv", () => {
 
 describe("formatEvGloss", () => {
   it("returns a known plain-English gloss for each rng bucket", () => {
-    for (let i = 0; i < EV_GLOSS_OPTIONS.length; i += 1) {
-      const fraction = i / EV_GLOSS_OPTIONS.length;
-      expect(formatEvGloss(0.12, () => fraction)).toBe(EV_GLOSS_OPTIONS[i]);
+    for (let i = 0; i < EV_GLOSSES.length; i += 1) {
+      const fraction = i / EV_GLOSSES.length;
+      expect(formatEvGloss(0.12, () => fraction)).toBe(EV_GLOSSES[i]);
     }
+  });
+
+  it("excludes the prior gloss when requested", () => {
+    const gloss = formatEvGloss(0.12, () => 0, {
+      excludeGloss: EV_GLOSSES[0],
+    });
+    expect(gloss).not.toBe(EV_GLOSSES[0]);
+    expect(EV_GLOSSES).toContain(gloss);
   });
 
   it("always returns one of the approved gloss strings", () => {
     for (let i = 0; i < 20; i += 1) {
       const gloss = formatEvGloss(0.08, () => i / 20);
-      expect(EV_GLOSS_OPTIONS).toContain(gloss);
+      expect(EV_GLOSSES).toContain(gloss);
       expect(gloss.length).toBeGreaterThan(10);
       expect(gloss).not.toMatch(/https?:\/\//);
       expect(gloss).not.toContain("%");
