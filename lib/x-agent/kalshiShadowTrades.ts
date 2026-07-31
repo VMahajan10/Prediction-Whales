@@ -72,13 +72,12 @@ function shadowInsertValues(row: ShadowInsertRow) {
   };
 }
 
-type PgErrorShape = Error & {
+type PgErrorShape = {
+  message: string;
+  stack?: string;
   code?: string;
   detail?: string;
   constraint?: string;
-  severity?: string;
-  table?: string;
-  column?: string;
 };
 
 export function formatShadowInsertError(error: unknown): Record<string, unknown> {
@@ -86,7 +85,7 @@ export function formatShadowInsertError(error: unknown): Record<string, unknown>
     return { message: String(error) };
   }
 
-  const pg = error as PgErrorShape;
+  const pg = error as Error & PgErrorShape;
   const details: Record<string, unknown> = {
     message: pg.message,
     stack: pg.stack,
@@ -95,10 +94,6 @@ export function formatShadowInsertError(error: unknown): Record<string, unknown>
   if (pg.code) details.code = pg.code;
   if (pg.detail) details.detail = pg.detail;
   if (pg.constraint) details.constraint = pg.constraint;
-  if (pg.severity) details.severity = pg.severity;
-  if (pg.table) details.table = pg.table;
-  if (pg.column) details.column = pg.column;
-  if (pg.cause) details.cause = formatShadowInsertError(pg.cause);
 
   return details;
 }
