@@ -300,7 +300,6 @@ export default function WhaleTracker({
 
       <p className="mb-4 px-1 text-[10px] uppercase tracking-wide text-pulse-label">
         {topWhales.length} of {whales.length} · {liveFeedPlatformLabel(platform)}
-        {kalshiOk && platform !== "polymarket" ? " · +Kalshi" : ""}
       </p>
 
       {topWhales.length === 0 ? (

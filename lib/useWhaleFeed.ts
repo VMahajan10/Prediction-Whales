@@ -24,6 +24,10 @@ import {
   type WhaleTrade,
 } from "@/lib/whaleTrades";
 
+/** Feed v1 — qualified whale feed is Polymarket-only (OQ-2 / Kalshi spike). */
+const FEED_V1_EXCLUDE_KALSHI = true;
+const KALSHI_WHALE_FEED_TRADES: WhaleTrade[] = FEED_V1_EXCLUDE_KALSHI ? [] : [];
+
 function byDetectedDesc(a: WhaleTrade, b: WhaleTrade): number {
   return b.detectedAt - a.detectedAt;
 }
@@ -300,7 +304,12 @@ export function useWhaleFeed() {
 
   const whales = useMemo(
     () =>
-      buildPlatformFeed(qualifiedPolymarketWhales, [], platform, byDetectedDesc),
+      buildPlatformFeed(
+        qualifiedPolymarketWhales,
+        KALSHI_WHALE_FEED_TRADES,
+        platform,
+        byDetectedDesc
+      ),
     [qualifiedPolymarketWhales, platform]
   );
 

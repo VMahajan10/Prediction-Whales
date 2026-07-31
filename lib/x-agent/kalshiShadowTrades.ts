@@ -136,9 +136,13 @@ export async function persistKalshiShadowTrade(
   }
 }
 
-/** Fire-and-forget shadow log from a WhaleTrade notify payload. */
+/** Fire-and-forget shadow log from a WhaleTrade notify payload.
+ * Trade-level only — keyed on Kalshi trade_id, never whale_registry. */
 export function persistKalshiShadowTradeFromWhale(trade: WhaleTrade): void {
   if (trade.source !== "kalshi" || !trade.ticker?.trim()) return;
+
+  const tradeId = trade.id?.trim();
+  if (!tradeId) return;
 
   const entryPrice = toShadowFloat(trade.price);
   const size =
@@ -147,7 +151,7 @@ export function persistKalshiShadowTradeFromWhale(trade: WhaleTrade): void {
       : toShadowFloat(trade.size);
 
   void persistKalshiShadowTrade({
-    tradeId: trade.id,
+    tradeId,
     ticker: trade.ticker,
     size,
     timestamp: trade.timestamp,

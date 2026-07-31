@@ -26,7 +26,7 @@ import {
   type RawPolymarketTrade,
 } from "@/lib/x-agent/translator";
 import {
-  KALSHI_PUBLIC_POSTING_DISABLED,
+  KALSHI_PUBLIC_POSTING_DISABLED_REASON,
   isPostQueueSourceAllowed,
   logPostQueueSourceSkip,
   evaluatePostQueueCredibilityGate,
@@ -38,6 +38,7 @@ import { isAnonymousWalletAddress } from "@/lib/x-agent/whaleRegistryDb";
 
 export {
   KALSHI_PUBLIC_POSTING_DISABLED,
+  KALSHI_PUBLIC_POSTING_DISABLED_REASON,
   STAKE_TOO_LOW,
   BELOW_EV_THRESHOLD,
 } from "@/lib/x-agent/postQueueGates";
@@ -212,7 +213,7 @@ function resolvePrimaryFailureReason(
   matrix: TradeGateMatrix,
   whale?: WhaleRegistry | null
 ): GateRejectionReason {
-  if (!matrix.passesSource) return KALSHI_PUBLIC_POSTING_DISABLED;
+  if (!matrix.passesSource) return KALSHI_PUBLIC_POSTING_DISABLED_REASON;
   if (!matrix.passesEv) return "BELOW_TRADE_EV";
   if (!matrix.passesStake) return "BELOW_STAKE_FLOOR";
   if (!matrix.passesCredibility) {

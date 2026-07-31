@@ -15,7 +15,10 @@ import type {
 } from "@/lib/marketTranslator";
 import { translateMarketPosition } from "@/lib/marketTranslator";
 
-export const KALSHI_PUBLIC_POSTING_DISABLED =
+/** Hard kill-switch — public x_post_queue remains Polymarket-only while true (OQ-2). */
+export const KALSHI_PUBLIC_POSTING_DISABLED = true;
+
+export const KALSHI_PUBLIC_POSTING_DISABLED_REASON =
   "KALSHI_PUBLIC_POSTING_DISABLED" as const;
 
 export const STAKE_TOO_LOW = "STAKE_TOO_LOW" as const;
@@ -25,7 +28,7 @@ export const BELOW_EV_THRESHOLD = "BELOW_EV_THRESHOLD" as const;
 export const UNTRANSLATABLE_MARKET = "UNTRANSLATABLE_MARKET" as const;
 
 export type PostQueueSourceRejectionReason =
-  typeof KALSHI_PUBLIC_POSTING_DISABLED;
+  typeof KALSHI_PUBLIC_POSTING_DISABLED_REASON;
 
 export type PostQueueCredibilityRejectionReason =
   | typeof STAKE_TOO_LOW
@@ -82,10 +85,11 @@ export function logPostQueueSourceSkip(tradeId?: string): void {
   console.log(message);
 }
 
-/** Returns true only for Polymarket-sourced trades. */
+/** Returns true only for Polymarket-sourced trades when Kalshi posting is disabled. */
 export function isPostQueueSourceAllowed(
   source: "polymarket" | "kalshi"
 ): boolean {
+  if (KALSHI_PUBLIC_POSTING_DISABLED && source === "kalshi") return false;
   return source === "polymarket";
 }
 
@@ -98,7 +102,7 @@ export function evaluatePostQueueSourceGate(
 ): PostQueueSourceGateResult {
   if (!isPostQueueSourceAllowed(input.source)) {
     logPostQueueSourceSkip(input.tradeId);
-    return { passed: false, reason: KALSHI_PUBLIC_POSTING_DISABLED };
+    return { passed: false, reason: KALSHI_PUBLIC_POSTING_DISABLED_REASON };
   }
 
   if (input.tradeId) {

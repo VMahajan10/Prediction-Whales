@@ -9,7 +9,7 @@ import { fetchWhaleBackfill } from "@/lib/polymarket";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-/** Credibility-qualified product feed with registry-backed whale identities. */
+/** Credibility-qualified product feed — Polymarket whales only (feed v1 / OQ-2). */
 export async function GET() {
   try {
     const trades = await fetchWhaleBackfill();

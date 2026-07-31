@@ -5,6 +5,7 @@ import {
   evaluatePostQueueSourceGate,
   isPostQueueSourceAllowed,
   KALSHI_PUBLIC_POSTING_DISABLED,
+  KALSHI_PUBLIC_POSTING_DISABLED_REASON,
   STAKE_TOO_LOW,
 } from "@/lib/x-agent/postQueueGates";
 import {
@@ -13,6 +14,10 @@ import {
 } from "@/lib/x-agent/gateMetrics";
 
 describe("postQueueGates", () => {
+  it("hardcodes Kalshi public posting as disabled", () => {
+    expect(KALSHI_PUBLIC_POSTING_DISABLED).toBe(true);
+  });
+
   it("allows only polymarket trades through the post-queue source gate", () => {
     expect(isPostQueueSourceAllowed("polymarket")).toBe(true);
     expect(isPostQueueSourceAllowed("kalshi")).toBe(false);
@@ -25,7 +30,7 @@ describe("postQueueGates", () => {
     });
 
     expect(result.passed).toBe(false);
-    expect(result.reason).toBe(KALSHI_PUBLIC_POSTING_DISABLED);
+    expect(result.reason).toBe(KALSHI_PUBLIC_POSTING_DISABLED_REASON);
   });
 
   it("passes polymarket trades", () => {

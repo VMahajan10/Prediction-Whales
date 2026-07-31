@@ -16,7 +16,10 @@ import {
   type TradePayload,
 } from "@/lib/x-agent/gates";
 import { persistKalshiShadowTradeFromWhale } from "@/lib/x-agent/kalshiShadowTrades";
-import { evaluatePostQueueSourceGate } from "@/lib/x-agent/postQueueGates";
+import {
+  evaluatePostQueueSourceGate,
+  KALSHI_PUBLIC_POSTING_DISABLED,
+} from "@/lib/x-agent/postQueueGates";
 import {
   MIN_WALLET_AVG_EV_DECIMAL,
   MIN_WALLET_RESOLVED_BETS,
@@ -131,7 +134,9 @@ export async function processWhaleTradeForXAgent(
   metrics?: GateSummary | GateMetricsCollector
 ): Promise<void> {
   if (trade.source === "kalshi") {
-    persistKalshiShadowTradeFromWhale(trade);
+    if (KALSHI_PUBLIC_POSTING_DISABLED) {
+      persistKalshiShadowTradeFromWhale(trade);
+    }
     return;
   }
 
