@@ -2,12 +2,23 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { WalletFeedQualificationInput } from "@/lib/feedQualification";
+import type { ResolvedWhaleIdentity } from "@/lib/whaleIdentityResolver";
 
 export interface WalletQualification extends WalletFeedQualificationInput {
   qualified: boolean;
+  identity: ResolvedWhaleIdentity;
 }
 
 type WalletQualificationMap = ReadonlyMap<string, WalletQualification>;
+
+const EMPTY_IDENTITY: ResolvedWhaleIdentity = {
+  pseudonym: "Anonymous Observer",
+  initials: "AO",
+  winRate: null,
+  resolvedBetsCount: null,
+  avgEv: null,
+  roi: null,
+};
 
 export function useQualifiedWalletFilter(
   walletAddresses: string[]
@@ -57,6 +68,7 @@ export function useQualifiedWalletFilter(
               qualified?: boolean;
               avgEv?: number | null;
               resolvedBetsCount?: number | null;
+              identity?: ResolvedWhaleIdentity;
             }
           >;
         }) => {
@@ -70,6 +82,7 @@ export function useQualifiedWalletFilter(
                 qualified: result.qualified === true,
                 avgEv: result.avgEv ?? null,
                 resolvedBetsCount: result.resolvedBetsCount ?? null,
+                identity: result.identity ?? EMPTY_IDENTITY,
               });
             }
             for (const wallet of missing) {
@@ -78,6 +91,7 @@ export function useQualifiedWalletFilter(
                   qualified: false,
                   avgEv: null,
                   resolvedBetsCount: null,
+                  identity: EMPTY_IDENTITY,
                 });
               }
             }
@@ -94,6 +108,7 @@ export function useQualifiedWalletFilter(
               qualified: false,
               avgEv: null,
               resolvedBetsCount: null,
+              identity: EMPTY_IDENTITY,
             });
           }
           return next;

@@ -34,8 +34,9 @@ export default function NewWhaleToast({ whale, onDismiss }: NewWhaleToastProps) 
           {whale.title}
         </p>
         <p className="mb-3 text-xs text-slate-400">
-          {whale.side} {whale.outcome} · {formatUsd(whale.usdNotional)} ·{" "}
-          {(whale.price * 100).toFixed(1)}¢
+          {whale.marketTranslation?.backingLabel ??
+            `${whale.side} ${whale.outcome}`}{" "}
+          · {formatUsd(whale.usdNotional)} · {(whale.price * 100).toFixed(1)}¢
         </p>
         <Link
           href={`/whales/${encodeURIComponent(whale.transactionHash)}`}

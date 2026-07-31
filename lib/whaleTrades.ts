@@ -1,4 +1,6 @@
 import type { TradeSummary } from "@/lib/polymarket";
+import type { ResolvedWhaleIdentity } from "@/lib/whaleIdentityResolver";
+import type { MarketPositionTranslation } from "@/lib/marketTranslator";
 import { MIN_STAKE_THRESHOLD } from "@/lib/feedQualification";
 
 export const MIN_WHALE_USD = MIN_STAKE_THRESHOLD;
@@ -17,6 +19,10 @@ export interface WhaleTrade extends TradeSummary {
   averageEv?: number | null;
   netEvPercent?: number | null;
   grossEvPercent?: number | null;
+  /** Registry-backed whale identity and track-record stats for feed cards. */
+  whaleIdentity?: ResolvedWhaleIdentity;
+  /** Plain-language market position copy for feed cards. */
+  marketTranslation?: MarketPositionTranslation;
 }
 
 export function isWhaleNotional(usd: number): boolean {

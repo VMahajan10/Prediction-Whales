@@ -8,6 +8,12 @@ import {
   MIN_AVG_EV_THRESHOLD_PCT,
   MIN_STAKE_THRESHOLD,
 } from "@/lib/x-agent/gateMetrics";
+import type {
+  MarketPosition,
+  MarketPositionTranslation,
+  TranslatableMarket,
+} from "@/lib/marketTranslator";
+import { translateMarketPosition } from "@/lib/marketTranslator";
 
 export const KALSHI_PUBLIC_POSTING_DISABLED =
   "KALSHI_PUBLIC_POSTING_DISABLED" as const;
@@ -15,6 +21,8 @@ export const KALSHI_PUBLIC_POSTING_DISABLED =
 export const STAKE_TOO_LOW = "STAKE_TOO_LOW" as const;
 
 export const BELOW_EV_THRESHOLD = "BELOW_EV_THRESHOLD" as const;
+
+export const UNTRANSLATABLE_MARKET = "UNTRANSLATABLE_MARKET" as const;
 
 export type PostQueueSourceRejectionReason =
   typeof KALSHI_PUBLIC_POSTING_DISABLED;
@@ -42,6 +50,18 @@ export interface PostQueueCredibilityGateInput {
 export interface PostQueueCredibilityGateResult {
   passed: boolean;
   reason?: PostQueueCredibilityRejectionReason;
+}
+
+export interface PostQueueMarketTranslationGateInput {
+  tradeId?: string;
+  market: TranslatableMarket;
+  position: MarketPosition;
+}
+
+export interface PostQueueMarketTranslationGateResult {
+  passed: boolean;
+  reason?: typeof UNTRANSLATABLE_MARKET;
+  translation?: MarketPositionTranslation;
 }
 
 function gateLog(tradeId: string, message: string): void {
@@ -123,4 +143,34 @@ export function evaluatePostQueueCredibilityGate(
   );
 
   return { passed: true };
+}
+
+/**
+ * Market position translation gate — rejects trades that cannot be rendered
+ * without raw YES/NO copy.
+ */
+export function evaluatePostQueueMarketTranslationGate(
+  input: PostQueueMarketTranslationGateInput
+): PostQueueMarketTranslationGateResult {
+  const translation = translateMarketPosition(input.market, input.position);
+  if (!translation) {
+    if (input.tradeId) {
+      gateLog(
+        input.tradeId,
+        "[Fail: Market Translation] Position is untranslatable for feed display"
+      );
+    }
+    return { passed: false, reason: UNTRANSLATABLE_MARKET };
+  }
+
+  if (input.tradeId) {
+    gateLog(
+      input.tradeId,
+      `[Pass: Market Translation] ${translation.backingLabel}${
+        translation.exitByLabel ? ` · ${translation.exitByLabel}` : ""
+      }`
+    );
+  }
+
+  return { passed: true, translation };
 }

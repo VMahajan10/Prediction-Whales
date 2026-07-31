@@ -1,15 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { FeedTrade } from "@/lib/kalshiTrades";
 import { buildPlatformFeed } from "@/lib/liveFeedMerge";
 import { useLiveFeedPlatform } from "@/lib/LiveFeedPlatformContext";
+import type { ResolvedWhaleIdentity } from "@/lib/whaleIdentityResolver";
 import type { TradeSummary } from "@/lib/polymarket";
 import { usePolymarketSocketContext } from "@/lib/PolymarketSocketProvider";
 import {
   isQualifiedFeedTrade,
   meetsFeedStakeThreshold,
 } from "@/lib/feedQualification";
+import { translateWhaleTradeMarket } from "@/lib/marketTranslator";
 import {
   useQualifiedWalletFilter,
   type WalletQualification,
@@ -69,6 +70,31 @@ function isPolymarketTradeQualifiedForFeed(
   });
 }
 
+function attachWhaleIdentity(
+  trade: WhaleTrade,
+  qualification: WalletQualification | undefined
+): WhaleTrade {
+  const marketTranslation =
+    trade.marketTranslation ?? translateWhaleTradeMarket(trade) ?? undefined;
+  const withIdentity =
+    trade.whaleIdentity || !qualification?.identity
+      ? trade
+      : { ...trade, whaleIdentity: qualification.identity };
+
+  if (!marketTranslation) return withIdentity;
+  return { ...withIdentity, marketTranslation };
+}
+
+function isPolymarketTradeEligibleForFeed(
+  trade: WhaleTrade,
+  walletQualification: WalletQualification | undefined
+): boolean {
+  if (!isPolymarketTradeQualifiedForFeed(trade, walletQualification)) {
+    return false;
+  }
+  return translateWhaleTradeMarket(trade) != null;
+}
+
 export function useWhaleFeed() {
   const { platform } = useLiveFeedPlatform();
   const { whaleTrades: liveSocketTrades, connected } =
@@ -86,16 +112,25 @@ export function useWhaleFeed() {
   useEffect(() => {
     const load = async () => {
       try {
-        const res = await fetch("/api/whales/backfill");
-        const data: { trades?: TradeSummary[] } = await res.json();
-        const whales = (data.trades ?? []).map((t) =>
-          tradeToWhale(t, {
+        const res = await fetch("/api/feed");
+        const data: {
+          trades?: Array<
+            TradeSummary & {
+              whaleIdentity?: ResolvedWhaleIdentity;
+              marketTranslation?: WhaleTrade["marketTranslation"];
+            }
+          >;
+        } = await res.json();
+        const whales = (data.trades ?? []).map((t) => ({
+          ...tradeToWhale(t, {
             detectedAt: t.timestamp * 1000,
             isLive: false,
             usdNotional: t.size,
             source: "polymarket",
-          })
-        );
+          }),
+          whaleIdentity: t.whaleIdentity,
+          marketTranslation: t.marketTranslation,
+        }));
         setBackfill(whales);
         for (const w of whales) {
           if (w.transactionHash) seenHashes.current.add(w.transactionHash);
@@ -157,14 +192,23 @@ export function useWhaleFeed() {
   const walletQualifications = useQualifiedWalletFilter(polymarketWalletAddresses);
 
   const qualifiedPolymarketWhales = useMemo(() => {
-    return polymarketWhales.filter((trade) =>
-      isPolymarketTradeQualifiedForFeed(
-        trade,
-        trade.proxyWallet
-          ? walletQualifications.get(trade.proxyWallet.trim().toLowerCase())
-          : undefined
+    return polymarketWhales
+      .filter((trade) =>
+        isPolymarketTradeEligibleForFeed(
+          trade,
+          trade.proxyWallet
+            ? walletQualifications.get(trade.proxyWallet.trim().toLowerCase())
+            : undefined
+        )
       )
-    );
+      .map((trade) =>
+        attachWhaleIdentity(
+          trade,
+          trade.proxyWallet
+            ? walletQualifications.get(trade.proxyWallet.trim().toLowerCase())
+            : undefined
+        )
+      );
   }, [polymarketWhales, walletQualifications]);
 
   useEffect(() => {
@@ -245,11 +289,12 @@ export function useWhaleFeed() {
         ? walletQualifications.get(wallet)
         : undefined;
 
-      if (!isPolymarketTradeQualifiedForFeed(whale, qualification)) continue;
+      if (!isPolymarketTradeEligibleForFeed(whale, qualification)) continue;
 
       qualifiedNotified.current.add(key);
-      setNewWhale(whale);
-      queueWhaleTweetNotify(whale);
+      const enriched = attachWhaleIdentity(whale, qualification);
+      setNewWhale(enriched);
+      queueWhaleTweetNotify(enriched);
     }
   }, [liveWhales, backfillLoaded, walletQualifications]);
 

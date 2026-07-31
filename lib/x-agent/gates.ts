@@ -30,6 +30,7 @@ import {
   isPostQueueSourceAllowed,
   logPostQueueSourceSkip,
   evaluatePostQueueCredibilityGate,
+  evaluatePostQueueMarketTranslationGate,
   STAKE_TOO_LOW,
   BELOW_EV_THRESHOLD,
 } from "@/lib/x-agent/postQueueGates";
@@ -334,9 +335,31 @@ export function evaluateTradeGateMatrix(
     meetsResolvedBetsThreshold(whale.resolvedBetsCount) &&
     whale.avgEv >= MIN_AVG_EV;
 
-  const translation =
+  const marketTranslationGate = evaluatePostQueueMarketTranslationGate({
+    tradeId: trade.tradeId,
+    market: {
+      title: trade.title,
+      slug: trade.slug,
+      eventSlug: trade.eventSlug,
+    },
+    position: {
+      outcome: trade.outcome,
+      side: trade.side,
+    },
+  });
+  const legacyTranslation =
     passesSource && translateMarketAndSide(toRawPolymarketTrade(trade));
-  const passesAlignment = Boolean(translation);
+  const translation =
+    legacyTranslation ??
+    (marketTranslationGate.translation
+      ? {
+          side: marketTranslationGate.translation.backingLabel,
+          marketPlain: marketTranslationGate.translation.sideName,
+        }
+      : null);
+  const passesAlignment = Boolean(
+    passesSource && marketTranslationGate.passed && translation
+  );
 
   const tradeAgeMs = nowMs - tradeTimestampMs(trade.timestamp);
   const passesFreshness = tradeAgeMs <= MAX_TRADE_AGE_MS;
@@ -411,11 +434,22 @@ export function evaluateDeterministicPreGates(
   }
   logStakeGate(trade, true, stakeFloor.floorUsd, stakeFloor.tier);
 
-  const translation = translateMarketAndSide(toRawPolymarketTrade(trade));
-  if (!translation) {
+  const marketTranslationGate = evaluatePostQueueMarketTranslationGate({
+    tradeId: trade.tradeId,
+    market: {
+      title: trade.title,
+      slug: trade.slug,
+      eventSlug: trade.eventSlug,
+    },
+    position: {
+      outcome: trade.outcome,
+      side: trade.side,
+    },
+  });
+  if (!marketTranslationGate.passed || !marketTranslationGate.translation) {
     gateLog(
       trade.tradeId,
-      "[Fail: Alignment] Market cannot be translated to plain-English side"
+      "[Fail: Alignment] Market position cannot be translated for feed display"
     );
     return {
       passed: false,
@@ -423,6 +457,12 @@ export function evaluateDeterministicPreGates(
       failedStep: "alignment",
     };
   }
+
+  const legacyTranslation = translateMarketAndSide(toRawPolymarketTrade(trade));
+  const translation = legacyTranslation ?? {
+    side: marketTranslationGate.translation.backingLabel,
+    marketPlain: marketTranslationGate.translation.sideName,
+  };
   gateLog(
     trade.tradeId,
     `[Pass: Alignment] Translated to "${translation.side}" on "${translation.marketPlain}"`

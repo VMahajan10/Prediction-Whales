@@ -4,11 +4,13 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import BookmarkTraderButton from "@/components/BookmarkTraderButton";
 import PlatformFilterToggle from "@/components/PlatformFilterToggle";
+import WinRatePill from "@/components/WinRatePill";
 import { useLiveFeedPlatform } from "@/lib/LiveFeedPlatformContext";
 import { liveFeedPlatformLabel } from "@/lib/liveFeedMerge";
-import type { PipelineTradeEv } from "@/lib/evPipeline/types";
-import { pipelineEvKeyForWhale, resolvePipelineEvForWhale } from "@/lib/pipelineEvClient";
-import { usePipelineEvForWhales } from "@/lib/usePipelineEvIndex";
+import {
+  formatWhaleSignedPercent,
+  sanitizeWhaleDisplayName,
+} from "@/lib/whaleIdentityResolver";
 import {
   stashKalshiTradeForNavigation,
   stashTradeForNavigation,
@@ -16,13 +18,6 @@ import {
 } from "@/lib/tradeNavigationStore";
 import type { WhaleTrade } from "@/lib/whaleTrades";
 import { inferMarketCategory } from "@/lib/marketCategory";
-import { formatEvPercent } from "@/lib/crossMarketEvDisplay";
-import {
-  coalesceDisplayEvPercent,
-  hasAuthoritativePipelineEv,
-  pipelineEvTone,
-  resolveDetailPanelDisplayEv,
-} from "@/lib/evPipeline/tradeEvRecord";
 
 const TOP_WHALE_COUNT = 10;
 
@@ -38,21 +33,43 @@ function secondsAgo(detectedAt: number, now: number): number {
   return Math.max(0, Math.floor((now - detectedAt) / 1000));
 }
 
-function traderLabel(trade: WhaleTrade): string {
-  if (trade.proxyWallet) {
-    return `${trade.proxyWallet.slice(0, 6)}…${trade.proxyWallet.slice(-4)}`;
-  }
-  if (trade.source === "kalshi") return "Anonymous";
-  return "Whale trader";
-}
-
-function traderInitials(trade: WhaleTrade): string {
-  if (trade.proxyWallet) return trade.proxyWallet.slice(2, 4).toUpperCase();
-  return trade.source === "kalshi" ? "K" : "W";
-}
-
 function formatStake(size: number): string {
   return `$${Math.round(size).toLocaleString("en-US")}`;
+}
+
+function formatResolvedBets(count: number | null | undefined): string {
+  if (count == null || !Number.isFinite(count)) return "—";
+  return count.toLocaleString("en-US");
+}
+
+function resolveFeedWhaleIdentity(trade: WhaleTrade) {
+  const wallet = trade.proxyWallet ?? "unknown";
+  const identity = trade.whaleIdentity;
+  const pseudonym = sanitizeWhaleDisplayName(
+    identity?.pseudonym ?? null,
+    wallet
+  );
+
+  return {
+    pseudonym,
+    initials: identity?.initials ?? pseudonym.slice(0, 2).toUpperCase(),
+    winRate: identity?.winRate ?? null,
+    resolvedBetsCount: identity?.resolvedBetsCount ?? null,
+    avgEvLabel: formatWhaleSignedPercent(identity?.avgEv ?? null),
+    roiLabel: formatWhaleSignedPercent(identity?.roi ?? null),
+    avgEvClass:
+      identity?.avgEv != null && identity.avgEv >= 0
+        ? "text-emerald-500 font-semibold"
+        : identity?.avgEv != null
+          ? "text-rose-500 font-semibold"
+          : "text-pulse-label",
+    roiClass:
+      identity?.roi != null && identity.roi >= 0
+        ? "text-emerald-500 font-semibold"
+        : identity?.roi != null
+          ? "text-rose-500 font-semibold"
+          : "text-pulse-label",
+  };
 }
 
 function getWhaleTradeDetailHref(trade: WhaleTrade): string | null {
@@ -83,111 +100,6 @@ function tradeBookmarkKey(trade: WhaleTrade): string | undefined {
   return undefined;
 }
 
-function precomputedEvPercent(
-  trade: WhaleTrade,
-  pipelineData: PipelineTradeEv | null | undefined,
-  hasLookupKey: boolean
-): { netEvPercent: number; lowConfidence: boolean } | null {
-  const fromPipeline = resolveDetailPanelDisplayEv(pipelineData, trade.price);
-  if (fromPipeline) {
-    return {
-      netEvPercent: fromPipeline.netEvPercent,
-      lowConfidence: fromPipeline.lowConfidence,
-    };
-  }
-
-  if (hasLookupKey && !pipelineData) {
-    return null;
-  }
-
-  const fromTrade = coalesceDisplayEvPercent({
-    netEvPercent: trade.netEvPercent ?? null,
-    grossEvPercent: trade.grossEvPercent ?? null,
-    averageEv: trade.averageEv ?? null,
-  });
-  if (fromTrade != null) {
-    return { netEvPercent: fromTrade, lowConfidence: false };
-  }
-
-  return null;
-}
-
-function formatEvPercentDisplay(
-  netEvPercent: number,
-  lowConfidence = false
-): {
-  value: string;
-  valueClass: string;
-} {
-  const formatted = formatEvPercent(netEvPercent);
-  const value = lowConfidence ? `~${formatted}` : formatted;
-  const { positive, negative } = pipelineEvTone(netEvPercent);
-  const valueClass = positive
-    ? "text-emerald-500 font-semibold"
-    : negative
-      ? "text-rose-500 font-semibold"
-      : "text-pulse-label";
-
-  return { value, valueClass };
-}
-
-function resolveAvgEvDisplay(
-  trade: WhaleTrade,
-  pipelineData: PipelineTradeEv | null | undefined,
-  hasLookupKey: boolean,
-  pipelineLoading = false
-): { value: string; valueClass: string; lowConfidence: boolean } {
-  if (!hasLookupKey) {
-    return { value: "N/A", valueClass: "text-pulse-label", lowConfidence: false };
-  }
-
-  if (pipelineData?.status === "unmapped") {
-    return { value: "—", valueClass: "text-pulse-label", lowConfidence: false };
-  }
-
-  if (
-    pipelineLoading &&
-    !hasAuthoritativePipelineEv(pipelineData) &&
-    !resolveDetailPanelDisplayEv(pipelineData, trade.price)
-  ) {
-    return {
-      value: "…",
-      valueClass: "text-zinc-500 animate-pulse",
-      lowConfidence: false,
-    };
-  }
-
-  const ev = precomputedEvPercent(trade, pipelineData, hasLookupKey);
-  if (ev != null) {
-    return {
-      ...formatEvPercentDisplay(ev.netEvPercent, ev.lowConfidence),
-      lowConfidence: ev.lowConfidence,
-    };
-  }
-
-  return { value: "—", valueClass: "text-pulse-label", lowConfidence: false };
-}
-
-function AvgEvStatCell({
-  avgEv,
-}: {
-  avgEv: ReturnType<typeof resolveAvgEvDisplay>;
-}) {
-  return (
-    <div className="rounded-lg bg-pulse-surface px-3 py-2.5">
-      <p className="pulse-label text-pulse-label">Avg. EV</p>
-      <p className={`mt-1 text-sm font-bold ${avgEv.valueClass}`}>
-        {avgEv.value}
-        {avgEv.lowConfidence ? (
-          <span className="ml-1 text-[9px] font-semibold uppercase text-amber-400/90">
-            est
-          </span>
-        ) : null}
-      </p>
-    </div>
-  );
-}
-
 function StatCell({
   label,
   value,
@@ -208,28 +120,17 @@ function StatCell({
 function WhaleFeedCard({
   trade,
   now,
-  pipelineData,
-  pipelineLoading,
 }: {
   trade: WhaleTrade;
   now: number;
-  pipelineData: PipelineTradeEv | null;
-  pipelineLoading: boolean;
 }) {
   const ageSec = secondsAgo(trade.detectedAt, now);
   const isKalshi = trade.source === "kalshi";
   const isBuy = isKalshi ? trade.outcome === "Yes" : trade.side === "BUY";
   const category = inferMarketCategory(trade.title);
   const platform = isKalshi ? "Kalshi" : "Polymarket";
-  const lookupKey = pipelineEvKeyForWhale(trade);
   const detailHref = getWhaleTradeDetailHref(trade);
-
-  const avgEv = resolveAvgEvDisplay(
-    trade,
-    pipelineData,
-    lookupKey != null,
-    pipelineLoading
-  );
+  const whale = resolveFeedWhaleIdentity(trade);
 
   const cardClassName =
     "pulse-card block p-4 transition-colors hover:border-pulse-accent/40 hover:bg-pulse-surface/40";
@@ -261,7 +162,7 @@ function WhaleFeedCard({
               txHash={trade.transactionHash || undefined}
               assetId={trade.assetId}
               trade={trade}
-              label={traderLabel(trade)}
+              label={whale.pseudonym}
               size="sm"
             />
           </div>
@@ -272,26 +173,34 @@ function WhaleFeedCard({
         {trade.title}
       </h3>
 
-      <div className="mt-4 flex items-center gap-3">
+      <div className="mt-4 flex items-start gap-3">
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-pulse-accent/20 text-xs font-bold text-pulse-accent">
-          {traderInitials(trade)}
+          {whale.initials}
         </div>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold text-white">
-            {traderLabel(trade)}
-          </p>
-          {!isKalshi && (
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-pulse-yes">
-              Whale · ≥$500
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="truncate text-sm font-semibold text-white">
+              {whale.pseudonym}
             </p>
-          )}
+            <WinRatePill winRate={whale.winRate} />
+          </div>
+          <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-pulse-label">
+            {formatResolvedBets(whale.resolvedBetsCount)} resolved bets
+          </p>
         </div>
       </div>
 
       <div className="mt-3 flex items-center justify-between gap-2">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-pulse-muted">
-          Backing {trade.outcome}
-        </p>
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-pulse-muted">
+            {trade.marketTranslation?.backingLabel ?? "Backing position"}
+          </p>
+          {trade.marketTranslation?.exitByLabel ? (
+            <p className="mt-1 text-[10px] font-medium uppercase tracking-wide text-pulse-label">
+              {trade.marketTranslation.exitByLabel}
+            </p>
+          ) : null}
+        </div>
         <span
           className={`text-[11px] font-bold uppercase tracking-wider ${
             isBuy ? "text-pulse-yes" : "text-pulse-no"
@@ -308,7 +217,20 @@ function WhaleFeedCard({
         />
         <StatCell label="Now" value={`${(trade.price * 100).toFixed(0)}¢`} />
         <StatCell label="Stake" value={formatStake(trade.usdNotional)} />
-        <AvgEvStatCell avgEv={avgEv} />
+        <StatCell
+          label="Avg. EV"
+          value={whale.avgEvLabel}
+          valueClass={whale.avgEvClass}
+        />
+        <StatCell
+          label="ROI"
+          value={whale.roiLabel}
+          valueClass={whale.roiClass}
+        />
+        <StatCell
+          label="Resolved"
+          value={formatResolvedBets(whale.resolvedBetsCount)}
+        />
       </div>
 
       {detailHref ? (
@@ -347,8 +269,6 @@ export default function WhaleTracker({
 }: WhaleTrackerProps) {
   const { platform, setPlatform } = useLiveFeedPlatform();
   const topWhales = whales.slice(0, TOP_WHALE_COUNT);
-  const { index: pipelineEvIndex, loading: pipelineLoading } =
-    usePipelineEvForWhales(topWhales);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -387,28 +307,23 @@ export default function WhaleTracker({
         <div className="pulse-card px-4 py-8 text-center">
           <p className="text-sm text-pulse-muted">
             {connected || kalshiOk
-              ? "Watching for whale trades ≥ $500…"
+              ? "Watching for qualified whale trades ≥ $500…"
               : "Connecting to live feed…"}
           </p>
         </div>
       ) : (
         <ul className="space-y-3">
-          {topWhales.map((trade) => {
-            const lookupKey = pipelineEvKeyForWhale(trade);
-            return (
-              <WhaleFeedCard
-                key={
-                  trade.source === "kalshi"
-                    ? `kalshi:${trade.id}`
-                    : trade.transactionHash || trade.id
-                }
-                trade={trade}
-                now={now}
-                pipelineData={resolvePipelineEvForWhale(pipelineEvIndex, trade)}
-                pipelineLoading={pipelineLoading}
-              />
-            );
-          })}
+          {topWhales.map((trade) => (
+            <WhaleFeedCard
+              key={
+                trade.source === "kalshi"
+                  ? `kalshi:${trade.id}`
+                  : trade.transactionHash || trade.id
+              }
+              trade={trade}
+              now={now}
+            />
+          ))}
         </ul>
       )}
     </div>
