@@ -1,11 +1,11 @@
-import {
-  MIN_AVG_EV_THRESHOLD,
-  MIN_STAKE_THRESHOLD,
-  meetsResolvedBetsThreshold,
-} from "@/lib/x-agent/gateMetrics";
-import { findWhaleByWalletCaseInsensitive } from "@/lib/x-agent/whaleRegistryDb";
+/** Minimum USD stake for qualified whale feed trades. */
+export const MIN_STAKE_THRESHOLD = 500;
 
-export { MIN_AVG_EV_THRESHOLD, MIN_STAKE_THRESHOLD };
+/** Minimum wallet historical avg EV for qualified feed (+3.0%). */
+export const MIN_AVG_EV_THRESHOLD = 0.03;
+
+/** Minimum resolved bets for wallet credibility in qualified feeds. */
+export const MIN_FEED_RESOLVED_BETS = 300;
 
 export function meetsFeedStakeThreshold(stakeUsd: number): boolean {
   return Number.isFinite(stakeUsd) && stakeUsd >= MIN_STAKE_THRESHOLD;
@@ -19,19 +19,29 @@ export function meetsWalletAvgEvThreshold(
   );
 }
 
+export function meetsFeedResolvedBetsThreshold(
+  resolvedCount: number | null | undefined
+): boolean {
+  return (
+    resolvedCount != null &&
+    Number.isFinite(resolvedCount) &&
+    resolvedCount >= MIN_FEED_RESOLVED_BETS
+  );
+}
+
 export interface FeedQualificationInput {
   stakeUsd: number;
   walletAvgEv?: number | null;
   resolvedBetsCount?: number | null;
 }
 
-/** Synchronous feed qualification when wallet stats are already known. */
+/** Pure feed qualification — no I/O; caller supplies wallet stats when known. */
 export function isQualifiedFeedTrade(input: FeedQualificationInput): boolean {
   if (!meetsFeedStakeThreshold(input.stakeUsd)) return false;
 
   if (
     input.resolvedBetsCount != null &&
-    !meetsResolvedBetsThreshold(input.resolvedBetsCount)
+    !meetsFeedResolvedBetsThreshold(input.resolvedBetsCount)
   ) {
     return false;
   }
@@ -43,45 +53,16 @@ export function isQualifiedFeedTrade(input: FeedQualificationInput): boolean {
   return true;
 }
 
-export interface WalletFeedQualification {
-  qualified: boolean;
-  avgEv: number | null;
-  resolvedBetsCount: number | null;
+export interface WalletFeedQualificationInput {
+  avgEv: number | null | undefined;
+  resolvedBetsCount: number | null | undefined;
 }
 
-export async function qualifyWalletForFeed(
-  walletAddress: string
-): Promise<WalletFeedQualification> {
-  const whale = await findWhaleByWalletCaseInsensitive(walletAddress);
-  if (!whale) {
-    return { qualified: false, avgEv: null, resolvedBetsCount: null };
-  }
-
-  const qualified =
-    meetsResolvedBetsThreshold(whale.resolvedBetsCount) &&
-    meetsWalletAvgEvThreshold(whale.avgEv);
-
-  return {
-    qualified,
-    avgEv: whale.avgEv,
-    resolvedBetsCount: whale.resolvedBetsCount,
-  };
-}
-
-export async function qualifyWalletsForFeed(
-  walletAddresses: string[]
-): Promise<Record<string, WalletFeedQualification>> {
-  const unique = Array.from(
-    new Set(
-      walletAddresses
-        .map((wallet) => wallet.trim().toLowerCase())
-        .filter((wallet) => wallet.length > 0)
-    )
+export function isQualifiedWalletForFeed(
+  input: WalletFeedQualificationInput
+): boolean {
+  return (
+    meetsFeedResolvedBetsThreshold(input.resolvedBetsCount) &&
+    meetsWalletAvgEvThreshold(input.avgEv)
   );
-
-  const entries = await Promise.all(
-    unique.map(async (wallet) => [wallet, await qualifyWalletForFeed(wallet)] as const)
-  );
-
-  return Object.fromEntries(entries);
 }

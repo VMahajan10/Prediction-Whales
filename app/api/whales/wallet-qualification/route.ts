@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { qualifyWalletsForFeed } from "@/lib/feedQualification";
+import { qualifyWalletsForFeed } from "@/lib/feedQualificationServer";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;

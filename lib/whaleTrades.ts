@@ -1,5 +1,5 @@
 import type { TradeSummary } from "@/lib/polymarket";
-import { MIN_STAKE_THRESHOLD } from "@/lib/x-agent/gateMetrics";
+import { MIN_STAKE_THRESHOLD } from "@/lib/feedQualification";
 
 export const MIN_WHALE_USD = MIN_STAKE_THRESHOLD;
 export const WHALE_WINDOW_MS = 90_000;

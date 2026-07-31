@@ -3,11 +3,9 @@ import {
   isQualifiedFeedTrade,
   meetsFeedStakeThreshold,
   meetsWalletAvgEvThreshold,
-} from "@/lib/feedQualification";
-import {
   MIN_AVG_EV_THRESHOLD,
   MIN_STAKE_THRESHOLD,
-} from "@/lib/x-agent/gateMetrics";
+} from "@/lib/feedQualification";
 
 describe("feedQualification", () => {
   it("enforces the minimum stake threshold", () => {
