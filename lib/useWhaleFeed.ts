@@ -6,8 +6,14 @@ import { buildPlatformFeed } from "@/lib/liveFeedMerge";
 import { useLiveFeedPlatform } from "@/lib/LiveFeedPlatformContext";
 import type { TradeSummary } from "@/lib/polymarket";
 import { usePolymarketSocketContext } from "@/lib/PolymarketSocketProvider";
-import { meetsFeedStakeThreshold } from "@/lib/feedQualification";
-import { useQualifiedWalletFilter } from "@/lib/useQualifiedWalletFilter";
+import {
+  isQualifiedFeedTrade,
+  meetsFeedStakeThreshold,
+} from "@/lib/feedQualification";
+import {
+  useQualifiedWalletFilter,
+  type WalletQualification,
+} from "@/lib/useQualifiedWalletFilter";
 import { cacheWhaleTrade, resolveAndCacheWallet } from "@/lib/whaleCache";
 import { useKalshiTrades } from "@/lib/useKalshiTrades";
 import { useWalletEnrichment } from "@/lib/useWalletEnrichment";
@@ -31,42 +37,50 @@ function queueWhaleTweetNotify(whale: WhaleTrade): void {
   });
 }
 
-function kalshiTradeToWhale(
-  trade: FeedTrade,
-  detectedAt: number
-): WhaleTrade {
-  return tradeToWhale(
-    {
-      id: trade.id,
-      title: trade.title,
-      side: trade.side,
-      outcome: trade.outcome,
-      price: trade.price,
-      size: trade.usdNotional,
-      timestamp: trade.timestamp,
-      transactionHash: "",
-    },
-    {
-      detectedAt,
-      isLive: true,
-      usdNotional: trade.usdNotional,
-      source: "kalshi",
-      ticker: trade.ticker,
-    }
-  );
+function reportFeedMetrics(input: {
+  tradesDetected: number;
+  gatePassedTrades: number;
+  whaleWallets: string[];
+}): void {
+  if (input.tradesDetected <= 0 && input.gatePassedTrades <= 0) return;
+
+  void fetch("/api/feed/metrics", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  }).catch(() => {
+    // Metrics are best-effort.
+  });
+}
+
+function isPolymarketTradeQualifiedForFeed(
+  trade: WhaleTrade,
+  walletQualification: WalletQualification | undefined
+): boolean {
+  if (trade.source !== "polymarket") return false;
+
+  const wallet = trade.proxyWallet?.trim().toLowerCase();
+  if (!wallet || !walletQualification) return false;
+
+  return isQualifiedFeedTrade({
+    stakeUsd: trade.usdNotional,
+    walletAvgEv: walletQualification.avgEv,
+    resolvedBetsCount: walletQualification.resolvedBetsCount,
+  });
 }
 
 export function useWhaleFeed() {
   const { platform } = useLiveFeedPlatform();
   const { whaleTrades: liveSocketTrades, connected } =
     usePolymarketSocketContext();
-  const { trades: kalshiTrades, ok: kalshiOk } = useKalshiTrades();
+  const { ok: kalshiOk } = useKalshiTrades();
   useWalletEnrichment();
   const [backfill, setBackfill] = useState<WhaleTrade[]>([]);
   const [backfillLoaded, setBackfillLoaded] = useState(false);
   const seenHashes = useRef<Set<string>>(new Set());
   const liveDetectedAt = useRef<Map<string, number>>(new Map());
-  const kalshiDetectedAt = useRef<Map<string, number>>(new Map());
+  const metricsReported = useRef<Set<string>>(new Set());
+  const qualifiedNotified = useRef<Set<string>>(new Set());
   const [newWhale, setNewWhale] = useState<WhaleTrade | null>(null);
 
   useEffect(() => {
@@ -74,16 +88,14 @@ export function useWhaleFeed() {
       try {
         const res = await fetch("/api/whales/backfill");
         const data: { trades?: TradeSummary[] } = await res.json();
-        const whales = (data.trades ?? [])
-          .filter((t) => meetsFeedStakeThreshold(t.size))
-          .map((t) =>
-            tradeToWhale(t, {
-              detectedAt: t.timestamp * 1000,
-              isLive: false,
-              usdNotional: t.size,
-              source: "polymarket",
-            })
-          );
+        const whales = (data.trades ?? []).map((t) =>
+          tradeToWhale(t, {
+            detectedAt: t.timestamp * 1000,
+            isLive: false,
+            usdNotional: t.size,
+            source: "polymarket",
+          })
+        );
         setBackfill(whales);
         for (const w of whales) {
           if (w.transactionHash) seenHashes.current.add(w.transactionHash);
@@ -112,46 +124,6 @@ export function useWhaleFeed() {
     };
     void load();
   }, []);
-
-  useEffect(() => {
-    if (!backfillLoaded) return;
-
-    for (const t of liveSocketTrades) {
-      const key = t.transactionHash;
-      if (!key || seenHashes.current.has(key)) continue;
-
-      seenHashes.current.add(key);
-      const detectedAt = Date.now();
-      liveDetectedAt.current.set(key, detectedAt);
-
-      cacheWhaleTrade({
-        id: t.id,
-        title: t.title,
-        side: t.side,
-        outcome: t.outcome,
-        price: t.price,
-        size: t.usdNotional,
-        timestamp: t.timestamp,
-        transactionHash: t.transactionHash,
-        assetId: t.assetId,
-        eventSlug: t.eventSlug,
-        slug: t.slug,
-        conditionId: t.conditionId,
-      });
-
-      void resolveAndCacheWallet(t.transactionHash, t.assetId);
-
-      const whale = tradeToWhale(t, {
-        detectedAt,
-        isLive: true,
-        usdNotional: t.usdNotional,
-        source: "polymarket",
-      });
-
-      setNewWhale(whale);
-      queueWhaleTweetNotify(whale);
-    }
-  }, [liveSocketTrades, backfillLoaded]);
 
   const liveWhales = useMemo(() => {
     return liveSocketTrades.map((t) => {
@@ -185,40 +157,106 @@ export function useWhaleFeed() {
   const walletQualifications = useQualifiedWalletFilter(polymarketWalletAddresses);
 
   const qualifiedPolymarketWhales = useMemo(() => {
-    return polymarketWhales.filter((trade) => {
-      if (!meetsFeedStakeThreshold(trade.usdNotional)) return false;
-
-      const wallet = trade.proxyWallet?.trim().toLowerCase();
-      if (!wallet) return false;
-
-      const qualified = walletQualifications.get(wallet);
-      return qualified === true;
-    });
+    return polymarketWhales.filter((trade) =>
+      isPolymarketTradeQualifiedForFeed(
+        trade,
+        trade.proxyWallet
+          ? walletQualifications.get(trade.proxyWallet.trim().toLowerCase())
+          : undefined
+      )
+    );
   }, [polymarketWhales, walletQualifications]);
 
-  const kalshiWhales = useMemo(() => {
-    const out: WhaleTrade[] = [];
-    for (const trade of kalshiTrades) {
-      if (!meetsFeedStakeThreshold(trade.usdNotional)) continue;
-      let detectedAt = kalshiDetectedAt.current.get(trade.id);
-      if (!detectedAt) {
-        detectedAt = Date.now();
-        kalshiDetectedAt.current.set(trade.id, detectedAt);
+  useEffect(() => {
+    if (!backfillLoaded) return;
+
+    let detected = 0;
+    let passed = 0;
+    const passedWallets: string[] = [];
+
+    for (const whale of liveWhales) {
+      const key = whale.transactionHash || whale.id;
+      if (!key || metricsReported.current.has(key)) continue;
+      if (!meetsFeedStakeThreshold(whale.usdNotional)) {
+        metricsReported.current.add(key);
+        continue;
       }
-      out.push(kalshiTradeToWhale(trade, detectedAt));
+
+      metricsReported.current.add(key);
+      detected += 1;
+
+      const wallet = whale.proxyWallet?.trim().toLowerCase();
+      const qualification = wallet
+        ? walletQualifications.get(wallet)
+        : undefined;
+
+      if (isPolymarketTradeQualifiedForFeed(whale, qualification)) {
+        passed += 1;
+        if (wallet) passedWallets.push(wallet);
+      }
     }
-    return out;
-  }, [kalshiTrades]);
+
+    reportFeedMetrics({
+      tradesDetected: detected,
+      gatePassedTrades: passed,
+      whaleWallets: passedWallets,
+    });
+  }, [liveWhales, walletQualifications, backfillLoaded]);
+
+  useEffect(() => {
+    if (!backfillLoaded) return;
+
+    for (const t of liveSocketTrades) {
+      const key = t.transactionHash;
+      if (!key || seenHashes.current.has(key)) continue;
+
+      seenHashes.current.add(key);
+      const detectedAt = Date.now();
+      liveDetectedAt.current.set(key, detectedAt);
+
+      cacheWhaleTrade({
+        id: t.id,
+        title: t.title,
+        side: t.side,
+        outcome: t.outcome,
+        price: t.price,
+        size: t.usdNotional,
+        timestamp: t.timestamp,
+        transactionHash: t.transactionHash,
+        assetId: t.assetId,
+        eventSlug: t.eventSlug,
+        slug: t.slug,
+        conditionId: t.conditionId,
+      });
+
+      void resolveAndCacheWallet(t.transactionHash, t.assetId);
+    }
+  }, [liveSocketTrades, backfillLoaded]);
+
+  useEffect(() => {
+    if (!backfillLoaded) return;
+
+    for (const whale of liveWhales) {
+      const key = whale.transactionHash || whale.id;
+      if (!key || !whale.isLive || qualifiedNotified.current.has(key)) continue;
+
+      const wallet = whale.proxyWallet?.trim().toLowerCase();
+      const qualification = wallet
+        ? walletQualifications.get(wallet)
+        : undefined;
+
+      if (!isPolymarketTradeQualifiedForFeed(whale, qualification)) continue;
+
+      qualifiedNotified.current.add(key);
+      setNewWhale(whale);
+      queueWhaleTweetNotify(whale);
+    }
+  }, [liveWhales, backfillLoaded, walletQualifications]);
 
   const whales = useMemo(
     () =>
-      buildPlatformFeed(
-        qualifiedPolymarketWhales,
-        kalshiWhales,
-        platform,
-        byDetectedDesc
-      ),
-    [qualifiedPolymarketWhales, kalshiWhales, platform]
+      buildPlatformFeed(qualifiedPolymarketWhales, [], platform, byDetectedDesc),
+    [qualifiedPolymarketWhales, platform]
   );
 
   const dismissNewWhale = useCallback(() => setNewWhale(null), []);

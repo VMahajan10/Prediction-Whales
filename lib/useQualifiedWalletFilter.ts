@@ -1,8 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { WalletFeedQualificationInput } from "@/lib/feedQualification";
 
-type WalletQualificationMap = ReadonlyMap<string, boolean>;
+export interface WalletQualification extends WalletFeedQualificationInput {
+  qualified: boolean;
+}
+
+type WalletQualificationMap = ReadonlyMap<string, WalletQualification>;
 
 export function useQualifiedWalletFilter(
   walletAddresses: string[]
@@ -44,29 +49,52 @@ export function useQualifiedWalletFilter(
       body: JSON.stringify({ wallets: missing }),
     })
       .then((response) => response.json())
-      .then((data: { qualifications?: Record<string, { qualified?: boolean }> }) => {
-        if (cancelled) return;
-        setQualifications((current) => {
-          const next = new Map(current);
-          for (const [wallet, result] of Object.entries(
-            data.qualifications ?? {}
-          )) {
-            next.set(wallet.toLowerCase(), result.qualified === true);
-          }
-          for (const wallet of missing) {
-            if (!next.has(wallet)) {
-              next.set(wallet, false);
+      .then(
+        (data: {
+          qualifications?: Record<
+            string,
+            {
+              qualified?: boolean;
+              avgEv?: number | null;
+              resolvedBetsCount?: number | null;
             }
-          }
-          return next;
-        });
-      })
+          >;
+        }) => {
+          if (cancelled) return;
+          setQualifications((current) => {
+            const next = new Map(current);
+            for (const [wallet, result] of Object.entries(
+              data.qualifications ?? {}
+            )) {
+              next.set(wallet.toLowerCase(), {
+                qualified: result.qualified === true,
+                avgEv: result.avgEv ?? null,
+                resolvedBetsCount: result.resolvedBetsCount ?? null,
+              });
+            }
+            for (const wallet of missing) {
+              if (!next.has(wallet)) {
+                next.set(wallet, {
+                  qualified: false,
+                  avgEv: null,
+                  resolvedBetsCount: null,
+                });
+              }
+            }
+            return next;
+          });
+        }
+      )
       .catch(() => {
         if (cancelled) return;
         setQualifications((current) => {
           const next = new Map(current);
           for (const wallet of missing) {
-            next.set(wallet, false);
+            next.set(wallet, {
+              qualified: false,
+              avgEv: null,
+              resolvedBetsCount: null,
+            });
           }
           return next;
         });

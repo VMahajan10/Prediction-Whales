@@ -1,4 +1,6 @@
 import { fetchKalshiTrades } from "@/lib/kalshiTrades";
+import { meetsFeedStakeThreshold } from "@/lib/feedQualification";
+import { recordKalshiFeedMetrics } from "@/lib/feedQualificationServer";
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -34,7 +36,13 @@ export async function GET(request: Request) {
       Number.isFinite(minTs) ? minTs : undefined
     );
 
-    const data = { trades, ok: true as const };
+    const detected = trades.filter((trade) =>
+      meetsFeedStakeThreshold(trade.usdNotional)
+    );
+    recordKalshiFeedMetrics(detected.length);
+
+    // Kalshi trades have no wallet attribution — excluded from credibility-qualified feed.
+    const data = { trades: [] as typeof trades, ok: true as const };
     cache = { minTs, data, timestamp: now };
     return NextResponse.json(data);
   } catch (err) {
