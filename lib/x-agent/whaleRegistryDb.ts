@@ -1,22 +1,16 @@
 import type { WhaleRegistry } from "@/lib/crossmarket/store/schema";
+import {
+  ANONYMOUS_WALLET_ADDRESS,
+  isAnonymousWalletAddress,
+} from "@/lib/whaleIdentityResolver";
 import { getPrisma, isPrismaEnabled } from "@/lib/prisma";
 
-export const ANONYMOUS_WALLET_ADDRESS =
-  "0x0000000000000000000000000000000000000000";
+export { ANONYMOUS_WALLET_ADDRESS, isAnonymousWalletAddress };
 
 export const ANONYMOUS_WHALE_PSEUDONYM = "Anonymous Whale";
 
 export function normalizeWalletAddress(wallet: string): string {
   return wallet.trim().toLowerCase();
-}
-
-/** Live-feed trades with no resolved proxy wallet (null, empty, or zero address). */
-export function isAnonymousWalletAddress(
-  wallet: string | null | undefined
-): boolean {
-  if (wallet == null) return true;
-  const normalized = normalizeWalletAddress(wallet);
-  return !normalized || normalized === ANONYMOUS_WALLET_ADDRESS;
 }
 
 export function formatWalletPseudonym(wallet: string): string {

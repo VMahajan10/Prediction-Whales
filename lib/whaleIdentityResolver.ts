@@ -1,4 +1,5 @@
-import { isAnonymousWalletAddress } from "@/lib/x-agent/whaleRegistryDb";
+export const ANONYMOUS_WALLET_ADDRESS =
+  "0x0000000000000000000000000000000000000000";
 
 const WHALE_ADJECTIVES = [
   "Emerald",
@@ -55,6 +56,15 @@ export interface ResolvedWhaleIdentity {
 
 function normalizeWallet(wallet: string): string {
   return wallet.trim().toLowerCase();
+}
+
+/** Live-feed trades with no resolved proxy wallet (null, empty, or zero address). */
+export function isAnonymousWalletAddress(
+  wallet: string | null | undefined
+): boolean {
+  if (wallet == null) return true;
+  const normalized = normalizeWallet(wallet);
+  return !normalized || normalized === ANONYMOUS_WALLET_ADDRESS;
 }
 
 /** FNV-1a hash — deterministic across browser and Node. */
