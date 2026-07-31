@@ -205,70 +205,6 @@ function StatCell({
   );
 }
 
-function KalshiReducedFeedCardBody({
-  trade,
-  ageSec,
-  isBuy,
-  category,
-}: {
-  trade: WhaleTrade;
-  ageSec: number;
-  isBuy: boolean;
-  category: string;
-}) {
-  return (
-    <>
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="rounded bg-pulse-surface px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-pulse-muted">
-            {category}
-          </span>
-          <span className="rounded bg-pulse-surface px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
-            Kalshi
-          </span>
-          <span className="rounded bg-teal-900/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-teal-300">
-            Anonymous flow
-          </span>
-        </div>
-        <span className="shrink-0 text-[11px] font-medium text-pulse-label">
-          {ageSec}s
-        </span>
-      </div>
-
-      <h3 className="text-sm font-bold uppercase leading-snug tracking-wide text-white">
-        {trade.title}
-      </h3>
-
-      <p className="mt-2 text-[10px] leading-relaxed text-pulse-muted">
-        Large market flow on Kalshi — trader identity is not disclosed by the
-        exchange.
-      </p>
-
-      <div className="mt-3 flex items-center justify-between gap-2">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-pulse-muted">
-          Backing {trade.outcome}
-        </p>
-        <span
-          className={`text-[11px] font-bold uppercase tracking-wider ${
-            isBuy ? "text-pulse-yes" : "text-pulse-no"
-          }`}
-        >
-          {trade.outcome}
-        </span>
-      </div>
-
-      <div className="mt-3 grid grid-cols-3 gap-2">
-        <StatCell
-          label="Entry"
-          value={`${(trade.price * 100).toFixed(0)}¢`}
-        />
-        <StatCell label="Now" value={`${(trade.price * 100).toFixed(0)}¢`} />
-        <StatCell label="Stake" value={formatStake(trade.usdNotional)} />
-      </div>
-    </>
-  );
-}
-
 function WhaleFeedCard({
   trade,
   now,
@@ -298,23 +234,7 @@ function WhaleFeedCard({
   const cardClassName =
     "pulse-card block p-4 transition-colors hover:border-pulse-accent/40 hover:bg-pulse-surface/40";
 
-  const cardBody = isKalshi ? (
-  <>
-      <KalshiReducedFeedCardBody
-        trade={trade}
-        ageSec={ageSec}
-        isBuy={isBuy}
-        category={category}
-      />
-      {detailHref ? (
-        <div className="mt-3 border-t border-pulse-border/60 pt-3">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-pulse-accent">
-            View trade details →
-          </span>
-        </div>
-      ) : null}
-    </>
-  ) : (
+  const cardBody = (
     <>
       <div className="mb-3 flex items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
@@ -360,9 +280,11 @@ function WhaleFeedCard({
           <p className="truncate text-sm font-semibold text-white">
             {traderLabel(trade)}
           </p>
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-pulse-yes">
-            Whale · ≥$500
-          </p>
+          {!isKalshi && (
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-pulse-yes">
+              Whale · ≥$500
+            </p>
+          )}
         </div>
       </div>
 
@@ -375,7 +297,7 @@ function WhaleFeedCard({
             isBuy ? "text-pulse-yes" : "text-pulse-no"
           }`}
         >
-          {trade.side}
+          {isKalshi ? trade.outcome : trade.side}
         </span>
       </div>
 
@@ -425,11 +347,8 @@ export default function WhaleTracker({
 }: WhaleTrackerProps) {
   const { platform, setPlatform } = useLiveFeedPlatform();
   const topWhales = whales.slice(0, TOP_WHALE_COUNT);
-  const polymarketWhalesForEv = topWhales.filter(
-    (trade) => trade.source !== "kalshi"
-  );
   const { index: pipelineEvIndex, loading: pipelineLoading } =
-    usePipelineEvForWhales(polymarketWhalesForEv);
+    usePipelineEvForWhales(topWhales);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -475,23 +394,18 @@ export default function WhaleTracker({
       ) : (
         <ul className="space-y-3">
           {topWhales.map((trade) => {
-            const isKalshi = trade.source === "kalshi";
-            const lookupKey = isKalshi ? null : pipelineEvKeyForWhale(trade);
+            const lookupKey = pipelineEvKeyForWhale(trade);
             return (
               <WhaleFeedCard
                 key={
-                  isKalshi
+                  trade.source === "kalshi"
                     ? `kalshi:${trade.id}`
                     : trade.transactionHash || trade.id
                 }
                 trade={trade}
                 now={now}
-                pipelineData={
-                  lookupKey
-                    ? resolvePipelineEvForWhale(pipelineEvIndex, trade)
-                    : null
-                }
-                pipelineLoading={isKalshi ? false : pipelineLoading}
+                pipelineData={resolvePipelineEvForWhale(pipelineEvIndex, trade)}
+                pipelineLoading={pipelineLoading}
               />
             );
           })}

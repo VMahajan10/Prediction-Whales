@@ -54,7 +54,6 @@ function TradeRowContent({
   evIndex: Map<string, OutcomeBooks>;
   pipelineEv: PipelineTradeEv | null;
 }) {
-  const isKalshi = trade.source === "kalshi";
   const whale = isWhaleNotional(trade.usdNotional);
   const rowClass = `rounded-lg border border-transparent p-2 transition-colors ${
     whale ? "border-l-2 border-l-yellow-500" : ""
@@ -65,18 +64,16 @@ function TradeRowContent({
         <div className="min-w-0 flex-1">
           <div className="mb-1 flex flex-wrap items-center gap-2">
             <SourceBadge source={trade.source} />
-            {!isKalshi && <PipelineEvBadge ev={pipelineEv} />}
-            {!isKalshi && (
-              <AiArbitrageBadge
-                trade={{
-                  source: trade.source,
-                  price: trade.price,
-                  slug: trade.slug,
-                  ticker: trade.ticker,
-                }}
-                index={evIndex}
-              />
-            )}
+            <PipelineEvBadge ev={pipelineEv} />
+            <AiArbitrageBadge
+              trade={{
+                source: trade.source,
+                price: trade.price,
+                slug: trade.slug,
+                ticker: trade.ticker,
+              }}
+              index={evIndex}
+            />
             <p className="truncate text-sm text-slate-200">{trade.title}</p>
           </div>
           <p className="text-xs text-slate-400">
@@ -85,24 +82,17 @@ function TradeRowContent({
               maximumFractionDigits: 0,
             })}
           </p>
-          {!isKalshi && (
-            <CrossMarketEvBadge
-              trade={{
-                source: trade.source,
-                price: trade.price,
-                slug: trade.slug,
-                ticker: trade.ticker,
-              }}
-              index={evIndex}
-              compact
-              className="mt-0.5 block"
-            />
-          )}
-          {isKalshi && (
-            <p className="mt-0.5 text-[10px] uppercase tracking-wide text-teal-400/80">
-              Anonymous market flow
-            </p>
-          )}
+          <CrossMarketEvBadge
+            trade={{
+              source: trade.source,
+              price: trade.price,
+              slug: trade.slug,
+              ticker: trade.ticker,
+            }}
+            index={evIndex}
+            compact
+            className="mt-0.5 block"
+          />
         </div>
         <div className="flex flex-col items-end gap-1">
           {trade.source === "polymarket" ? (
@@ -266,11 +256,9 @@ export default function TradesFeed() {
               isNew={newTradeKeys.has(tradeKey(trade))}
               evIndex={evIndex}
               pipelineEv={
-                trade.source === "kalshi"
-                  ? null
-                  : pipelineEvKeyForTrade(trade)
-                    ? pipelineEvIndex.get(pipelineEvKeyForTrade(trade)!) ?? null
-                    : null
+                pipelineEvKeyForTrade(trade)
+                  ? pipelineEvIndex.get(pipelineEvKeyForTrade(trade)!) ?? null
+                  : null
               }
             />
           ))
