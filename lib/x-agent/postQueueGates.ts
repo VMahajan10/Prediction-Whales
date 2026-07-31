@@ -1,14 +1,27 @@
 /**
- * Hard-coded post-queue source gate — only Polymarket trades may proceed to
- * template generation and x_post_queue. Kalshi trades are tracked internally
- * via kalshi_shadow_trades and never queued for public X posting.
+ * Post-queue gates — source eligibility and wallet credibility thresholds
+ * before template generation and x_post_queue insertion.
  */
+
+import {
+  MIN_AVG_EV_THRESHOLD,
+  MIN_AVG_EV_THRESHOLD_PCT,
+  MIN_STAKE_THRESHOLD,
+} from "@/lib/x-agent/gateMetrics";
 
 export const KALSHI_PUBLIC_POSTING_DISABLED =
   "KALSHI_PUBLIC_POSTING_DISABLED" as const;
 
+export const STAKE_TOO_LOW = "STAKE_TOO_LOW" as const;
+
+export const BELOW_EV_THRESHOLD = "BELOW_EV_THRESHOLD" as const;
+
 export type PostQueueSourceRejectionReason =
   typeof KALSHI_PUBLIC_POSTING_DISABLED;
+
+export type PostQueueCredibilityRejectionReason =
+  | typeof STAKE_TOO_LOW
+  | typeof BELOW_EV_THRESHOLD;
 
 export interface PostQueueSourceGateInput {
   source: "polymarket" | "kalshi";
@@ -20,8 +33,23 @@ export interface PostQueueSourceGateResult {
   reason?: PostQueueSourceRejectionReason;
 }
 
+export interface PostQueueCredibilityGateInput {
+  tradeId: string;
+  stakeNotional: number;
+  walletAvgEv?: number | null;
+}
+
+export interface PostQueueCredibilityGateResult {
+  passed: boolean;
+  reason?: PostQueueCredibilityRejectionReason;
+}
+
 function gateLog(tradeId: string, message: string): void {
   console.log(`[Gate] tradeId=${tradeId} ${message}`);
+}
+
+function formatStake(amount: number): string {
+  return `$${Math.round(amount).toLocaleString("en-US")}`;
 }
 
 export function logPostQueueSourceSkip(tradeId?: string): void {
@@ -56,6 +84,43 @@ export function evaluatePostQueueSourceGate(
   if (input.tradeId) {
     gateLog(input.tradeId, "[Pass: Source] Polymarket trade");
   }
+
+  return { passed: true };
+}
+
+/**
+ * Credibility gate — minimum stake and wallet avg EV before queueing or
+ * rendering in qualified feeds.
+ */
+export function evaluatePostQueueCredibilityGate(
+  input: PostQueueCredibilityGateInput
+): PostQueueCredibilityGateResult {
+  const stake = input.stakeNotional;
+  if (!Number.isFinite(stake) || stake < MIN_STAKE_THRESHOLD) {
+    gateLog(
+      input.tradeId,
+      `[Fail: Credibility] Stake (${formatStake(stake)}) < ${formatStake(MIN_STAKE_THRESHOLD)} threshold`
+    );
+    return { passed: false, reason: STAKE_TOO_LOW };
+  }
+
+  const avgEv = input.walletAvgEv;
+  if (avgEv == null || !Number.isFinite(avgEv) || avgEv < MIN_AVG_EV_THRESHOLD) {
+    const avgEvPct =
+      avgEv != null && Number.isFinite(avgEv)
+        ? (avgEv * 100).toFixed(1)
+        : "N/A";
+    gateLog(
+      input.tradeId,
+      `[Fail: Credibility] Wallet avg EV (${avgEvPct}%) < +${MIN_AVG_EV_THRESHOLD_PCT.toFixed(1)}% threshold`
+    );
+    return { passed: false, reason: BELOW_EV_THRESHOLD };
+  }
+
+  gateLog(
+    input.tradeId,
+    `[Pass: Credibility] Stake (${formatStake(stake)}) >= ${formatStake(MIN_STAKE_THRESHOLD)}, wallet avg EV (${(avgEv * 100).toFixed(1)}%) >= +${MIN_AVG_EV_THRESHOLD_PCT.toFixed(1)}%`
+  );
 
   return { passed: true };
 }

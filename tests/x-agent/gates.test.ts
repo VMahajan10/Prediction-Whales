@@ -250,6 +250,7 @@ describe("evaluateTradeEligibility", () => {
 
     expect(result.eligible).toBe(false);
     expect(result.matrix.passesCredibility).toBe(false);
+    expect(result.reason).toBe("BELOW_EV_THRESHOLD");
   });
 
   it("passes the whale EV gate at the avg EV floor", async () => {

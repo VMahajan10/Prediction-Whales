@@ -6,6 +6,7 @@ import {
 import {
   HIGH_EV_TRADE_THRESHOLD_PCT,
   MIN_TRADE_EV_DECIMAL,
+  MIN_STAKE_THRESHOLD,
   MIN_WALLET_AVG_EV_DECIMAL,
   MIN_WALLET_AVG_EV_THRESHOLD_PCT,
   MIN_WALLET_RESOLVED_BETS,
@@ -28,15 +29,24 @@ import {
   KALSHI_PUBLIC_POSTING_DISABLED,
   isPostQueueSourceAllowed,
   logPostQueueSourceSkip,
+  evaluatePostQueueCredibilityGate,
+  STAKE_TOO_LOW,
+  BELOW_EV_THRESHOLD,
 } from "@/lib/x-agent/postQueueGates";
 import { isAnonymousWalletAddress } from "@/lib/x-agent/whaleRegistryDb";
 
-export { KALSHI_PUBLIC_POSTING_DISABLED } from "@/lib/x-agent/postQueueGates";
+export {
+  KALSHI_PUBLIC_POSTING_DISABLED,
+  STAKE_TOO_LOW,
+  BELOW_EV_THRESHOLD,
+} from "@/lib/x-agent/postQueueGates";
 
 export const GATE_REJECTION_REASONS = [
   "KALSHI_PUBLIC_POSTING_DISABLED",
   "BELOW_RESOLVED_BETS",
+  "BELOW_EV_THRESHOLD",
   "LOW_EV",
+  "STAKE_TOO_LOW",
   "BELOW_STAKE_FLOOR",
   "STALE_TRADE",
   "LINE_DRIFT_EXCEEDED",
@@ -69,7 +79,7 @@ export interface TradeGateMatrix {
   /** Live trade EV from pipeline (trade.ev >= 0.025). */
   passesEv: boolean;
   passesStake: boolean;
-  /** Wallet registry track record (resolvedBets >= 300, avgEv >= 0.025). */
+  /** Wallet registry track record (resolvedBets >= 300, avgEv >= 0.03). */
   passesCredibility: boolean;
   passesAlignment: boolean;
   passesFreshness: boolean;
@@ -208,7 +218,7 @@ function resolvePrimaryFailureReason(
     if (!whale || !meetsResolvedBetsThreshold(whale.resolvedBetsCount)) {
       return "BELOW_RESOLVED_BETS";
     }
-    return "LOW_EV";
+    return BELOW_EV_THRESHOLD;
   }
   if (!matrix.passesFreshness) return "STALE_TRADE";
   if (!matrix.passesAlignment) return "ILLEGIBLE_MARKET";
@@ -319,9 +329,10 @@ export function evaluateTradeGateMatrix(
   const stakeFloor = resolveTradeStakeFloor(trade);
   const passesStake = trade.stakeNotional >= stakeFloor.floorUsd;
   const passesCredibility =
+    trade.stakeNotional >= MIN_STAKE_THRESHOLD &&
     whale != null &&
     meetsResolvedBetsThreshold(whale.resolvedBetsCount) &&
-    whale.avgEv >= MIN_WALLET_AVG_EV_DECIMAL;
+    whale.avgEv >= MIN_AVG_EV;
 
   const translation =
     passesSource && translateMarketAndSide(toRawPolymarketTrade(trade));
@@ -450,28 +461,27 @@ export function evaluateWalletCredibilityPreGate(
     };
   }
 
-  const passesCredibility =
-    whale != null && whale.avgEv >= MIN_AVG_EV;
+  const credibilityGate = evaluatePostQueueCredibilityGate({
+    tradeId: trade.tradeId,
+    stakeNotional: trade.stakeNotional,
+    walletAvgEv: whale?.avgEv,
+  });
+  if (!credibilityGate.passed) {
+    return {
+      passed: false,
+      reason: credibilityGate.reason,
+      failedStep: "credibility",
+    };
+  }
 
-  if (passesCredibility && whale) {
+  if (whale) {
     gateLog(
       trade.tradeId,
       `[Pass: Wallet Credibility] Registry track record: resolved bets (${whale.resolvedBetsCount}) >= ${MIN_WALLET_RESOLVED_BETS}, wallet avg EV (${formatWalletEvPct(whale.avgEv)}%) >= +${MIN_WALLET_AVG_EV_THRESHOLD_PCT}%`
     );
-    return { passed: true };
   }
 
-  gateLog(
-    trade.tradeId,
-    `[Fail: Wallet Credibility] wallet=${trade.walletAddress} resolvedBets=${whale?.resolvedBetsCount ?? "NOT_IN_DB"} avgEv=${whale?.avgEv ?? "N/A"}`
-  );
-
-  const reason: GateRejectionReason =
-    !whale || !meetsResolvedBetsThreshold(whale.resolvedBetsCount)
-      ? "BELOW_RESOLVED_BETS"
-      : "LOW_EV";
-
-  return { passed: false, reason, failedStep: "credibility" };
+  return { passed: true };
 }
 
 /** Step 6 — live trade EV gate (runs only after OpenAI / p_true pipeline). */
@@ -521,6 +531,8 @@ export async function handlePreGateRejection(
       case "ILLEGIBLE_MARKET":
       case "BELOW_TRADE_EV":
       case "BELOW_RESOLVED_BETS":
+      case "BELOW_EV_THRESHOLD":
+      case "STAKE_TOO_LOW":
       case "LOW_EV":
         metricsCollector.recordPreGateFailure(result.reason, whale);
         break;

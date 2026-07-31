@@ -16,12 +16,20 @@ export const HIGH_EV_TRADE_THRESHOLD_PCT = 2.5;
 /** Minimum live trade EV as decimal (trade.ev >= 0.025). */
 export const MIN_TRADE_EV_DECIMAL = 0.025;
 
-/** Minimum wallet historical avg EV from registry (wallet.avgEv >= 0.025). */
-export const MIN_WALLET_AVG_EV_DECIMAL = 0.025;
+/** Minimum USD stake for feed qualification and credibility gate (whale notional). */
+export const MIN_STAKE_THRESHOLD = 500;
 
-/** Minimum wallet historical avg EV as display percent (+2.5%). */
-export const MIN_WALLET_AVG_EV_THRESHOLD_PCT =
-  MIN_WALLET_AVG_EV_DECIMAL * 100;
+/** Minimum wallet historical avg EV for credibility / qualified feeds (+3.0%). */
+export const MIN_AVG_EV_THRESHOLD = 0.03;
+
+/** Minimum wallet historical avg EV as display percent (+3.0%). */
+export const MIN_AVG_EV_THRESHOLD_PCT = MIN_AVG_EV_THRESHOLD * 100;
+
+/** Alias — registry wallet.avgEv must be >= MIN_AVG_EV_THRESHOLD. */
+export const MIN_WALLET_AVG_EV_DECIMAL = MIN_AVG_EV_THRESHOLD;
+
+/** Minimum wallet historical avg EV as display percent (+3.0%). */
+export const MIN_WALLET_AVG_EV_THRESHOLD_PCT = MIN_AVG_EV_THRESHOLD_PCT;
 
 /** Minimum resolved bets on wallet registry for credibility (default 300). */
 export const MIN_WALLET_RESOLVED_BETS = (() => {
@@ -134,9 +142,11 @@ export function recordPreGateFailure(
     | "KALSHI_PUBLIC_POSTING_DISABLED"
     | "STALE_TRADE"
     | "BELOW_STAKE_FLOOR"
+    | "STAKE_TOO_LOW"
     | "ILLEGIBLE_MARKET"
     | "BELOW_TRADE_EV"
     | "BELOW_RESOLVED_BETS"
+    | "BELOW_EV_THRESHOLD"
     | "LOW_EV",
   whale?: CredibilityGateWhale | null
 ): void {
@@ -148,6 +158,7 @@ export function recordPreGateFailure(
       metrics.failedFreshness += 1;
       break;
     case "BELOW_STAKE_FLOOR":
+    case "STAKE_TOO_LOW":
       metrics.failedStakeFloor += 1;
       break;
     case "ILLEGIBLE_MARKET":
@@ -157,6 +168,7 @@ export function recordPreGateFailure(
       metrics.failedEvThreshold += 1;
       break;
     case "BELOW_RESOLVED_BETS":
+    case "BELOW_EV_THRESHOLD":
     case "LOW_EV":
       recordCredibilityFailureBreakdown(metrics, whale);
       break;
@@ -181,9 +193,11 @@ export interface GateMetricsCollector {
       | "KALSHI_PUBLIC_POSTING_DISABLED"
       | "STALE_TRADE"
       | "BELOW_STAKE_FLOOR"
+      | "STAKE_TOO_LOW"
       | "ILLEGIBLE_MARKET"
       | "BELOW_TRADE_EV"
       | "BELOW_RESOLVED_BETS"
+      | "BELOW_EV_THRESHOLD"
       | "LOW_EV",
     whale?: CredibilityGateWhale | null
   ): void;
@@ -243,9 +257,11 @@ export class RollingGateMatrixTracker implements GateMetricsCollector {
       | "KALSHI_PUBLIC_POSTING_DISABLED"
       | "STALE_TRADE"
       | "BELOW_STAKE_FLOOR"
+      | "STAKE_TOO_LOW"
       | "ILLEGIBLE_MARKET"
       | "BELOW_TRADE_EV"
       | "BELOW_RESOLVED_BETS"
+      | "BELOW_EV_THRESHOLD"
       | "LOW_EV",
     whale?: CredibilityGateWhale | null
   ): void {

@@ -6,11 +6,12 @@ import { buildPlatformFeed } from "@/lib/liveFeedMerge";
 import { useLiveFeedPlatform } from "@/lib/LiveFeedPlatformContext";
 import type { TradeSummary } from "@/lib/polymarket";
 import { usePolymarketSocketContext } from "@/lib/PolymarketSocketProvider";
+import { meetsFeedStakeThreshold } from "@/lib/feedQualification";
+import { useQualifiedWalletFilter } from "@/lib/useQualifiedWalletFilter";
 import { cacheWhaleTrade, resolveAndCacheWallet } from "@/lib/whaleCache";
 import { useKalshiTrades } from "@/lib/useKalshiTrades";
 import { useWalletEnrichment } from "@/lib/useWalletEnrichment";
 import {
-  isWhaleNotional,
   mergeWhaleTrades,
   tradeToWhale,
   type WhaleTrade,
@@ -74,7 +75,7 @@ export function useWhaleFeed() {
         const res = await fetch("/api/whales/backfill");
         const data: { trades?: TradeSummary[] } = await res.json();
         const whales = (data.trades ?? [])
-          .filter((t) => isWhaleNotional(t.size))
+          .filter((t) => meetsFeedStakeThreshold(t.size))
           .map((t) =>
             tradeToWhale(t, {
               detectedAt: t.timestamp * 1000,
@@ -174,10 +175,31 @@ export function useWhaleFeed() {
     [liveWhales, backfill]
   );
 
+  const polymarketWalletAddresses = useMemo(
+    () =>
+      polymarketWhales
+        .map((trade) => trade.proxyWallet?.trim().toLowerCase())
+        .filter((wallet): wallet is string => Boolean(wallet)),
+    [polymarketWhales]
+  );
+  const walletQualifications = useQualifiedWalletFilter(polymarketWalletAddresses);
+
+  const qualifiedPolymarketWhales = useMemo(() => {
+    return polymarketWhales.filter((trade) => {
+      if (!meetsFeedStakeThreshold(trade.usdNotional)) return false;
+
+      const wallet = trade.proxyWallet?.trim().toLowerCase();
+      if (!wallet) return false;
+
+      const qualified = walletQualifications.get(wallet);
+      return qualified === true;
+    });
+  }, [polymarketWhales, walletQualifications]);
+
   const kalshiWhales = useMemo(() => {
     const out: WhaleTrade[] = [];
     for (const trade of kalshiTrades) {
-      if (!isWhaleNotional(trade.usdNotional)) continue;
+      if (!meetsFeedStakeThreshold(trade.usdNotional)) continue;
       let detectedAt = kalshiDetectedAt.current.get(trade.id);
       if (!detectedAt) {
         detectedAt = Date.now();
@@ -191,12 +213,12 @@ export function useWhaleFeed() {
   const whales = useMemo(
     () =>
       buildPlatformFeed(
-        polymarketWhales,
+        qualifiedPolymarketWhales,
         kalshiWhales,
         platform,
         byDetectedDesc
       ),
-    [polymarketWhales, kalshiWhales, platform]
+    [qualifiedPolymarketWhales, kalshiWhales, platform]
   );
 
   const dismissNewWhale = useCallback(() => setNewWhale(null), []);
