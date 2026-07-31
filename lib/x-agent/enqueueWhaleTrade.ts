@@ -153,15 +153,12 @@ export async function processWhaleTradeForXAgent(
   );
   const metricsOptions = { metrics: metricsCollector ?? metrics };
 
-  // Step 0: Polymarket-only public posting gate (Kalshi → shadow tracking only).
+  // Step 0: Polymarket-only public posting gate.
   const sourceGate = evaluatePostQueueSourceGate({
     source: trade.source,
     tradeId: trade.id,
   });
   if (!sourceGate.passed) {
-    if (trade.source === "kalshi") {
-      persistKalshiShadowTradeFromWhale(trade);
-    }
     await handlePreGateRejection(
       payload,
       {
