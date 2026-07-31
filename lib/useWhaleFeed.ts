@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buildPlatformFeed } from "@/lib/liveFeedMerge";
-import { useLiveFeedPlatform } from "@/lib/LiveFeedPlatformContext";
 import type { ResolvedWhaleIdentity } from "@/lib/whaleIdentityResolver";
 import type { TradeSummary } from "@/lib/polymarket";
 import { usePolymarketSocketContext } from "@/lib/PolymarketSocketProvider";
@@ -100,7 +99,6 @@ function isPolymarketTradeEligibleForFeed(
 }
 
 export function useWhaleFeed() {
-  const { platform } = useLiveFeedPlatform();
   const { whaleTrades: liveSocketTrades, connected } =
     usePolymarketSocketContext();
   const { ok: kalshiOk } = useKalshiTrades();
@@ -307,10 +305,10 @@ export function useWhaleFeed() {
       buildPlatformFeed(
         qualifiedPolymarketWhales,
         KALSHI_WHALE_FEED_TRADES,
-        platform,
+        "all",
         byDetectedDesc
       ),
-    [qualifiedPolymarketWhales, platform]
+    [qualifiedPolymarketWhales]
   );
 
   const dismissNewWhale = useCallback(() => setNewWhale(null), []);
@@ -322,6 +320,5 @@ export function useWhaleFeed() {
     backfillLoaded,
     newWhale,
     dismissNewWhale,
-    platform,
   };
 }

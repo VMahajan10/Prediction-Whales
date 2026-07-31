@@ -54,9 +54,10 @@ function FilterPill({
 
 const SORT_OPTIONS: { value: WatchlistSort; label: string }[] = [
   { value: "recently_active", label: "Recently active" },
-  { value: "highest_win_rate", label: "Highest win rate" },
-  { value: "most_open_positions", label: "Most open positions" },
   { value: "top_roi", label: "Top ROI" },
+  { value: "highest_win_rate", label: "Highest win rate" },
+  { value: "highest_ev", label: "Highest EV%" },
+  { value: "most_open_positions", label: "Most open plays" },
 ];
 
 const MARKET_OPTIONS: { value: WatchlistMarketFilter; label: string }[] = [

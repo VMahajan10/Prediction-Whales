@@ -8,8 +8,14 @@ import {
 import {
   formatRoi,
   formatWinRate,
+  roiColorClass,
   type WatchlistProfile,
 } from "@/lib/watchlistFilters";
+import {
+  isUsableCustomWhaleName,
+  sanitizeWhaleDisplayName,
+  generateDeterministicWhalePseudonym,
+} from "@/lib/whaleIdentityResolver";
 
 function traderInitials(label: string, wallet: string): string {
   const fromLabel = label.replace(/[^a-zA-Z]/g, "").slice(0, 2).toUpperCase();
@@ -17,7 +23,17 @@ function traderInitials(label: string, wallet: string): string {
   return wallet.slice(2, 4).toUpperCase();
 }
 
-function StatColumn({
+function displayName(trader: WatchlistProfile["trader"]): string {
+  if (isUsableCustomWhaleName(trader.label, trader.wallet)) {
+    return trader.label.trim();
+  }
+  return sanitizeWhaleDisplayName(
+    generateDeterministicWhalePseudonym(trader.wallet),
+    trader.wallet
+  );
+}
+
+function StatCell({
   label,
   value,
   valueClass = "text-white",
@@ -27,21 +43,29 @@ function StatColumn({
   valueClass?: string;
 }) {
   return (
-    <div className="text-center">
-      <p className="pulse-label text-pulse-label">{label}</p>
-      <p className={`mt-1 text-sm font-bold ${valueClass}`}>{value}</p>
+    <div className="rounded-xl border border-pulse-border bg-pulse-surface/60 px-2 py-3 text-center">
+      <p className="text-[9px] font-bold uppercase tracking-wide text-pulse-label">
+        {label}
+      </p>
+      <p className={`mt-1.5 text-lg font-bold ${valueClass}`}>{value}</p>
     </div>
   );
 }
 
-export default function WatchlistTraderCard({ profile }: { profile: WatchlistProfile }) {
+export default function WatchlistTraderCard({
+  profile,
+}: {
+  profile: WatchlistProfile;
+}) {
   const { trader, trackRecord, openPositions, openPositionCount, loading } =
     profile;
-  const recentOpen = openPositions.slice(0, 4);
-  const initials = traderInitials(trader.label, trader.wallet);
+  const recentOpen = openPositions.slice(0, 3);
+  const name = displayName(trader);
+  const initials = traderInitials(name, trader.wallet);
+  const roi = trackRecord?.roi ?? null;
 
   return (
-    <article className="pulse-card p-4">
+    <article className="rounded-2xl border border-pulse-border bg-pulse-card p-4">
       <Link
         href={`/traders/${encodeURIComponent(trader.wallet)}`}
         className="flex items-center gap-3"
@@ -49,37 +73,37 @@ export default function WatchlistTraderCard({ profile }: { profile: WatchlistPro
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-pulse-accent/20 text-xs font-bold text-pulse-accent">
           {initials}
         </div>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-bold text-white">
-            {trader.label}
-          </p>
-        </div>
-        <span className="text-pulse-accent">→</span>
+        <p className="min-w-0 flex-1 truncate text-sm font-bold text-white">
+          {name}
+        </p>
+        <span className="text-pulse-accent" aria-hidden>
+          ›
+        </span>
       </Link>
 
-      <div className="mt-4 grid grid-cols-3 gap-2 rounded-lg bg-pulse-surface px-3 py-3">
-        <StatColumn
-          label="Open positions"
+      <div className="mt-4 grid grid-cols-3 gap-2">
+        <StatCell
+          label="Open Positions"
           value={loading ? "…" : String(openPositionCount)}
         />
-        <StatColumn
-          label="Win rate"
+        <StatCell
+          label="Win Rate"
           value={loading ? "…" : formatWinRate(trackRecord?.winRate)}
           valueClass="text-pulse-yes"
         />
-        <StatColumn
+        <StatCell
           label="ROI"
-          value={loading ? "…" : formatRoi(trackRecord?.roi)}
-          valueClass="text-pulse-yes"
+          value={loading ? "…" : formatRoi(roi)}
+          valueClass={roiColorClass(roi)}
         />
       </div>
 
-      {recentOpen.length > 0 && (
+      {recentOpen.length > 0 ? (
         <div className="mt-4">
-          <p className="pulse-label mb-2 text-pulse-label">
-            Recent open positions
+          <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-pulse-label">
+            Recent Open Positions
           </p>
-          <ul className="space-y-2">
+          <ul className="space-y-2.5">
             {recentOpen.map((position) => {
               const badge = inferCategoryBadge(position.title);
               return (
@@ -89,7 +113,7 @@ export default function WatchlistTraderCard({ profile }: { profile: WatchlistPro
                   >
                     {badge.label}
                   </span>
-                  <p className="line-clamp-2 text-xs leading-snug text-white">
+                  <p className="line-clamp-2 text-[11px] font-medium uppercase leading-snug text-white">
                     {position.title}
                   </p>
                 </li>
@@ -97,13 +121,9 @@ export default function WatchlistTraderCard({ profile }: { profile: WatchlistPro
             })}
           </ul>
         </div>
-      )}
-
-      {!loading && openPositionCount === 0 && (
-        <p className="mt-4 text-xs text-pulse-muted">
-          No open positions right now
-        </p>
-      )}
+      ) : !loading ? (
+        <p className="mt-4 text-xs text-pulse-muted">No open positions right now</p>
+      ) : null}
     </article>
   );
 }

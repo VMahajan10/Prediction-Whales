@@ -31,5 +31,5 @@ export default function TraderProfilePage({
     );
   }
 
-  return <WhaleProfile wallet={wallet} defaultTab="positions" showIntelligence />;
+  return <WhaleProfile wallet={wallet} defaultTab="positions" />;
 }

@@ -1,7 +1,7 @@
 "use client";
 
-import Link from "next/link";
 import { useMemo, useState } from "react";
+import FeedEmptyState from "@/components/FeedEmptyState";
 import MobileAppShell from "@/components/MobileAppShell";
 import TraderAlertSync from "@/components/TraderAlertSync";
 import WatchlistFilterSheet from "@/components/WatchlistFilterSheet";
@@ -32,54 +32,53 @@ function WatchlistContent() {
 
   return (
     <main className="min-h-screen px-4 py-5">
-      <header className="mb-5 flex items-center justify-between gap-3">
+      <header className="mb-4 flex items-center justify-between gap-3">
         <h1 className="text-2xl font-bold text-white">Watchlist</h1>
-        <span className="flex items-center gap-1.5 rounded bg-pulse-yes/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-pulse-yes">
+        <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-pulse-yes">
           <span className="h-1.5 w-1.5 rounded-full bg-pulse-yes" />
           Live
         </span>
       </header>
 
-      <button
-        type="button"
-        onClick={() => setSheetOpen(true)}
-        className="mb-5 flex w-full items-center justify-center gap-2 rounded-pulse border border-pulse-border bg-pulse-card py-3 text-[11px] font-bold uppercase tracking-wide text-white"
-      >
-        <span>↑↓ Filters / sort</span>
-        {activeFilterCount > 0 && (
-          <span className="rounded-full bg-pulse-accent px-1.5 py-0.5 text-[10px] text-white">
-            {activeFilterCount}
-          </span>
-        )}
-      </button>
+      <div className="mb-5 flex justify-end">
+        <button
+          type="button"
+          onClick={() => setSheetOpen(true)}
+          className="inline-flex items-center gap-2 rounded-lg border border-pulse-accent px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-pulse-accent"
+        >
+          <span>⇅ Filters / Sort</span>
+          {activeFilterCount > 0 ? (
+            <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-pulse-accent px-1 text-[9px] font-bold text-white">
+              {activeFilterCount}
+            </span>
+          ) : null}
+          <span aria-hidden>▾</span>
+        </button>
+      </div>
 
       {bookmarks.length === 0 ? (
-        <div className="pulse-card px-6 py-12 text-center">
-          <p className="text-3xl">◎</p>
-          <p className="mt-3 text-sm text-pulse-muted">
-            No whales on your watchlist yet
-          </p>
-          <p className="mt-2 text-xs text-pulse-label">
-            Star a Polymarket whale on the feed to track them here
-          </p>
-          <Link
-            href="/"
-            className="mt-5 inline-block text-sm font-semibold text-pulse-accent"
-          >
-            Go to whale feed →
-          </Link>
-        </div>
+        <FeedEmptyState
+          icon="◎"
+          title="No whales on your watchlist"
+          description="Star a whale from the feed to track their plays, win rate, and open positions here."
+          actionLabel="Browse Whale Feed"
+          actionHref="/"
+        />
       ) : filtered.length === 0 ? (
-        <div className="pulse-card px-6 py-10 text-center">
-          <p className="text-sm text-pulse-muted">
-            No whales match these filters
+        <div className="rounded-2xl border border-pulse-border bg-pulse-card px-6 py-14 text-center">
+          <div className="mb-4 flex h-16 w-16 mx-auto items-center justify-center rounded-full border border-pulse-border bg-pulse-surface text-3xl">
+            ⇅
+          </div>
+          <p className="text-base font-bold text-white">No matches for these filters</p>
+          <p className="mt-2 text-sm text-pulse-muted">
+            Try resetting filters or widening your selections.
           </p>
           <button
             type="button"
             onClick={() => setFilters(DEFAULT_WATCHLIST_FILTERS)}
-            className="mt-4 text-sm font-semibold text-pulse-accent"
+            className="mt-6 inline-flex items-center justify-center rounded-xl bg-pulse-accent px-5 py-2.5 text-sm font-bold text-black"
           >
-            Reset filters
+            Reset Filters
           </button>
         </div>
       ) : (

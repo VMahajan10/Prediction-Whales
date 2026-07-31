@@ -62,6 +62,14 @@ export function buildPlatformFeed<T>(
   return mergeWithReservedSlots(pm, kalshi, sortFn, maxItems);
 }
 
+/** Client-side platform filter for merged whale rows with a `source` field. */
+export function filterFeedByPlatform<
+  T extends { source?: "polymarket" | "kalshi" },
+>(rows: T[], platform: LiveFeedPlatform): T[] {
+  if (platform === "all") return rows;
+  return rows.filter((row) => row.source === platform);
+}
+
 export function liveFeedPlatformLabel(platform: LiveFeedPlatform): string {
   if (platform === "polymarket") return "Polymarket only";
   if (platform === "kalshi") return "Kalshi only";

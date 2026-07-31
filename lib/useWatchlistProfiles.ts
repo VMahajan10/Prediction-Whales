@@ -9,6 +9,7 @@ import type { WatchlistProfile } from "@/lib/watchlistFilters";
 interface ProfileFetchResult {
   trackRecord: TrackRecord | null;
   openPositions: TraderOpenPosition[];
+  avgEv: number | null;
 }
 
 export function useWatchlistProfiles(bookmarks: BookmarkedTrader[]) {
@@ -37,7 +38,10 @@ export function useWatchlistProfiles(bookmarks: BookmarkedTrader[]) {
               `/api/whale-track-record?wallet=${encodeURIComponent(trader.wallet)}`
             );
             if (!res.ok) {
-              return [trader.wallet, { trackRecord: null, openPositions: [] }] as const;
+              return [
+                trader.wallet,
+                { trackRecord: null, openPositions: [], avgEv: null },
+              ] as const;
             }
             const data = await res.json();
             return [
@@ -47,10 +51,14 @@ export function useWatchlistProfiles(bookmarks: BookmarkedTrader[]) {
                   ? repairTrackRecord(data.trackRecord)
                   : null,
                 openPositions: data.openPositions ?? [],
+                avgEv: data.pipelineEvAnalytics?.averageEv ?? null,
               },
             ] as const;
           } catch {
-            return [trader.wallet, { trackRecord: null, openPositions: [] }] as const;
+            return [
+              trader.wallet,
+              { trackRecord: null, openPositions: [], avgEv: null },
+            ] as const;
           }
         })
       );
@@ -76,6 +84,7 @@ export function useWatchlistProfiles(bookmarks: BookmarkedTrader[]) {
           trackRecord: fetched?.trackRecord ?? null,
           openPositionCount: fetched?.openPositions.length ?? 0,
           openPositions: fetched?.openPositions ?? [],
+          avgEv: fetched?.avgEv ?? null,
           loading: loading && !fetched,
         };
       }),

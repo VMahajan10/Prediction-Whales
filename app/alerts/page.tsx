@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import FeedEmptyState from "@/components/FeedEmptyState";
 import MobileAppShell from "@/components/MobileAppShell";
 import TraderAlertSync from "@/components/TraderAlertSync";
 import { LiveFeedPlatformProvider } from "@/lib/LiveFeedPlatformContext";
@@ -10,8 +11,15 @@ import { useTraderAlertsStore } from "@/lib/useTraderAlertsStore";
 
 type AlertTab = "all" | "unread";
 
-function secondsAgo(detectedAt: number, now: number): number {
-  return Math.max(0, Math.floor((now - detectedAt) / 1000));
+function formatAlertRecency(detectedAt: number, now: number): string {
+  const sec = Math.max(0, Math.floor((now - detectedAt) / 1000));
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}hr`;
+  const day = Math.floor(hr / 24);
+  return `${day}d`;
 }
 
 function traderInitials(label: string, wallet: string): string {
@@ -30,6 +38,25 @@ function isToday(timestamp: number): boolean {
   );
 }
 
+function backingLabel(alert: TraderAlert): string {
+  if (alert.side === "SELL") {
+    const name = alert.outcome?.trim();
+    return name ? `Exit ${name}` : "Exit position";
+  }
+  const name = alert.outcome?.trim();
+  return name ? `Backing ${name}` : "Backing position";
+}
+
+function alertDetailHref(alert: TraderAlert): string {
+  if (alert.source === "kalshi") {
+    return `/whales/kalshi/${encodeURIComponent(alert.id.replace(/^kalshi:/, ""))}`;
+  }
+  if (alert.txHash) {
+    return `/whales/${encodeURIComponent(alert.txHash)}`;
+  }
+  return `/traders/${encodeURIComponent(alert.wallet)}`;
+}
+
 function AlertRow({
   alert,
   now,
@@ -40,70 +67,73 @@ function AlertRow({
   onRead: (id: string) => void;
 }) {
   const isBuy = alert.side === "BUY";
-  const href =
-    alert.source === "kalshi"
-      ? `/trades/kalshi/${encodeURIComponent(alert.id.replace(/^kalshi:/, ""))}`
-      : alert.txHash
-        ? `/whales/${encodeURIComponent(alert.txHash)}`
-        : `/traders/${encodeURIComponent(alert.wallet)}`;
+  const href = alertDetailHref(alert);
+  const direction = backingLabel(alert);
 
   return (
-    <li>
+    <li className="border-b border-pulse-border/80 last:border-0">
       <Link
         href={href}
         onClick={() => {
           if (!alert.read) onRead(alert.id);
         }}
-        className={`block rounded-pulse border px-4 py-3 transition-colors ${
-          alert.read
-            ? "border-pulse-border bg-pulse-card/60"
-            : "border-pulse-accent/30 bg-pulse-card"
-        }`}
+        className="flex gap-3 py-4 transition-colors hover:bg-pulse-surface/20"
       >
-        <div className="flex items-start gap-3">
-          {!alert.read && (
-            <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-pulse-accent" />
+        <div className="flex w-3 shrink-0 justify-center pt-4">
+          {!alert.read ? (
+            <span className="h-2 w-2 rounded-full bg-pulse-accent" />
+          ) : (
+            <span className="h-2 w-2" />
           )}
-          {alert.read && <span className="mt-2 h-2 w-2 shrink-0" />}
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-pulse-accent/20 text-[10px] font-bold text-pulse-accent">
-                {traderInitials(alert.traderLabel, alert.wallet)}
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-bold text-white">
-                  {alert.traderLabel}
-                </p>
-              </div>
-              <span className="text-[11px] text-pulse-label">
-                {secondsAgo(alert.detectedAt, now)}s
-              </span>
-            </div>
+        </div>
 
-            <p className="mt-2 text-sm font-medium leading-snug text-white">
-              {alert.title}
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-pulse-accent/20 text-[10px] font-bold text-pulse-accent">
+          {traderInitials(alert.traderLabel, alert.wallet)}
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <p className="truncate text-sm font-bold text-white">
+              {alert.traderLabel}
             </p>
+            <span className="shrink-0 text-[11px] text-pulse-label">
+              {formatAlertRecency(alert.detectedAt, now)}
+            </span>
+          </div>
 
-            <div className="mt-3 flex flex-wrap items-center gap-2">
+          <p className="mt-1 text-xs font-bold uppercase leading-snug tracking-wide text-white">
+            {alert.title}
+          </p>
+
+          <div className="mt-2.5 flex items-center justify-between gap-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
               <span
-                className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                className={`inline-block max-w-full truncate rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide ${
                   isBuy
                     ? "bg-pulse-yes/15 text-pulse-yes"
                     : "bg-pulse-no/15 text-pulse-no"
                 }`}
               >
-                {isBuy ? `Backing ${alert.outcome}` : `Exit ${alert.outcome}`}
+                {direction}
               </span>
               <span
-                className={`text-[11px] font-bold uppercase ${
-                  isBuy ? "text-pulse-yes" : "text-pulse-no"
+                className={`inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide ${
+                  isBuy
+                    ? "bg-pulse-yes/15 text-pulse-yes"
+                    : "bg-pulse-no/15 text-pulse-no"
                 }`}
               >
-                {isBuy ? "↗ Buy" : "↘ Sell"}
+                <span aria-hidden>{isBuy ? "↗" : "↘"}</span>
+                {isBuy ? "Buy" : "Sell"}
               </span>
-              <span className="text-[11px] font-semibold text-pulse-muted">
-                {(alert.price * 100).toFixed(0)}¢ entry
-              </span>
+            </div>
+            <div className="shrink-0 text-right">
+              <p className="text-sm font-bold text-white">
+                {(alert.price * 100).toFixed(0)}¢
+              </p>
+              <p className="text-[9px] font-bold uppercase tracking-wide text-pulse-label">
+                Entry
+              </p>
             </div>
           </div>
         </div>
@@ -126,16 +156,13 @@ function AlertSection({
   if (alerts.length === 0) return null;
 
   return (
-    <section className="mb-6">
-      <h2 className="pulse-label mb-3 text-pulse-label">{title}</h2>
-      <ul className="space-y-2">
+    <section className="mb-2">
+      <h2 className="mb-1 px-1 text-[10px] font-bold uppercase tracking-wide text-pulse-label">
+        {title}
+      </h2>
+      <ul>
         {alerts.map((alert) => (
-          <AlertRow
-            key={alert.id}
-            alert={alert}
-            now={now}
-            onRead={onRead}
-          />
+          <AlertRow key={alert.id} alert={alert} now={now} onRead={onRead} />
         ))}
       </ul>
     </section>
@@ -153,8 +180,7 @@ function AlertsContent() {
   }, []);
 
   const visible = useMemo(() => {
-    const rows = tab === "unread" ? alerts.filter((a) => !a.read) : alerts;
-    return rows;
+    return tab === "unread" ? alerts.filter((a) => !a.read) : alerts;
   }, [alerts, tab]);
 
   const todayAlerts = visible.filter((a) => isToday(a.detectedAt));
@@ -162,16 +188,16 @@ function AlertsContent() {
 
   return (
     <main className="min-h-screen px-4 py-5">
-      <header className="mb-2">
+      <header className="mb-4">
         <div className="flex items-center gap-2">
           <h1 className="text-2xl font-bold text-white">Alerts</h1>
-          {unreadCount > 0 && (
-            <span className="rounded-full bg-pulse-accent px-2 py-0.5 text-[10px] font-bold uppercase text-white">
-              {unreadCount} new
+          {unreadCount > 0 ? (
+            <span className="rounded-md bg-pulse-accent px-2 py-0.5 text-[10px] font-bold uppercase text-white">
+              {unreadCount} New
             </span>
-          )}
+          ) : null}
         </div>
-        {unreadCount > 0 && (
+        {unreadCount > 0 ? (
           <button
             type="button"
             onClick={markAllRead}
@@ -179,14 +205,14 @@ function AlertsContent() {
           >
             Mark all read
           </button>
-        )}
+        ) : null}
       </header>
 
-      <div className="mb-5 mt-4 flex rounded-pulse border border-pulse-border bg-pulse-surface p-1">
+      <div className="mb-5 flex rounded-xl border border-pulse-border bg-pulse-surface p-1">
         <button
           type="button"
           onClick={() => setTab("all")}
-          className={`flex-1 rounded-lg py-2 text-sm font-semibold transition-colors ${
+          className={`flex-1 rounded-lg py-2.5 text-sm font-bold uppercase tracking-wide transition-colors ${
             tab === "all"
               ? "bg-pulse-accent text-white"
               : "text-pulse-muted hover:text-white"
@@ -197,41 +223,39 @@ function AlertsContent() {
         <button
           type="button"
           onClick={() => setTab("unread")}
-          className={`relative flex-1 rounded-lg py-2 text-sm font-semibold transition-colors ${
+          className={`relative flex-1 rounded-lg py-2.5 text-sm font-bold uppercase tracking-wide transition-colors ${
             tab === "unread"
               ? "bg-pulse-accent text-white"
               : "text-pulse-muted hover:text-white"
           }`}
         >
           Unread
-          {unreadCount > 0 && tab !== "unread" && (
-            <span className="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-pulse-accent px-1 text-[10px] text-white">
+          {unreadCount > 0 && tab !== "unread" ? (
+            <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold text-white">
               {unreadCount}
             </span>
-          )}
+          ) : null}
         </button>
       </div>
 
       {visible.length === 0 ? (
-        <div className="pulse-card px-6 py-12 text-center">
-          <p className="text-3xl">🔔</p>
-          <p className="mt-3 text-sm text-pulse-muted">
-            {tab === "unread"
-              ? "You're all caught up"
-              : "No alerts yet from your watchlist"}
-          </p>
-          <p className="mt-2 text-xs text-pulse-label">
-            Whale trades from starred traders show up here in real time
-          </p>
-          <Link
-            href="/following"
-            className="mt-5 inline-block text-sm font-semibold text-pulse-accent"
-          >
-            Manage watchlist →
-          </Link>
-        </div>
+        tab === "unread" ? (
+          <FeedEmptyState
+            icon="🔔"
+            title="You're all caught up"
+            description="Unread alerts from whales you follow will show up here when they enter or exit a play."
+          />
+        ) : (
+          <FeedEmptyState
+            icon="🔔"
+            title="No alerts yet"
+            description="Add whales to your watchlist and you'll see their entries and exits here in real time."
+            actionLabel="Go to Watchlist"
+            actionHref="/following"
+          />
+        )
       ) : (
-        <>
+        <div className="rounded-2xl border border-pulse-border bg-pulse-card px-2">
           <AlertSection
             title="Today"
             alerts={todayAlerts}
@@ -244,7 +268,7 @@ function AlertsContent() {
             now={now}
             onRead={markRead}
           />
-        </>
+        </div>
       )}
     </main>
   );

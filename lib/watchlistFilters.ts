@@ -7,7 +7,8 @@ export type WatchlistSort =
   | "recently_active"
   | "highest_win_rate"
   | "most_open_positions"
-  | "top_roi";
+  | "top_roi"
+  | "highest_ev";
 
 export type WatchlistMarketFilter = "all" | MarketCategory;
 
@@ -26,6 +27,7 @@ export interface WatchlistProfile {
   trackRecord: TrackRecord | null;
   openPositionCount: number;
   openPositions: TraderOpenPosition[];
+  avgEv: number | null;
   loading: boolean;
 }
 
@@ -110,6 +112,8 @@ export function applyWatchlistFilters(
         return b.openPositionCount - a.openPositionCount;
       case "top_roi":
         return (b.trackRecord?.roi ?? -Infinity) - (a.trackRecord?.roi ?? -1);
+      case "highest_ev":
+        return (b.avgEv ?? -Infinity) - (a.avgEv ?? -Infinity);
       case "recently_active":
       default:
         return latestActivityAt(b) - latestActivityAt(a);
@@ -130,4 +134,17 @@ export function formatRoi(roi: number | null | undefined): string {
   const pct = roi <= 1 ? roi * 100 : roi;
   const sign = pct >= 0 ? "+" : "";
   return `${sign}${Math.round(pct)}%`;
+}
+
+export function roiColorClass(roi: number | null | undefined): string {
+  if (roi == null || !Number.isFinite(roi)) return "text-white";
+  const pct = roi <= 1 ? roi * 100 : roi;
+  return pct >= 0 ? "text-pulse-yes" : "text-pulse-no";
+}
+
+export function formatAvgEv(avgEv: number | null | undefined): string {
+  if (avgEv == null || !Number.isFinite(avgEv)) return "—";
+  const pct = avgEv <= 1 ? avgEv * 100 : avgEv;
+  const sign = pct >= 0 ? "+" : "";
+  return `${sign}${pct.toFixed(1)}%`;
 }
