@@ -3,6 +3,7 @@ import {
   bigint,
   bigserial,
   boolean,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -575,14 +576,14 @@ export const kalshiShadowTrades = pgTable(
     /** Kalshi trade_id from the API stream. */
     tradeId: text("trade_id").primaryKey(),
     ticker: text("ticker").notNull(),
-    size: real("size").notNull(),
+    size: doublePrecision("size").notNull(),
     tradedAt: timestamp("traded_at", { withTimezone: true, mode: "date" }).notNull(),
-    entryPrice: real("entry_price").notNull(),
+    entryPrice: doublePrecision("entry_price").notNull(),
     takerSide: text("taker_side"),
     takerOutcomeSide: text("taker_outcome_side"),
     takerBookSide: text("taker_book_side"),
     isBlockTrade: boolean("is_block_trade").notNull().default(false),
-    usdNotional: real("usd_notional"),
+    usdNotional: doublePrecision("usd_notional"),
     rawPayload: jsonb("raw_payload"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .defaultNow()

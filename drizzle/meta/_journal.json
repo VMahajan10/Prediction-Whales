@@ -71,6 +71,13 @@
       "when": 1785455000000,
       "tag": "0010_x_post_queue_media",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1785456000000,
+      "tag": "0011_kalshi_shadow_float8",
+      "breakpoints": true
     }
   ]
 }
