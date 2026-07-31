@@ -41,6 +41,7 @@ export function buildKalshiShadowTradeRow(input: KalshiShadowTradeInput) {
 /**
  * Persist a Kalshi trade event for internal shadow P&L tracking.
  * Dedupes on trade_id — safe to call on every poll/notify.
+ * Trade-level only; never joined to whale_registry (OQ-2).
  */
 export async function persistKalshiShadowTrade(
   input: KalshiShadowTradeInput

@@ -1,8 +1,13 @@
 import { TwitterApi } from "twitter-api-v2";
 import type { XPostQueue } from "@/lib/crossmarket/store/schema";
+import {
+  generateWhaleReceiptPng,
+  resolveWhaleReceiptData,
+} from "@/lib/x-agent/generateWhaleReceiptPng";
 import { POST_STATUS } from "@/lib/x-agent/postStatus";
 import { updateQueueById } from "@/lib/x-agent/reviewDb";
 
+const LOG_PREFIX = "[publishXPostQueueItem]";
 const TWITTER_CREDENTIAL_KEYS = [
   "X_API_KEY",
   "X_API_SECRET",
@@ -16,6 +21,7 @@ export interface PublishQueuePostResult {
   ok: boolean;
   skipped?: boolean;
   tweetId?: string;
+  mediaId?: string;
   error?: string;
 }
 
@@ -49,8 +55,31 @@ function validateTwitterCredentials():
   };
 }
 
+async function uploadReceiptMedia(
+  client: TwitterApi,
+  item: XPostQueue
+): Promise<string | null> {
+  if (item.xMediaId?.trim()) {
+    return item.xMediaId.trim();
+  }
+
+  try {
+    const receiptData = await resolveWhaleReceiptData(item);
+    const pngBuffer = await generateWhaleReceiptPng(receiptData);
+    const mediaId = await client.v1.uploadMedia(pngBuffer, { type: "png" });
+    return mediaId;
+  } catch (error) {
+    console.warn(
+      `${LOG_PREFIX} Receipt image generation/upload failed for queue id=${item.id} — posting text only`,
+      error instanceof Error ? error.message : error
+    );
+    return null;
+  }
+}
+
 /**
  * Post a scheduled queue item to X and mark it PUBLISHED on success.
+ * Generates a whale receipt PNG and attaches it when media upload succeeds.
  * Failures leave the row in SCHEDULED so the cron worker can retry.
  */
 export async function publishXPostQueueItem(
@@ -78,19 +107,28 @@ export async function publishXPostQueueItem(
   });
 
   try {
-    const { data } = await client.readWrite.v2.tweet(text);
+    const mediaId = await uploadReceiptMedia(client, item);
+
+    const response =
+      mediaId != null
+        ? await client.readWrite.v2.tweet(text, {
+            media: { media_ids: [mediaId] },
+          })
+        : await client.readWrite.v2.tweet(text);
+    const { data } = response;
     const dispatchedAt = new Date();
 
     await updateQueueById(item.id, {
       status: POST_STATUS.PUBLISHED,
       xTweetId: data.id,
+      xMediaId: mediaId,
       dispatchedAt,
     });
 
-    return { ok: true, tweetId: data.id };
+    return { ok: true, tweetId: data.id, mediaId: mediaId ?? undefined };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error("[publishXPostQueueItem] Twitter API error:", message);
+    console.error(`${LOG_PREFIX} Twitter API error:`, message);
     return { ok: false, error: message };
   }
 }

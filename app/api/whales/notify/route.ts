@@ -25,6 +25,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (body.source === "kalshi") {
+      return NextResponse.json({ ok: true, skipped: "kalshi_public_posting_disabled" });
+    }
+
     notifyWhaleTradeIfEligible(body as WhaleTrade);
     void processWhaleTradeForXAgent(body as WhaleTrade).catch((error) => {
       console.error(

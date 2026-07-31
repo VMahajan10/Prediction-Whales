@@ -57,6 +57,7 @@
     "@prisma/adapter-pg": "^7.9.0",
     "@prisma/client": "^7.9.0",
     "@upstash/redis": "^1.38.0",
+    "@vercel/og": "^0.11.1",
     "ai": "^6.0.214",
     "drizzle-orm": "^0.44.0",
     "kalshi-typescript": "^3.20.0",

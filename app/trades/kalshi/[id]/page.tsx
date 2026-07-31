@@ -3,11 +3,10 @@
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import KalshiCandlestickChart from "@/components/KalshiCandlestickChart";
 import KalshiAnonymousTradePanel from "@/components/KalshiMarketFlowPanel";
+import KalshiCandlestickChart from "@/components/KalshiCandlestickChart";
 import KalshiMarketMetrics from "@/components/KalshiMarketMetrics";
 import KalshiOrderBookDepth from "@/components/KalshiOrderBookDepth";
-import CopyBetSignal from "@/components/CopyBetSignal";
 import TradeDetailEvArbMetrics from "@/components/arbitrage/TradeDetailEvArbMetrics";
 import { TradeArbitrageSection } from "@/components/ArbitrageBoxSpreadMatrix";
 import LoadErrorCard from "@/components/LoadErrorCard";
@@ -33,8 +32,6 @@ import {
 } from "@/lib/tradeNavigationStore";
 import { useCrossMarketEvIndex } from "@/lib/useCrossMarketEvIndex";
 import { usePipelineTradeEv } from "@/lib/usePipelineEvIndex";
-import { resolveCrossMarketEvForTrade } from "@/lib/resolveTradeCrossMarketEv";
-import type { TradeSummary } from "@/lib/polymarket";
 import { getFullDate, getTimeAgo } from "@/lib/time";
 import {
   formatImpliedProbabilitySummary,
@@ -259,29 +256,6 @@ export default function KalshiTradeDetailPage() {
     return trade?.price ?? 0;
   }, [market, trade?.price]);
 
-  const copyTrade = useMemo((): TradeSummary | null => {
-    if (!trade) return null;
-    return {
-      id: trade.tradeId,
-      title: trade.title,
-      side: trade.side,
-      outcome: trade.outcome,
-      price: trade.price,
-      size: trade.usdNotional,
-      timestamp: trade.timestamp,
-      transactionHash: trade.tradeId,
-    };
-  }, [trade]);
-
-  const tradeEvPercent = useMemo(() => {
-    if (!trade || evIndex.size === 0) return null;
-    const result = resolveCrossMarketEvForTrade(
-      { source: "kalshi", price: trade.price, ticker: trade.ticker },
-      evIndex
-    );
-    return result.reason === "ok" ? result.ev : null;
-  }, [trade, evIndex]);
-
   if (loading && !trade) {
     return <TradeDetailSkeleton />;
   }
@@ -368,17 +342,7 @@ export default function KalshiTradeDetailPage() {
         )}
       </div>
 
-      {copyTrade && (
-        <CopyBetSignal
-          trade={copyTrade}
-          currentProbability={currentPrice}
-          tradeEvPercent={tradeEvPercent}
-          tradeEvSource="kalshi"
-          tradeEvTicker={trade.ticker}
-          platform="kalshi"
-          ctaHref={kalshiHref}
-        />
-      )}
+      <KalshiAnonymousTradePanel ctaHref={kalshiHref} />
 
       {/* SECTION 1: TRADE IDENTITY */}
       <section className="mb-8 rounded-xl border border-pulse-border bg-slate-800 p-6">
@@ -933,9 +897,6 @@ export default function KalshiTradeDetailPage() {
           {quickTake}
         </p>
       </section>
-
-      {/* SECTION 11: ANONYMOUS (replaces whale sections) */}
-      <KalshiAnonymousTradePanel />
 
       {/* SECTION 12: RELATED TRADES */}
       {relatedTrades.length > 0 && (

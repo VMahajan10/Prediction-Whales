@@ -65,8 +65,10 @@ export function feedTradeToWhaleTrade(
 /**
  * When a trade meets whale criteria, fire-and-forget a tweet via the bot API.
  * Dedupes by source + trade id/hash for the lifetime of the server process.
+ * Kalshi trades are never tweeted — public posting is Polymarket-only.
  */
 export function notifyWhaleTradeIfEligible(trade: WhaleTrade): void {
+  if (trade.source === "kalshi") return;
   if (!isWhaleNotional(trade.usdNotional)) return;
 
   const key = whaleTradeDedupKey(trade);
@@ -76,9 +78,14 @@ export function notifyWhaleTradeIfEligible(trade: WhaleTrade): void {
   void triggerTweetWhaleTrade(whaleTradeToTweetPayload(trade));
 }
 
+/**
+ * Kalshi feed hook — intentionally a no-op.
+ * Shadow logging happens in `fetchKalshiTrades` / `kalshi_shadow_trades`.
+ * X-agent posting remains blocked by `KALSHI_PUBLIC_POSTING_DISABLED`.
+ */
 export function notifyKalshiFeedTradeIfEligible(
-  trade: FeedTrade,
-  detectedAt = Date.now()
+  _trade: FeedTrade,
+  _detectedAt = Date.now()
 ): void {
-  notifyWhaleTradeIfEligible(feedTradeToWhaleTrade(trade, detectedAt));
+  return;
 }

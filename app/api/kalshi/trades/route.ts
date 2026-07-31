@@ -1,5 +1,4 @@
 import { fetchKalshiTrades } from "@/lib/kalshiTrades";
-import { notifyKalshiFeedTradeIfEligible } from "@/lib/whaleTweetNotifier";
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -34,10 +33,6 @@ export async function GET(request: Request) {
     const trades = await fetchKalshiTrades(
       Number.isFinite(minTs) ? minTs : undefined
     );
-
-    for (const trade of trades) {
-      notifyKalshiFeedTradeIfEligible(trade);
-    }
 
     const data = { trades, ok: true as const };
     cache = { minTs, data, timestamp: now };

@@ -17,6 +17,7 @@
     "skipLibCheck": true,
     "strict": true,
     "isolatedModules": false,
+    "jsx": "react",
     "declaration": false,
     "sourceMap": true
   },
@@ -28,6 +29,7 @@
     "scripts/workerBootstrap.ts",
     "types/server-fetch.d.ts",
     "lib/x-agent/**/*.ts",
+    "lib/x-agent/**/*.tsx",
     "lib/evPipeline/**/*.ts",
     "lib/arbitrageFinder/**/*.ts",
     "lib/crossmarket/**/*.ts",

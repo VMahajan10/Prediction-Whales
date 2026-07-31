@@ -96,6 +96,8 @@ export async function updateQueueById(
     scheduledFor?: Date | null;
     dispatchedAt?: Date | null;
     xTweetId?: string | null;
+    xMediaId?: string | null;
+    receiptMediaUrl?: string | null;
     decidedBy?: string | null;
     decidedAt?: Date | null;
   }
@@ -124,6 +126,8 @@ export async function updateQueueByReviewToken(
     scheduledFor?: Date | null;
     dispatchedAt?: Date | null;
     xTweetId?: string | null;
+    xMediaId?: string | null;
+    receiptMediaUrl?: string | null;
     decidedBy?: string | null;
     decidedAt?: Date | null;
   }

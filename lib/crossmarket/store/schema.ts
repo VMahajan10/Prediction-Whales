@@ -529,6 +529,10 @@ export const xPostQueue = pgTable(
     }),
     /** X tweet id after successful publish (TradePost.xTweetId). */
     xTweetId: text("x_tweet_id"),
+    /** X media id after receipt image upload (v1.uploadMedia). */
+    xMediaId: text("x_media_id"),
+    /** Optional hosted receipt preview URL (nullable). */
+    receiptMediaUrl: text("receipt_media_url"),
     /** Cofounder email/name who accepted or rejected the draft. */
     decidedBy: text("decided_by"),
     decidedAt: timestamp("decided_at", {
@@ -562,7 +566,8 @@ export const xPostQueue = pgTable(
 
 /**
  * Internal shadow log for Kalshi trades — not eligible for public X posting.
- * Stores stream identifiers available from the Kalshi public trades API.
+ * Keyed on Kalshi `trade_id` (per execution). Do not join to whale_registry or
+ * synthesize trader identity columns — see docs/Kalshi Whale Attribution Audit.md.
  */
 export const kalshiShadowTrades = pgTable(
   "kalshi_shadow_trades",

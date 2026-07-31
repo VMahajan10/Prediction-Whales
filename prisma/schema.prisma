@@ -188,6 +188,8 @@ model XPostQueue {
   reviewToken    String    @unique @map("review_token")
   scheduledFor   DateTime? @map("scheduled_for")
   xTweetId       String?   @map("x_tweet_id")
+  xMediaId       String?   @map("x_media_id")
+  receiptMediaUrl String?  @map("receipt_media_url")
   decidedBy      String?   @map("decided_by")
   decidedAt      DateTime? @map("decided_at")
   dispatchedAt   DateTime? @map("dispatched_at")

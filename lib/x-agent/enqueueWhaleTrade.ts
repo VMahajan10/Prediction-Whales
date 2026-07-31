@@ -130,6 +130,11 @@ export async function processWhaleTradeForXAgent(
   trade: WhaleTrade,
   metrics?: GateSummary | GateMetricsCollector
 ): Promise<void> {
+  if (trade.source === "kalshi") {
+    persistKalshiShadowTradeFromWhale(trade);
+    return;
+  }
+
   const metricsCollector = resolveGateMetricsCollector(metrics);
   if (metricsCollector) {
     metricsCollector.recordTradeEvaluated();

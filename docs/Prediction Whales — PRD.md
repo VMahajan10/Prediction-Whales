@@ -165,14 +165,14 @@ Feed → Details → Copy Play (deep link out) · Feed/Details → Whale Profile
 | Design    | Design-system handoff (tokens/components) delivered?     | `Jeremie` | `Open`        |
 | Product   | Resolved-bets floor decided (OQ-1b)?                     | `Rahul`   | `Open`        |
 | Eng       | Trust layer (identity, gate, translation) live in build? | `Vaibhan` | `Open`        |
-| Eng       | Kalshi identity spike resolved (OQ-2)?                   | `Vaibhan` | `Open`        |
+| Eng       | Kalshi identity spike resolved (OQ-2)?                   | `Vaibhan` | `Done`        |
 
 ## 4. Open questions
 
 | #    | Question                                                                             | Status                      |
 | ---- | ------------------------------------------------------------------------------------ | --------------------------- |
 | OQ-1 | Minimum resolved-bets floor                                                          | `Open` `Rahul`              |
-| OQ-2 | Kalshi whale identity: attributable within API/ToS? If not, reduced card vs exclude? | `Open` `Vaibhan`            |
+| OQ-2 | Kalshi whale identity: attributable within API/ToS? If not, reduced card vs exclude? | `Resolved` `Vaibhan` — Reduced Card in feed + X agent excluded; see `docs/Kalshi Whale Attribution Audit.md` |
 | OQ-3 | Refresh vs line movement: does ≤15s leave time to act?                               | `Open`                      |
 | OQ-4 | Copy friction: deep link assumes funded platform account. Where does conversion die? | `Open`  <br>measure in beta |
 | OQ-5 | AVG CLV: computable from Polymarket data? Definition + fallback                      | `Open` `Vaibhan`            |
