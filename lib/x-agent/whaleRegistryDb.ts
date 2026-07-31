@@ -1,5 +1,3 @@
-import "server-only";
-
 import type { WhaleRegistry } from "@/lib/crossmarket/store/schema";
 import { getPrisma, isPrismaEnabled } from "@/lib/prisma";
 
