@@ -215,7 +215,7 @@ describe("evaluateTradeGateMatrix", () => {
 });
 
 describe("evaluateTradeEligibility", () => {
-  it("rejects Kalshi trade payloads with KALSHI_SOURCE_REJECTED", async () => {
+  it("rejects Kalshi trade payloads with KALSHI_PUBLIC_POSTING_DISABLED", async () => {
     const result = await evaluateTradeEligibility(
       makeTrade({ source: "kalshi" }),
       makeWhale(),
@@ -224,7 +224,7 @@ describe("evaluateTradeEligibility", () => {
     );
 
     expect(result.eligible).toBe(false);
-    expect(result.reason).toBe("KALSHI_SOURCE_REJECTED");
+    expect(result.reason).toBe("KALSHI_PUBLIC_POSTING_DISABLED");
     expect(result.matrix.passesSource).toBe(false);
   });
 

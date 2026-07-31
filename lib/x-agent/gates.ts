@@ -24,10 +24,17 @@ import {
   translateMarketAndSide,
   type RawPolymarketTrade,
 } from "@/lib/x-agent/translator";
+import {
+  KALSHI_PUBLIC_POSTING_DISABLED,
+  isPostQueueSourceAllowed,
+  logPostQueueSourceSkip,
+} from "@/lib/x-agent/postQueueGates";
 import { isAnonymousWalletAddress } from "@/lib/x-agent/whaleRegistryDb";
 
+export { KALSHI_PUBLIC_POSTING_DISABLED } from "@/lib/x-agent/postQueueGates";
+
 export const GATE_REJECTION_REASONS = [
-  "KALSHI_SOURCE_REJECTED",
+  "KALSHI_PUBLIC_POSTING_DISABLED",
   "BELOW_RESOLVED_BETS",
   "LOW_EV",
   "BELOW_STAKE_FLOOR",
@@ -151,12 +158,7 @@ export function logGateCheck(tradeId: string): void {
 }
 
 export function logSourceSkip(tradeId?: string): void {
-  const message = "[Fail: Source] Trade is from Kalshi (Polymarket required)";
-  if (tradeId) {
-    gateLog(tradeId, message);
-    return;
-  }
-  console.log(message);
+  logPostQueueSourceSkip(tradeId);
 }
 
 function logStakeGate(
@@ -199,7 +201,7 @@ function resolvePrimaryFailureReason(
   matrix: TradeGateMatrix,
   whale?: WhaleRegistry | null
 ): GateRejectionReason {
-  if (!matrix.passesSource) return "KALSHI_SOURCE_REJECTED";
+  if (!matrix.passesSource) return KALSHI_PUBLIC_POSTING_DISABLED;
   if (!matrix.passesEv) return "BELOW_TRADE_EV";
   if (!matrix.passesStake) return "BELOW_STAKE_FLOOR";
   if (!matrix.passesCredibility) {
@@ -311,7 +313,7 @@ export function evaluateTradeGateMatrix(
   const walletResolvedBets = whale?.resolvedBetsCount ?? null;
   const walletAvgEv = whale?.avgEv ?? null;
 
-  const passesSource = trade.source === "polymarket";
+  const passesSource = isPostQueueSourceAllowed(trade.source);
   const passesEv =
     tradeEvDecimal != null && tradeEvDecimal >= MIN_TRADE_EV_DECIMAL;
   const stakeFloor = resolveTradeStakeFloor(trade);
@@ -360,24 +362,14 @@ export function evaluateTradeGateMatrix(
 }
 
 /**
- * Cheap deterministic gates (steps 1–4) evaluated in strict order with short-circuit.
- * Does not invoke trade EV / OpenAI. Kalshi source is rejected before step 1.
+ * Cheap deterministic gates (steps 1–3) evaluated in strict order with short-circuit.
+ * Does not invoke trade EV / OpenAI. Source gate runs separately via postQueueGates.
  */
 export function evaluateDeterministicPreGates(
   trade: TradePayload,
   nowMs = Date.now()
 ): PreGateShortCircuitResult {
   logGateCheck(trade.tradeId);
-
-  if (trade.source !== "polymarket") {
-    logSourceSkip(trade.tradeId);
-    return {
-      passed: false,
-      reason: "KALSHI_SOURCE_REJECTED",
-      failedStep: "source",
-    };
-  }
-  gateLog(trade.tradeId, "[Pass: Source] Polymarket trade");
 
   const tradeAgeMs = nowMs - tradeTimestampMs(trade.timestamp);
   if (tradeAgeMs > MAX_TRADE_AGE_MS) {
@@ -523,7 +515,7 @@ export async function handlePreGateRejection(
   const metricsCollector = resolveGateMetricsCollector(options?.metrics);
   if (metricsCollector) {
     switch (result.reason) {
-      case "KALSHI_SOURCE_REJECTED":
+      case "KALSHI_PUBLIC_POSTING_DISABLED":
       case "STALE_TRADE":
       case "BELOW_STAKE_FLOOR":
       case "ILLEGIBLE_MARKET":

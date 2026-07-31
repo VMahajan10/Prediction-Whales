@@ -15,6 +15,8 @@ import {
   handlePreGateRejection,
   type TradePayload,
 } from "@/lib/x-agent/gates";
+import { persistKalshiShadowTradeFromWhale } from "@/lib/x-agent/kalshiShadowTrades";
+import { evaluatePostQueueSourceGate } from "@/lib/x-agent/postQueueGates";
 import {
   MIN_WALLET_AVG_EV_DECIMAL,
   MIN_WALLET_RESOLVED_BETS,
@@ -146,7 +148,28 @@ export async function processWhaleTradeForXAgent(
   );
   const metricsOptions = { metrics: metricsCollector ?? metrics };
 
-  // Steps 1–3 (+ Polymarket source): freshness → stake → alignment. Short-circuit.
+  // Step 0: Polymarket-only public posting gate (Kalshi → shadow tracking only).
+  const sourceGate = evaluatePostQueueSourceGate({
+    source: trade.source,
+    tradeId: trade.id,
+  });
+  if (!sourceGate.passed) {
+    if (trade.source === "kalshi") {
+      persistKalshiShadowTradeFromWhale(trade);
+    }
+    await handlePreGateRejection(
+      payload,
+      {
+        passed: false,
+        reason: sourceGate.reason,
+        failedStep: "source",
+      },
+      metricsOptions
+    );
+    return;
+  }
+
+  // Steps 1–3: freshness → stake → alignment. Short-circuit.
   const preGate = evaluateDeterministicPreGates(payload, nowMs);
   if (!preGate.passed || !preGate.translation) {
     await handlePreGateRejection(payload, preGate, metricsOptions);

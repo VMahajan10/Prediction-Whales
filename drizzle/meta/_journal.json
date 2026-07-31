@@ -57,6 +57,13 @@
       "when": 1785453000000,
       "tag": "0008_x_post_queue_ev_gloss",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1785454000000,
+      "tag": "0009_kalshi_shadow_trades",
+      "breakpoints": true
     }
   ]
 }

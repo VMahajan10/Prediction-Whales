@@ -1,4 +1,5 @@
 import { resolveKalshiTitles } from "@/lib/kalshiTitleResolver";
+import { persistKalshiShadowTrade } from "@/lib/x-agent/kalshiShadowTrades";
 
 const KALSHI_TRADES_URL =
   "https://api.elections.kalshi.com/trade-api/v2/markets/trades";
@@ -33,6 +34,27 @@ interface KalshiRawTrade {
   taker_outcome_side?: "yes" | "no";
   taker_book_side?: "bid" | "ask";
   is_block_trade?: boolean;
+}
+
+export type { KalshiRawTrade };
+
+function shadowInputFromRaw(
+  raw: KalshiRawTrade,
+  normalized: FeedTrade
+): Parameters<typeof persistKalshiShadowTrade>[0] {
+  return {
+    tradeId: raw.trade_id,
+    ticker: raw.ticker,
+    size: normalized.size,
+    timestamp: normalized.timestamp,
+    entryPrice: normalized.price,
+    takerSide: raw.taker_side,
+    takerOutcomeSide: raw.taker_outcome_side ?? null,
+    takerBookSide: raw.taker_book_side ?? null,
+    isBlockTrade: raw.is_block_trade === true,
+    usdNotional: normalized.usdNotional,
+    rawPayload: raw as unknown as Record<string, unknown>,
+  };
 }
 
 const SKEW_TOLERANCE_SEC = 5;
@@ -118,7 +140,10 @@ export async function fetchKalshiTrades(
       titleCache.get(raw.ticker) ?? raw.ticker;
 
     const normalized = normalizeKalshiTrade(raw, title, nowEpochSeconds);
-    if (normalized) trades.push(normalized);
+    if (!normalized) continue;
+
+    void persistKalshiShadowTrade(shadowInputFromRaw(raw, normalized));
+    trades.push(normalized);
   }
 
   return trades;

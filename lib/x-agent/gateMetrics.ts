@@ -131,7 +131,7 @@ export function recordGateMatrixFailures(
 export function recordPreGateFailure(
   metrics: GateSummary,
   reason:
-    | "KALSHI_SOURCE_REJECTED"
+    | "KALSHI_PUBLIC_POSTING_DISABLED"
     | "STALE_TRADE"
     | "BELOW_STAKE_FLOOR"
     | "ILLEGIBLE_MARKET"
@@ -141,7 +141,7 @@ export function recordPreGateFailure(
   whale?: CredibilityGateWhale | null
 ): void {
   switch (reason) {
-    case "KALSHI_SOURCE_REJECTED":
+    case "KALSHI_PUBLIC_POSTING_DISABLED":
       metrics.failedKalshiSource += 1;
       break;
     case "STALE_TRADE":
@@ -178,7 +178,7 @@ export interface GateMetricsCollector {
   ): void;
   recordPreGateFailure(
     reason:
-      | "KALSHI_SOURCE_REJECTED"
+      | "KALSHI_PUBLIC_POSTING_DISABLED"
       | "STALE_TRADE"
       | "BELOW_STAKE_FLOOR"
       | "ILLEGIBLE_MARKET"
@@ -240,7 +240,7 @@ export class RollingGateMatrixTracker implements GateMetricsCollector {
 
   recordPreGateFailure(
     reason:
-      | "KALSHI_SOURCE_REJECTED"
+      | "KALSHI_PUBLIC_POSTING_DISABLED"
       | "STALE_TRADE"
       | "BELOW_STAKE_FLOOR"
       | "ILLEGIBLE_MARKET"

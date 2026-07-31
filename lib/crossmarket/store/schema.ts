@@ -560,6 +560,37 @@ export const xPostQueue = pgTable(
   ],
 );
 
+/**
+ * Internal shadow log for Kalshi trades — not eligible for public X posting.
+ * Stores stream identifiers available from the Kalshi public trades API.
+ */
+export const kalshiShadowTrades = pgTable(
+  "kalshi_shadow_trades",
+  {
+    /** Kalshi trade_id from the API stream. */
+    tradeId: text("trade_id").primaryKey(),
+    ticker: text("ticker").notNull(),
+    size: real("size").notNull(),
+    tradedAt: timestamp("traded_at", { withTimezone: true, mode: "date" }).notNull(),
+    entryPrice: real("entry_price").notNull(),
+    takerSide: text("taker_side"),
+    takerOutcomeSide: text("taker_outcome_side"),
+    takerBookSide: text("taker_book_side"),
+    isBlockTrade: boolean("is_block_trade").notNull().default(false),
+    usdNotional: real("usd_notional"),
+    rawPayload: jsonb("raw_payload"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("kalshi_shadow_trades_ticker_traded_at_idx").on(
+      table.ticker,
+      table.tradedAt.desc(),
+    ),
+  ],
+);
+
 /** Append-only audit log for X post gate decisions per trade. */
 export const xPostLog = pgTable(
   "x_post_log",
@@ -593,3 +624,6 @@ export type XPostQueueInsert = typeof xPostQueue.$inferInsert;
 
 export type XPostLog = typeof xPostLog.$inferSelect;
 export type XPostLogInsert = typeof xPostLog.$inferInsert;
+
+export type KalshiShadowTrade = typeof kalshiShadowTrades.$inferSelect;
+export type KalshiShadowTradeInsert = typeof kalshiShadowTrades.$inferInsert;
