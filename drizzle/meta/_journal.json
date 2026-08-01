@@ -78,6 +78,13 @@
       "when": 1785456000000,
       "tag": "0011_kalshi_shadow_float8",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1785457000000,
+      "tag": "0012_kalshi_shadow_taker_book_side",
+      "breakpoints": true
     }
   ]
 }

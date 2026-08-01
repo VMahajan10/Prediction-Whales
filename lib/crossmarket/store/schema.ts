@@ -569,6 +569,10 @@ export const xPostQueue = pgTable(
  * Internal shadow log for Kalshi trades — not eligible for public X posting.
  * Keyed on Kalshi `trade_id` (per execution). Do not join to whale_registry or
  * synthesize trader identity columns — see docs/Kalshi Whale Attribution Audit.md.
+ *
+ * Postgres columns (snake_case):
+ * trade_id, ticker, size, traded_at, entry_price, taker_side, taker_outcome_side,
+ * taker_book_side, is_block_trade, usd_notional, raw_payload, created_at
  */
 export const kalshiShadowTrades = pgTable(
   "kalshi_shadow_trades",
