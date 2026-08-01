@@ -1,21 +1,34 @@
+/**
+ * Shared credibility thresholds for product feed and X-agent post queue.
+ * MIN_RESOLVED_BETS matches the current Polymarket closed-positions API capture
+ * ceiling — wallets below this lack enough resolved history for reliable scoring.
+ */
+export const CREDIBILITY_CONFIG = {
+  MIN_RESOLVED_BETS: 300,
+  MIN_STAKE_USD: 500,
+  MIN_AVG_EV: 0.03,
+} as const;
+
 /** Minimum USD stake for qualified whale feed trades. */
-export const MIN_STAKE_THRESHOLD = 500;
+export const MIN_STAKE_THRESHOLD = CREDIBILITY_CONFIG.MIN_STAKE_USD;
 
 /** Minimum wallet historical avg EV for qualified feed (+3.0%). */
-export const MIN_AVG_EV_THRESHOLD = 0.03;
+export const MIN_AVG_EV_THRESHOLD = CREDIBILITY_CONFIG.MIN_AVG_EV;
 
-/** Minimum resolved bets for wallet credibility in qualified feeds (Issue 17 interim). */
-export const MIN_FEED_RESOLVED_BETS = 300;
+/** Minimum resolved bets for wallet credibility in qualified feeds. */
+export const MIN_FEED_RESOLVED_BETS = CREDIBILITY_CONFIG.MIN_RESOLVED_BETS;
 
 export function meetsFeedStakeThreshold(stakeUsd: number): boolean {
-  return Number.isFinite(stakeUsd) && stakeUsd >= MIN_STAKE_THRESHOLD;
+  return Number.isFinite(stakeUsd) && stakeUsd >= CREDIBILITY_CONFIG.MIN_STAKE_USD;
 }
 
 export function meetsWalletAvgEvThreshold(
   avgEv: number | null | undefined
 ): boolean {
   return (
-    avgEv != null && Number.isFinite(avgEv) && avgEv >= MIN_AVG_EV_THRESHOLD
+    avgEv != null &&
+    Number.isFinite(avgEv) &&
+    avgEv >= CREDIBILITY_CONFIG.MIN_AVG_EV
   );
 }
 
@@ -25,14 +38,15 @@ export function meetsFeedResolvedBetsThreshold(
   return (
     resolvedCount != null &&
     Number.isFinite(resolvedCount) &&
-    resolvedCount >= MIN_FEED_RESOLVED_BETS
+    resolvedCount >= CREDIBILITY_CONFIG.MIN_RESOLVED_BETS
   );
 }
 
-export interface FeedQualificationInput {
+export interface FeedQualificationTrade {
   stakeUsd: number;
   walletAvgEv?: number | null;
-  /** Wallet resolved bet count (Issue 17 interim floor: 300). */
+  resolvedBetCount?: number | null;
+  /** @deprecated Use resolvedBetCount */
   resolvedBetsCount?: number | null;
 }
 
@@ -40,24 +54,30 @@ export interface FeedQualificationInput {
  * Credibility gate for product feed trades — all criteria required:
  * stake >= $500, wallet avg EV >= +3.0%, resolved bets >= 300.
  */
-export function isQualifiedFeedTrade(input: FeedQualificationInput): boolean {
+export function isQualifiedFeedTrade(trade: FeedQualificationTrade): boolean {
+  const resolvedBetCount = trade.resolvedBetCount ?? trade.resolvedBetsCount;
+
   return (
-    meetsFeedStakeThreshold(input.stakeUsd) &&
-    meetsWalletAvgEvThreshold(input.walletAvgEv) &&
-    meetsFeedResolvedBetsThreshold(input.resolvedBetsCount)
+    meetsFeedStakeThreshold(trade.stakeUsd) &&
+    meetsWalletAvgEvThreshold(trade.walletAvgEv) &&
+    meetsFeedResolvedBetsThreshold(resolvedBetCount)
   );
 }
 
 export interface WalletFeedQualificationInput {
   avgEv: number | null | undefined;
-  resolvedBetsCount: number | null | undefined;
+  resolvedBetCount?: number | null;
+  /** @deprecated Use resolvedBetCount */
+  resolvedBetsCount?: number | null;
 }
 
 export function isQualifiedWalletForFeed(
   input: WalletFeedQualificationInput
 ): boolean {
+  const resolvedBetCount = input.resolvedBetCount ?? input.resolvedBetsCount;
+
   return (
-    meetsFeedResolvedBetsThreshold(input.resolvedBetsCount) &&
+    meetsFeedResolvedBetsThreshold(resolvedBetCount) &&
     meetsWalletAvgEvThreshold(input.avgEv)
   );
 }

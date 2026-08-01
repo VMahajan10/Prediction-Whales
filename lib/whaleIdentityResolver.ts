@@ -39,10 +39,14 @@ const WHALE_NOUNS = [
   "Paragon",
 ] as const;
 
+import { resolveWalletClvScore } from "@/lib/metrics/clv";
+
 export interface WhaleRegistryStats {
   winRate?: number | null;
   resolvedBetsCount?: number | null;
   avgEv?: number | null;
+  roi?: number | null;
+  clvScore?: number | null;
 }
 
 export interface ResolvedWhaleIdentity {
@@ -52,6 +56,7 @@ export interface ResolvedWhaleIdentity {
   resolvedBetsCount: number | null;
   avgEv: number | null;
   roi: number | null;
+  clvScore?: number;
 }
 
 function normalizeWallet(wallet: string): string {
@@ -191,7 +196,14 @@ export function resolveWhaleIdentity(
 
   const avgEv =
     stats?.avgEv != null && Number.isFinite(stats.avgEv) ? stats.avgEv : null;
-  const roi = avgEv;
+  const roi =
+    stats?.roi != null && Number.isFinite(stats.roi)
+      ? stats.roi
+      : avgEv;
+  const clvScore =
+    stats?.clvScore != null && Number.isFinite(stats.clvScore)
+      ? stats.clvScore
+      : resolveWalletClvScore({ roi, avgEv }) ?? undefined;
 
   return {
     pseudonym: sanitizeWhaleDisplayName(pseudonym, normalized),
@@ -207,5 +219,6 @@ export function resolveWhaleIdentity(
         : null,
     avgEv,
     roi,
+    ...(clvScore != null ? { clvScore } : {}),
   };
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   BELOW_EV_THRESHOLD,
+  BELOW_RESOLVED_BETS,
   evaluatePostQueueCredibilityGate,
   evaluatePostQueueSourceGate,
   isPostQueueSourceAllowed,
@@ -9,9 +10,10 @@ import {
   STAKE_TOO_LOW,
 } from "@/lib/x-agent/postQueueGates";
 import {
+  CREDIBILITY_CONFIG,
   MIN_AVG_EV_THRESHOLD,
   MIN_STAKE_THRESHOLD,
-} from "@/lib/x-agent/gateMetrics";
+} from "@/lib/feedQualification";
 
 describe("postQueueGates", () => {
   it("hardcodes Kalshi public posting as disabled", () => {
@@ -48,10 +50,23 @@ describe("postQueueGates", () => {
       tradeId: "trade-stake-low",
       stakeNotional: MIN_STAKE_THRESHOLD - 1,
       walletAvgEv: MIN_AVG_EV_THRESHOLD + 0.01,
+      resolvedBetCount: CREDIBILITY_CONFIG.MIN_RESOLVED_BETS,
     });
 
     expect(result.passed).toBe(false);
     expect(result.reason).toBe(STAKE_TOO_LOW);
+  });
+
+  it("rejects wallets below the resolved-bets threshold", () => {
+    const result = evaluatePostQueueCredibilityGate({
+      tradeId: "trade-resolved-low",
+      stakeNotional: MIN_STAKE_THRESHOLD,
+      walletAvgEv: MIN_AVG_EV_THRESHOLD,
+      resolvedBetCount: CREDIBILITY_CONFIG.MIN_RESOLVED_BETS - 1,
+    });
+
+    expect(result.passed).toBe(false);
+    expect(result.reason).toBe(BELOW_RESOLVED_BETS);
   });
 
   it("rejects wallets below the avg EV threshold", () => {
@@ -59,6 +74,7 @@ describe("postQueueGates", () => {
       tradeId: "trade-ev-low",
       stakeNotional: MIN_STAKE_THRESHOLD,
       walletAvgEv: MIN_AVG_EV_THRESHOLD - 0.001,
+      resolvedBetCount: CREDIBILITY_CONFIG.MIN_RESOLVED_BETS,
     });
 
     expect(result.passed).toBe(false);
@@ -70,17 +86,19 @@ describe("postQueueGates", () => {
       tradeId: "trade-ev-negative",
       stakeNotional: MIN_STAKE_THRESHOLD,
       walletAvgEv: -0.011,
+      resolvedBetCount: CREDIBILITY_CONFIG.MIN_RESOLVED_BETS,
     });
 
     expect(result.passed).toBe(false);
     expect(result.reason).toBe(BELOW_EV_THRESHOLD);
   });
 
-  it("passes when stake and wallet avg EV meet thresholds", () => {
+  it("passes when stake, resolved bets, and wallet avg EV meet thresholds", () => {
     const result = evaluatePostQueueCredibilityGate({
       tradeId: "trade-qualified",
       stakeNotional: MIN_STAKE_THRESHOLD,
       walletAvgEv: MIN_AVG_EV_THRESHOLD,
+      resolvedBetCount: CREDIBILITY_CONFIG.MIN_RESOLVED_BETS,
     });
 
     expect(result.passed).toBe(true);

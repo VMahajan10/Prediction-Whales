@@ -9,6 +9,7 @@ import {
   formatStakeFloorSummaryLabel,
   STAKE_FLOOR_DEFAULT_USD,
 } from "@/lib/x-agent/stakeFloor";
+import { CREDIBILITY_CONFIG } from "@/lib/feedQualification";
 
 /** Minimum live trade EV as display percent (+2.5%). */
 export const HIGH_EV_TRADE_THRESHOLD_PCT = 2.5;
@@ -17,10 +18,10 @@ export const HIGH_EV_TRADE_THRESHOLD_PCT = 2.5;
 export const MIN_TRADE_EV_DECIMAL = 0.025;
 
 /** Minimum USD stake for feed qualification and credibility gate (whale notional). */
-export const MIN_STAKE_THRESHOLD = 500;
+export const MIN_STAKE_THRESHOLD = CREDIBILITY_CONFIG.MIN_STAKE_USD;
 
 /** Minimum wallet historical avg EV for credibility / qualified feeds (+3.0%). */
-export const MIN_AVG_EV_THRESHOLD = 0.03;
+export const MIN_AVG_EV_THRESHOLD = CREDIBILITY_CONFIG.MIN_AVG_EV;
 
 /** Minimum wallet historical avg EV as display percent (+3.0%). */
 export const MIN_AVG_EV_THRESHOLD_PCT = MIN_AVG_EV_THRESHOLD * 100;
@@ -34,7 +35,9 @@ export const MIN_WALLET_AVG_EV_THRESHOLD_PCT = MIN_AVG_EV_THRESHOLD_PCT;
 /** Minimum resolved bets on wallet registry for credibility (default 300). */
 export const MIN_WALLET_RESOLVED_BETS = (() => {
   const parsed = Number(process.env.RESOLVED_BETS_FLOOR);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 300;
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : CREDIBILITY_CONFIG.MIN_RESOLVED_BETS;
 })();
 
 /** Alias used by post-generation filters — same floor as wallet credibility. */

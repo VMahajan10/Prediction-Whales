@@ -33,6 +33,7 @@ describe("whaleIdentityResolver", () => {
     expect(identity.resolvedBetsCount).toBe(412);
     expect(identity.avgEv).toBe(0.035);
     expect(identity.roi).toBe(0.035);
+    expect(identity.clvScore).toBe(0.035);
   });
 
   it("rejects hex-like custom names and falls back to deterministic pseudonyms", () => {

@@ -4,9 +4,12 @@
  */
 
 import {
-  MIN_AVG_EV_THRESHOLD,
+  CREDIBILITY_CONFIG,
+  meetsFeedResolvedBetsThreshold,
+  meetsWalletAvgEvThreshold,
+} from "@/lib/feedQualification";
+import {
   MIN_AVG_EV_THRESHOLD_PCT,
-  MIN_STAKE_THRESHOLD,
 } from "@/lib/x-agent/gateMetrics";
 import type {
   MarketPosition,
@@ -25,6 +28,8 @@ export const STAKE_TOO_LOW = "STAKE_TOO_LOW" as const;
 
 export const BELOW_EV_THRESHOLD = "BELOW_EV_THRESHOLD" as const;
 
+export const BELOW_RESOLVED_BETS = "BELOW_RESOLVED_BETS" as const;
+
 export const UNTRANSLATABLE_MARKET = "UNTRANSLATABLE_MARKET" as const;
 
 export type PostQueueSourceRejectionReason =
@@ -32,7 +37,8 @@ export type PostQueueSourceRejectionReason =
 
 export type PostQueueCredibilityRejectionReason =
   | typeof STAKE_TOO_LOW
-  | typeof BELOW_EV_THRESHOLD;
+  | typeof BELOW_EV_THRESHOLD
+  | typeof BELOW_RESOLVED_BETS;
 
 export interface PostQueueSourceGateInput {
   source: "polymarket" | "kalshi";
@@ -48,6 +54,7 @@ export interface PostQueueCredibilityGateInput {
   tradeId: string;
   stakeNotional: number;
   walletAvgEv?: number | null;
+  resolvedBetCount?: number | null;
 }
 
 export interface PostQueueCredibilityGateResult {
@@ -120,30 +127,43 @@ export function evaluatePostQueueCredibilityGate(
   input: PostQueueCredibilityGateInput
 ): PostQueueCredibilityGateResult {
   const stake = input.stakeNotional;
-  if (!Number.isFinite(stake) || stake < MIN_STAKE_THRESHOLD) {
+  if (!Number.isFinite(stake) || stake < CREDIBILITY_CONFIG.MIN_STAKE_USD) {
     gateLog(
       input.tradeId,
-      `[Fail: Credibility] Stake (${formatStake(stake)}) < ${formatStake(MIN_STAKE_THRESHOLD)} threshold`
+      `[Fail: Credibility] Stake (${formatStake(stake)}) < ${formatStake(CREDIBILITY_CONFIG.MIN_STAKE_USD)} threshold`
     );
     return { passed: false, reason: STAKE_TOO_LOW };
   }
 
+  const resolvedBetCount = input.resolvedBetCount ?? null;
+  if (!meetsFeedResolvedBetsThreshold(resolvedBetCount)) {
+    const resolvedLabel =
+      resolvedBetCount != null && Number.isFinite(resolvedBetCount)
+        ? String(resolvedBetCount)
+        : "N/A";
+    gateLog(
+      input.tradeId,
+      `[Fail: Credibility] resolvedBetCount=${resolvedLabel} (< ${CREDIBILITY_CONFIG.MIN_RESOLVED_BETS})`
+    );
+    return { passed: false, reason: BELOW_RESOLVED_BETS };
+  }
+
   const avgEv = input.walletAvgEv;
-  if (avgEv == null || !Number.isFinite(avgEv) || avgEv < MIN_AVG_EV_THRESHOLD) {
+  if (!meetsWalletAvgEvThreshold(avgEv)) {
     const avgEvPct =
       avgEv != null && Number.isFinite(avgEv)
         ? (avgEv * 100).toFixed(1)
         : "N/A";
     gateLog(
       input.tradeId,
-      `[Fail: Credibility] Wallet avg EV (${avgEvPct}%) < +${MIN_AVG_EV_THRESHOLD_PCT.toFixed(1)}% threshold`
+      `[Fail: Credibility] resolvedBetCount=${resolvedBetCount}, wallet avg EV (${avgEvPct}%) < +${MIN_AVG_EV_THRESHOLD_PCT.toFixed(1)}% threshold`
     );
     return { passed: false, reason: BELOW_EV_THRESHOLD };
   }
 
   gateLog(
     input.tradeId,
-    `[Pass: Credibility] Stake (${formatStake(stake)}) >= ${formatStake(MIN_STAKE_THRESHOLD)}, wallet avg EV (${(avgEv * 100).toFixed(1)}%) >= +${MIN_AVG_EV_THRESHOLD_PCT.toFixed(1)}%`
+    `[Pass: Credibility] Stake (${formatStake(stake)}) >= ${formatStake(CREDIBILITY_CONFIG.MIN_STAKE_USD)}, resolvedBetCount=${resolvedBetCount} >= ${CREDIBILITY_CONFIG.MIN_RESOLVED_BETS}, wallet avg EV (${(avgEv! * 100).toFixed(1)}%) >= +${MIN_AVG_EV_THRESHOLD_PCT.toFixed(1)}%`
   );
 
   return { passed: true };

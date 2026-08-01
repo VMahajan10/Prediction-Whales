@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import {
+  CREDIBILITY_CONFIG,
   isQualifiedFeedTrade,
   meetsFeedStakeThreshold,
   meetsWalletAvgEvThreshold,
@@ -28,11 +29,13 @@ describe("feedQualification", () => {
   });
 
   it("requires stake, wallet avg EV, and resolved bets for feed qualification", () => {
+    expect(CREDIBILITY_CONFIG.MIN_RESOLVED_BETS).toBe(300);
+
     expect(
       isQualifiedFeedTrade({
         stakeUsd: MIN_STAKE_THRESHOLD,
         walletAvgEv: -0.011,
-        resolvedBetsCount: 400,
+        resolvedBetCount: 400,
       })
     ).toBe(false);
 
@@ -40,7 +43,7 @@ describe("feedQualification", () => {
       isQualifiedFeedTrade({
         stakeUsd: MIN_STAKE_THRESHOLD - 1,
         walletAvgEv: MIN_AVG_EV_THRESHOLD,
-        resolvedBetsCount: MIN_FEED_RESOLVED_BETS,
+        resolvedBetCount: MIN_FEED_RESOLVED_BETS,
       })
     ).toBe(false);
 
@@ -48,7 +51,7 @@ describe("feedQualification", () => {
       isQualifiedFeedTrade({
         stakeUsd: MIN_STAKE_THRESHOLD,
         walletAvgEv: MIN_AVG_EV_THRESHOLD,
-        resolvedBetsCount: MIN_FEED_RESOLVED_BETS - 1,
+        resolvedBetCount: MIN_FEED_RESOLVED_BETS - 1,
       })
     ).toBe(false);
 
@@ -56,7 +59,7 @@ describe("feedQualification", () => {
       isQualifiedFeedTrade({
         stakeUsd: MIN_STAKE_THRESHOLD,
         walletAvgEv: null,
-        resolvedBetsCount: 400,
+        resolvedBetCount: 400,
       })
     ).toBe(false);
 
@@ -64,7 +67,7 @@ describe("feedQualification", () => {
       isQualifiedFeedTrade({
         stakeUsd: MIN_STAKE_THRESHOLD,
         walletAvgEv: MIN_AVG_EV_THRESHOLD,
-        resolvedBetsCount: MIN_FEED_RESOLVED_BETS,
+        resolvedBetCount: MIN_FEED_RESOLVED_BETS,
       })
     ).toBe(true);
   });

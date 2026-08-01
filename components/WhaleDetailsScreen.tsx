@@ -36,6 +36,8 @@ export interface WhaleDetailsScreenProps {
     losses: number | null;
     totalBets: number | null;
     avgEv: number | null;
+    roi?: number | null;
+    clvScore?: number;
   };
   edge: EdgeIndicator;
   copyPlayHref: string;

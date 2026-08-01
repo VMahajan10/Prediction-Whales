@@ -4,9 +4,13 @@ import {
   xPostLog,
 } from "@/lib/crossmarket/store/schema";
 import {
+  CREDIBILITY_CONFIG,
+  meetsFeedResolvedBetsThreshold,
+  meetsWalletAvgEvThreshold,
+} from "@/lib/feedQualification";
+import {
   HIGH_EV_TRADE_THRESHOLD_PCT,
   MIN_TRADE_EV_DECIMAL,
-  MIN_STAKE_THRESHOLD,
   MIN_WALLET_AVG_EV_DECIMAL,
   MIN_WALLET_AVG_EV_THRESHOLD_PCT,
   MIN_WALLET_RESOLVED_BETS,
@@ -272,7 +276,7 @@ function logGateMatrix(
   } else {
     gateLog(
       trade.tradeId,
-      `[Fail: Wallet Credibility] wallet=${trade.walletAddress} resolvedBets=${whale?.resolvedBetsCount ?? "NOT_IN_DB"} avgEv=${whale?.avgEv ?? "N/A"}`
+      `[Fail: Wallet Credibility] wallet=${trade.walletAddress} resolvedBetCount=${whale?.resolvedBetsCount ?? "NOT_IN_DB"} avgEv=${whale?.avgEv ?? "N/A"}`
     );
   }
 
@@ -331,10 +335,10 @@ export function evaluateTradeGateMatrix(
   const stakeFloor = resolveTradeStakeFloor(trade);
   const passesStake = trade.stakeNotional >= stakeFloor.floorUsd;
   const passesCredibility =
-    trade.stakeNotional >= MIN_STAKE_THRESHOLD &&
+    trade.stakeNotional >= CREDIBILITY_CONFIG.MIN_STAKE_USD &&
     whale != null &&
-    meetsResolvedBetsThreshold(whale.resolvedBetsCount) &&
-    whale.avgEv >= MIN_AVG_EV;
+    meetsFeedResolvedBetsThreshold(whale.resolvedBetsCount) &&
+    meetsWalletAvgEvThreshold(whale.avgEv);
 
   const marketTranslationGate = evaluatePostQueueMarketTranslationGate({
     tradeId: trade.tradeId,
@@ -480,20 +484,7 @@ export function evaluateWalletCredibilityPreGate(
   if (isAnonymousWalletAddress(trade.walletAddress)) {
     gateLog(
       trade.tradeId,
-      "[Fail: Credibility] Anonymous wallet has no resolved bet history"
-    );
-    return {
-      passed: false,
-      reason: "BELOW_RESOLVED_BETS",
-      failedStep: "credibility",
-    };
-  }
-
-  const resolvedCount = whale?.resolvedBetsCount ?? 0;
-  if (!meetsResolvedBetsThreshold(resolvedCount)) {
-    gateLog(
-      trade.tradeId,
-      `[Fail: Credibility] wallet=${trade.walletAddress} resolvedBets=${resolvedCount} (< ${MIN_RESOLVED_BETS})`
+      `[Fail: Credibility] Anonymous wallet — resolvedBetCount=0 (< ${CREDIBILITY_CONFIG.MIN_RESOLVED_BETS})`
     );
     return {
       passed: false,
@@ -506,11 +497,12 @@ export function evaluateWalletCredibilityPreGate(
     tradeId: trade.tradeId,
     stakeNotional: trade.stakeNotional,
     walletAvgEv: whale?.avgEv,
+    resolvedBetCount: whale?.resolvedBetsCount ?? null,
   });
   if (!credibilityGate.passed) {
     return {
       passed: false,
-      reason: credibilityGate.reason,
+      reason: credibilityGate.reason ?? "BELOW_EV_THRESHOLD",
       failedStep: "credibility",
     };
   }
@@ -518,7 +510,7 @@ export function evaluateWalletCredibilityPreGate(
   if (whale) {
     gateLog(
       trade.tradeId,
-      `[Pass: Wallet Credibility] Registry track record: resolved bets (${whale.resolvedBetsCount}) >= ${MIN_WALLET_RESOLVED_BETS}, wallet avg EV (${formatWalletEvPct(whale.avgEv)}%) >= +${MIN_WALLET_AVG_EV_THRESHOLD_PCT}%`
+      `[Pass: Wallet Credibility] Registry track record: resolvedBetCount=${whale.resolvedBetsCount} (>= ${CREDIBILITY_CONFIG.MIN_RESOLVED_BETS}), wallet avg EV (${formatWalletEvPct(whale.avgEv)}%) >= +${MIN_WALLET_AVG_EV_THRESHOLD_PCT}%`
     );
   }
 

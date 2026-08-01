@@ -69,7 +69,7 @@ function isPolymarketTradeQualifiedForFeed(
   return isQualifiedFeedTrade({
     stakeUsd: trade.usdNotional,
     walletAvgEv: walletQualification.avgEv,
-    resolvedBetsCount: walletQualification.resolvedBetsCount,
+    resolvedBetCount: walletQualification.resolvedBetsCount,
   });
 }
 

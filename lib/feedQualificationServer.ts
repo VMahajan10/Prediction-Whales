@@ -4,6 +4,7 @@ import {
   isQualifiedFeedTrade,
   isQualifiedWalletForFeed,
   meetsFeedStakeThreshold,
+  CREDIBILITY_CONFIG,
   type WalletFeedQualificationInput,
 } from "@/lib/feedQualification";
 import { recordFeedMetrics } from "@/lib/feedMetrics";
@@ -135,11 +136,21 @@ export async function filterQualifiedPolymarketFeedTrades<
     const wallet = trade.proxyWallet?.trim().toLowerCase();
     if (!wallet) return false;
     const walletStats = qualifications[wallet];
-    return isQualifiedFeedTrade({
+    const resolvedBetCount = walletStats?.resolvedBetsCount ?? null;
+    const feedTrade = {
       stakeUsd: trade.size,
       walletAvgEv: walletStats?.avgEv,
-      resolvedBetsCount: walletStats?.resolvedBetsCount,
-    });
+      resolvedBetCount,
+    };
+
+    if (!isQualifiedFeedTrade(feedTrade)) {
+      console.log(
+        `[api/feed] trade rejected by credibility gate: wallet=${wallet} resolvedBetCount=${resolvedBetCount ?? "N/A"} stakeUsd=${trade.size} avgEv=${walletStats?.avgEv ?? "N/A"} floor=${CREDIBILITY_CONFIG.MIN_RESOLVED_BETS}`
+      );
+      return false;
+    }
+
+    return true;
   });
 
   recordFeedMetrics({
