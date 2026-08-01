@@ -12,6 +12,9 @@ import {
   type TradePayload,
 } from "@/lib/x-agent/gates";
 import {
+  SHADOW_UNREGISTERED_STAKE_BYPASS_USD,
+} from "@/lib/x-agent/postQueueGates";
+import {
   STAKE_FLOOR_DEFAULT_USD,
   STAKE_FLOOR_MACRO_POLITICAL_USD,
   STAKE_FLOOR_SPORTS_ENTERTAINMENT_USD,
@@ -174,7 +177,10 @@ describe("evaluateTradeGateMatrix", () => {
 
   it("fails credibility for anonymous zero-address trades without whale lookup", () => {
     const matrix = evaluateTradeGateMatrix({
-      trade: makeTrade({ walletAddress: ANONYMOUS_WALLET_ADDRESS }),
+      trade: makeTrade({
+        walletAddress: ANONYMOUS_WALLET_ADDRESS,
+        stakeNotional: SHADOW_UNREGISTERED_STAKE_BYPASS_USD - 1,
+      }),
       whale: null,
       tradeEvPercent: 3.0,
     });
@@ -182,6 +188,29 @@ describe("evaluateTradeGateMatrix", () => {
     expect(matrix.passesCredibility).toBe(false);
     expect(matrix.passesAll).toBe(false);
     expect(matrix.primaryFailureReason).toBe("BELOW_RESOLVED_BETS");
+  });
+
+  it("allows anonymous high-stake trades through credibility in shadow mode", () => {
+    const previous = process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
+    process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW = "true";
+
+    try {
+      const result = evaluateWalletCredibilityPreGate(
+        makeTrade({
+          walletAddress: ANONYMOUS_WALLET_ADDRESS,
+          stakeNotional: SHADOW_UNREGISTERED_STAKE_BYPASS_USD,
+        }),
+        null
+      );
+
+      expect(result.passed).toBe(true);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
+      } else {
+        process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW = previous;
+      }
+    }
   });
 
   it("applies the macro/political stake tier", () => {

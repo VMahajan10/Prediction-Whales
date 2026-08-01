@@ -5,8 +5,6 @@ import {
 } from "@/lib/crossmarket/store/schema";
 import {
   CREDIBILITY_CONFIG,
-  meetsFeedResolvedBetsThreshold,
-  meetsWalletAvgEvThreshold,
 } from "@/lib/feedQualification";
 import {
   HIGH_EV_TRADE_THRESHOLD_PCT,
@@ -35,6 +33,7 @@ import {
   logPostQueueSourceSkip,
   evaluatePostQueueCredibilityGate,
   evaluatePostQueueMarketTranslationGate,
+  shouldApplyShadowCredibilityOverride,
   STAKE_TOO_LOW,
   BELOW_EV_THRESHOLD,
 } from "@/lib/x-agent/postQueueGates";
@@ -334,11 +333,12 @@ export function evaluateTradeGateMatrix(
     tradeEvDecimal != null && tradeEvDecimal >= MIN_TRADE_EV_DECIMAL;
   const stakeFloor = resolveTradeStakeFloor(trade);
   const passesStake = trade.stakeNotional >= stakeFloor.floorUsd;
-  const passesCredibility =
-    trade.stakeNotional >= CREDIBILITY_CONFIG.MIN_STAKE_USD &&
-    whale != null &&
-    meetsFeedResolvedBetsThreshold(whale.resolvedBetsCount) &&
-    meetsWalletAvgEvThreshold(whale.avgEv);
+  const passesCredibility = evaluatePostQueueCredibilityGate({
+    tradeId: trade.tradeId,
+    stakeNotional: trade.stakeNotional,
+    walletAvgEv: whale?.avgEv ?? null,
+    resolvedBetCount: whale?.resolvedBetsCount ?? null,
+  }).passed;
 
   const marketTranslationGate = evaluatePostQueueMarketTranslationGate({
     tradeId: trade.tradeId,
@@ -481,7 +481,13 @@ export function evaluateWalletCredibilityPreGate(
   trade: TradePayload,
   whale: WhaleRegistry | null | undefined
 ): PreGateShortCircuitResult {
-  if (isAnonymousWalletAddress(trade.walletAddress)) {
+  const shadowOverride = shouldApplyShadowCredibilityOverride({
+    stakeNotional: trade.stakeNotional,
+    resolvedBetCount: whale?.resolvedBetsCount ?? null,
+    walletAvgEv: whale?.avgEv ?? null,
+  });
+
+  if (isAnonymousWalletAddress(trade.walletAddress) && !shadowOverride) {
     gateLog(
       trade.tradeId,
       `[Fail: Credibility] Anonymous wallet — resolvedBetCount=0 (< ${CREDIBILITY_CONFIG.MIN_RESOLVED_BETS})`
@@ -496,8 +502,10 @@ export function evaluateWalletCredibilityPreGate(
   const credibilityGate = evaluatePostQueueCredibilityGate({
     tradeId: trade.tradeId,
     stakeNotional: trade.stakeNotional,
-    walletAvgEv: whale?.avgEv,
-    resolvedBetCount: whale?.resolvedBetsCount ?? null,
+    walletAvgEv: shadowOverride ? MIN_WALLET_AVG_EV_DECIMAL : whale?.avgEv,
+    resolvedBetCount: shadowOverride
+      ? MIN_WALLET_RESOLVED_BETS
+      : whale?.resolvedBetsCount ?? null,
   });
   if (!credibilityGate.passed) {
     return {

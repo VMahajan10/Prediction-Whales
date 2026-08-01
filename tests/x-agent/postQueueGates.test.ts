@@ -4,9 +4,11 @@ import {
   BELOW_RESOLVED_BETS,
   evaluatePostQueueCredibilityGate,
   evaluatePostQueueSourceGate,
+  isAllowUnregisteredWalletsInShadow,
   isPostQueueSourceAllowed,
   KALSHI_PUBLIC_POSTING_DISABLED,
   KALSHI_PUBLIC_POSTING_DISABLED_REASON,
+  SHADOW_UNREGISTERED_STAKE_BYPASS_USD,
   STAKE_TOO_LOW,
 } from "@/lib/x-agent/postQueueGates";
 import {
@@ -103,5 +105,54 @@ describe("postQueueGates", () => {
 
     expect(result.passed).toBe(true);
     expect(result.reason).toBeUndefined();
+  });
+
+  it("bypasses missing registry stats in shadow when stake >= $1,000", () => {
+    const previous = process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
+    process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW = "true";
+
+    try {
+      const result = evaluatePostQueueCredibilityGate({
+        tradeId: "trade-shadow-bypass",
+        stakeNotional: SHADOW_UNREGISTERED_STAKE_BYPASS_USD,
+        walletAvgEv: null,
+        resolvedBetCount: null,
+      });
+
+      expect(result.passed).toBe(true);
+      expect(isAllowUnregisteredWalletsInShadow()).toBe(true);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
+      } else {
+        process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW = previous;
+      }
+    }
+  });
+
+  it("rejects missing registry stats in production shadow-off mode", () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousShadow = process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
+    process.env.NODE_ENV = "production";
+    process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW = "false";
+
+    try {
+      const result = evaluatePostQueueCredibilityGate({
+        tradeId: "trade-prod-reject",
+        stakeNotional: SHADOW_UNREGISTERED_STAKE_BYPASS_USD,
+        walletAvgEv: null,
+        resolvedBetCount: null,
+      });
+
+      expect(result.passed).toBe(false);
+      expect(result.reason).toBe(BELOW_RESOLVED_BETS);
+    } finally {
+      process.env.NODE_ENV = previousNodeEnv;
+      if (previousShadow === undefined) {
+        delete process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
+      } else {
+        process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW = previousShadow;
+      }
+    }
   });
 });

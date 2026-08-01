@@ -18,9 +18,14 @@ import {
 import { persistKalshiShadowTradeFromWhale } from "@/lib/x-agent/kalshiShadowTrades";
 import {
   evaluatePostQueueSourceGate,
+  hydrateWalletForPostQueueCredibility,
+  isAllowUnregisteredWalletsInShadow,
   KALSHI_PUBLIC_POSTING_DISABLED,
+  SHADOW_UNREGISTERED_STAKE_BYPASS_USD,
 } from "@/lib/x-agent/postQueueGates";
 import {
+  MIN_WALLET_AVG_EV_DECIMAL,
+  MIN_WALLET_RESOLVED_BETS,
   type GateSummary,
   type GateMetricsCollector,
   HIGH_EV_TRADE_THRESHOLD_PCT,
@@ -54,7 +59,6 @@ import {
   isAnonymousWalletAddress,
   normalizeWalletAddress,
 } from "@/lib/x-agent/whaleRegistryDb";
-import { resolveWhaleForCredibilityGate } from "@/lib/x-agent/walletCredibility";
 
 export { HIGH_EV_TRADE_THRESHOLD_PCT } from "@/lib/x-agent/gateMetrics";
 
@@ -182,12 +186,12 @@ export async function processWhaleTradeForXAgent(
   }
   const translation = preGate.translation;
 
-  // Step 4: wallet credibility (DB / Polymarket RPC — no OpenAI).
+  // Step 4: wallet credibility (registry → Polymarket Data API hydration).
   let whaleForGates: Awaited<
-    ReturnType<typeof resolveWhaleForCredibilityGate>
+    ReturnType<typeof hydrateWalletForPostQueueCredibility>
   >["whale"] = null;
-  if (!anonymousTrade && isPrismaEnabled()) {
-    const credibility = await resolveWhaleForCredibilityGate(walletAddress);
+  if (!anonymousTrade) {
+    const credibility = await hydrateWalletForPostQueueCredibility(walletAddress);
     whaleForGates = credibility.whale;
     if (credibility.source === "polymarket_api") {
       console.log(
@@ -199,6 +203,16 @@ export async function processWhaleTradeForXAgent(
         }
       );
     }
+  } else if (
+    isAllowUnregisteredWalletsInShadow() &&
+    trade.usdNotional >= SHADOW_UNREGISTERED_STAKE_BYPASS_USD
+  ) {
+    const ensured = await ensureWhaleInRegistry(ANONYMOUS_WALLET_ADDRESS, {
+      resolvedBetsCount: MIN_WALLET_RESOLVED_BETS,
+      avgEv: MIN_WALLET_AVG_EV_DECIMAL,
+      avgStakeNotional: trade.usdNotional,
+    });
+    whaleForGates = ensured?.whale ?? null;
   }
 
   const credibilityGate = evaluateWalletCredibilityPreGate(
@@ -397,6 +411,9 @@ export async function processWhaleTradeForXAgent(
     });
   }
 
+  console.log(
+    `[Gate] tradeId=${payload.tradeId} [Pass: All Gates] Trade queued for review`
+  );
   console.log(
     `[Gate] tradeId=${payload.tradeId} [Pass: Queue] Trade entered x_post_queue with status PENDING_REVIEW (id=${insertedRecord.id})`
   );
