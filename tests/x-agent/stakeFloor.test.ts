@@ -8,7 +8,7 @@ import {
 } from "@/lib/x-agent/stakeFloor";
 
 describe("stakeFloor", () => {
-  it("classifies sports markets at the $1k tier", () => {
+  it("classifies sports markets at the $250 tier", () => {
     const resolution = resolveStakeFloorUsd("Lakers vs Celtics NBA game");
     expect(classifyStakeFloorTier("Lakers vs Celtics NBA game")).toBe(
       "sports_entertainment"
@@ -17,13 +17,13 @@ describe("stakeFloor", () => {
     expect(resolution.floorUsd).toBe(STAKE_FLOOR_SPORTS_ENTERTAINMENT_USD);
   });
 
-  it("classifies entertainment markets at the $1k tier", () => {
+  it("classifies entertainment markets at the $250 tier", () => {
     const resolution = resolveStakeFloorUsd("Will the movie win an Oscar?");
     expect(resolution.tier).toBe("sports_entertainment");
     expect(resolution.floorUsd).toBe(STAKE_FLOOR_SPORTS_ENTERTAINMENT_USD);
   });
 
-  it("classifies political markets at the $5k tier", () => {
+  it("classifies political markets at the $1k tier", () => {
     const resolution = resolveStakeFloorUsd(
       "Will Trump win the 2028 presidential election?"
     );
@@ -31,13 +31,13 @@ describe("stakeFloor", () => {
     expect(resolution.floorUsd).toBe(STAKE_FLOOR_MACRO_POLITICAL_USD);
   });
 
-  it("classifies macro liquidity markets at the $5k tier", () => {
+  it("classifies macro liquidity markets at the $1k tier", () => {
     const resolution = resolveStakeFloorUsd("Fed rate cut in March?");
     expect(resolution.tier).toBe("macro_political");
     expect(resolution.floorUsd).toBe(STAKE_FLOOR_MACRO_POLITICAL_USD);
   });
 
-  it("uses the $2.5k default tier for uncategorized markets", () => {
+  it("uses the $500 default tier for uncategorized markets", () => {
     const resolution = resolveStakeFloorUsd("Will China invade Taiwan?");
     expect(resolution.tier).toBe("default");
     expect(resolution.floorUsd).toBe(STAKE_FLOOR_DEFAULT_USD);

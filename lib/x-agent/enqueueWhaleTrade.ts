@@ -21,8 +21,6 @@ import {
   KALSHI_PUBLIC_POSTING_DISABLED,
 } from "@/lib/x-agent/postQueueGates";
 import {
-  MIN_WALLET_AVG_EV_DECIMAL,
-  MIN_WALLET_RESOLVED_BETS,
   type GateSummary,
   type GateMetricsCollector,
   HIGH_EV_TRADE_THRESHOLD_PCT,
@@ -284,14 +282,12 @@ export async function processWhaleTradeForXAgent(
       pipelinePmMid != null ? priceToCents(pipelinePmMid) : payload.nowCents,
   };
 
-  const whaleRegistry =
-    whaleForGates != null &&
-    whaleForGates.resolvedBetsCount >= MIN_WALLET_RESOLVED_BETS &&
-    whaleForGates.avgEv >= MIN_WALLET_AVG_EV_DECIMAL
-      ? { whale: whaleForGates, created: false }
-      : await ensureWhaleInRegistry(walletAddress, {
-          avgStakeNotional: trade.usdNotional,
-        });
+  const whaleRegistry = await ensureWhaleInRegistry(walletAddress, {
+    avgStakeNotional: trade.usdNotional,
+    avgEv: whaleForGates?.avgEv,
+    resolvedBetsCount: whaleForGates?.resolvedBetsCount,
+    winRate: whaleForGates?.winRate,
+  });
   if (!whaleRegistry) {
     logEnqueueSkip(trade, "[Skip: Setup] Whale registry upsert failed");
     return;

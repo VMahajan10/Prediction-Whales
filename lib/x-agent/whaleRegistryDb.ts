@@ -108,6 +108,8 @@ export async function ensureWhaleInRegistry(
     pseudonym?: string;
     avgEv?: number;
     avgStakeNotional?: number;
+    resolvedBetsCount?: number;
+    winRate?: number;
   }
 ): Promise<{ whale: WhaleRegistry; created: boolean } | null> {
   const existing = await findWhaleByWallet(walletAddress);
@@ -120,6 +122,8 @@ export async function ensureWhaleInRegistry(
     pseudonym: hints?.pseudonym,
     avgEv: hints?.avgEv,
     avgStakeNotional: hints?.avgStakeNotional,
+    resolvedBetsCount: hints?.resolvedBetsCount,
+    winRate: hints?.winRate,
   });
 
   if (!whale) return null;

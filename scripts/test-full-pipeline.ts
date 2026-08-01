@@ -92,6 +92,12 @@ async function ensureVariantIdColumn(
   await prisma.$executeRawUnsafe(
     `ALTER TABLE "x_post_queue" ADD COLUMN IF NOT EXISTS "ev_gloss" text`
   );
+  await prisma.$executeRawUnsafe(
+    `ALTER TABLE "x_post_queue" ADD COLUMN IF NOT EXISTS "x_media_id" text`
+  );
+  await prisma.$executeRawUnsafe(
+    `ALTER TABLE "x_post_queue" ADD COLUMN IF NOT EXISTS "receipt_media_url" text`
+  );
 }
 
 async function main(): Promise<void> {
