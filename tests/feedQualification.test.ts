@@ -29,7 +29,7 @@ describe("feedQualification", () => {
   });
 
   it("requires stake, wallet avg EV, and resolved bets for feed qualification", () => {
-    expect(CREDIBILITY_CONFIG.MIN_RESOLVED_BETS).toBe(300);
+    expect(CREDIBILITY_CONFIG.MIN_RESOLVED_BETS).toBe(100);
 
     expect(
       isQualifiedFeedTrade({

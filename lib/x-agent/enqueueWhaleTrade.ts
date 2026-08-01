@@ -401,6 +401,9 @@ export async function processWhaleTradeForXAgent(
     });
   }
 
+  console.log(
+    `[Gate] tradeId=${payload.tradeId} [Pass: Queue] Trade entered x_post_queue with status PENDING_REVIEW (id=${insertedRecord.id})`
+  );
   logStdout("📌 [Queue Insert] Record created ID:", insertedRecord.id);
 
   try {

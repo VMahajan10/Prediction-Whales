@@ -4,15 +4,15 @@
  * ceiling — wallets below this lack enough resolved history for reliable scoring.
  */
 export const CREDIBILITY_CONFIG = {
-  MIN_RESOLVED_BETS: 300,
-  MIN_STAKE_USD: 500,
-  MIN_AVG_EV: 0.03,
+  MIN_RESOLVED_BETS: 100,
+  MIN_STAKE_USD: 250,
+  MIN_AVG_EV: 0.01,
 } as const;
 
 /** Minimum USD stake for qualified whale feed trades. */
 export const MIN_STAKE_THRESHOLD = CREDIBILITY_CONFIG.MIN_STAKE_USD;
 
-/** Minimum wallet historical avg EV for qualified feed (+3.0%). */
+/** Minimum wallet historical avg EV for qualified feed (+1.0%). */
 export const MIN_AVG_EV_THRESHOLD = CREDIBILITY_CONFIG.MIN_AVG_EV;
 
 /** Minimum resolved bets for wallet credibility in qualified feeds. */
@@ -52,7 +52,7 @@ export interface FeedQualificationTrade {
 
 /**
  * Credibility gate for product feed trades — all criteria required:
- * stake >= $500, wallet avg EV >= +3.0%, resolved bets >= 300.
+ * stake >= $250, wallet avg EV >= +1.0%, resolved bets >= 100.
  */
 export function isQualifiedFeedTrade(trade: FeedQualificationTrade): boolean {
   const resolvedBetCount = trade.resolvedBetCount ?? trade.resolvedBetsCount;

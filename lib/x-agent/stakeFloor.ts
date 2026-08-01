@@ -2,16 +2,16 @@ import { inferMarketCategory } from "@/lib/marketCategory";
 
 export type StakeFloorTier = "sports_entertainment" | "macro_political" | "default";
 
-/** Sports and entertainment markets — $10k minimum stake. */
-export const STAKE_FLOOR_SPORTS_ENTERTAINMENT_USD = 10_000;
+/** Sports and entertainment markets — $1k minimum stake. */
+export const STAKE_FLOOR_SPORTS_ENTERTAINMENT_USD = 1_000;
 
-/** High-liquidity macro / political markets — $25k minimum stake. */
-export const STAKE_FLOOR_MACRO_POLITICAL_USD = 25_000;
+/** High-liquidity macro / political markets — $5k minimum stake. */
+export const STAKE_FLOOR_MACRO_POLITICAL_USD = 5_000;
 
-/** Default fallback stake floor — $15k. */
+/** Default fallback stake floor — $2.5k. */
 export const STAKE_FLOOR_DEFAULT_USD = (() => {
   const parsed = Number(process.env.STAKE_FLOOR_DEFAULT_USD);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 15_000;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 2_500;
 })();
 
 const MACRO_LIQUIDITY_PROBE =
@@ -98,5 +98,5 @@ export function formatStakeFloorTierLabel(tier: StakeFloorTier): string {
 }
 
 export function formatStakeFloorSummaryLabel(): string {
-  return "tiered ($10k sports/culture · $15k default · $25k macro/politics)";
+  return "tiered ($1k sports/culture · $2.5k default · $5k macro/politics)";
 }

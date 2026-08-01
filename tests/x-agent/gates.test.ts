@@ -119,17 +119,16 @@ describe("evaluateWalletCredibilityPreGate", () => {
 });
 
 describe("evaluateTradeEvPreGate", () => {
-  it("fails when live trade EV is below the floor", () => {
-    const result = evaluateTradeEvPreGate(2.0);
+  it("fails when live trade EV is negative", () => {
+    const result = evaluateTradeEvPreGate(-0.1);
 
     expect(result.passed).toBe(false);
     expect(result.reason).toBe("BELOW_TRADE_EV");
   });
 
-  it("passes when live trade EV meets the floor", () => {
-    const result = evaluateTradeEvPreGate(2.5);
-
-    expect(result.passed).toBe(true);
+  it("passes when live trade EV is non-negative", () => {
+    expect(evaluateTradeEvPreGate(0).passed).toBe(true);
+    expect(evaluateTradeEvPreGate(2.0).passed).toBe(true);
   });
 });
 
@@ -150,7 +149,7 @@ describe("evaluateTradeGateMatrix", () => {
       whale: makeWhale({ resolvedBetsCount: 600, avgEv: 0.04 }),
       tradeEvPercent: 2.0,
     });
-    expect(lowTradeHighWallet.passesEv).toBe(false);
+    expect(lowTradeHighWallet.passesEv).toBe(true);
     expect(lowTradeHighWallet.passesCredibility).toBe(true);
     expect(lowTradeHighWallet.tradeEvDecimal).toBe(0.02);
     expect(lowTradeHighWallet.walletAvgEv).toBe(0.04);
@@ -163,7 +162,7 @@ describe("evaluateTradeGateMatrix", () => {
         stakeNotional: STAKE_FLOOR_DEFAULT_USD - 1,
       }),
       whale: makeWhale({ resolvedBetsCount: MIN_RESOLVED_BETS - 1, avgEv: 0.01 }),
-      tradeEvPercent: 2.0,
+      tradeEvPercent: -1.0,
     });
 
     expect(matrix.passesSource).toBe(false);

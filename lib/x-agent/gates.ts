@@ -142,7 +142,7 @@ export const MIN_RESOLVED_THRESHOLD = MIN_WALLET_RESOLVED_BETS;
 export const MIN_AVG_EV = MIN_WALLET_AVG_EV_DECIMAL;
 /** Default-tier stake floor; tiered floors use `resolveStakeFloorUsd()`. */
 export const MIN_STAKE_NOTIONAL = STAKE_FLOOR_USD;
-export const MAX_TRADE_AGE_MS = 10 * 60 * 1000;
+export const MAX_TRADE_AGE_MS = 30 * 60 * 1000;
 
 function gateLog(tradeId: string, message: string): void {
   console.log(`[Gate] tradeId=${tradeId} ${message}`);

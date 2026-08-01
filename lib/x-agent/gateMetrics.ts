@@ -11,28 +11,28 @@ import {
 } from "@/lib/x-agent/stakeFloor";
 import { CREDIBILITY_CONFIG } from "@/lib/feedQualification";
 
-/** Minimum live trade EV as display percent (+2.5%). */
-export const HIGH_EV_TRADE_THRESHOLD_PCT = 2.5;
+/** Minimum live trade EV as display percent (0% — non-negative live EV). */
+export const HIGH_EV_TRADE_THRESHOLD_PCT = 0;
 
-/** Minimum live trade EV as decimal (trade.ev >= 0.025). */
-export const MIN_TRADE_EV_DECIMAL = 0.025;
+/** Minimum live trade EV as decimal (trade.ev >= 0.0). */
+export const MIN_TRADE_EV_DECIMAL = 0.0;
 
 /** Minimum USD stake for feed qualification and credibility gate (whale notional). */
 export const MIN_STAKE_THRESHOLD = CREDIBILITY_CONFIG.MIN_STAKE_USD;
 
-/** Minimum wallet historical avg EV for credibility / qualified feeds (+3.0%). */
+/** Minimum wallet historical avg EV for credibility / qualified feeds (+1.0%). */
 export const MIN_AVG_EV_THRESHOLD = CREDIBILITY_CONFIG.MIN_AVG_EV;
 
-/** Minimum wallet historical avg EV as display percent (+3.0%). */
+/** Minimum wallet historical avg EV as display percent (+1.0%). */
 export const MIN_AVG_EV_THRESHOLD_PCT = MIN_AVG_EV_THRESHOLD * 100;
 
 /** Alias — registry wallet.avgEv must be >= MIN_AVG_EV_THRESHOLD. */
 export const MIN_WALLET_AVG_EV_DECIMAL = MIN_AVG_EV_THRESHOLD;
 
-/** Minimum wallet historical avg EV as display percent (+3.0%). */
+/** Minimum wallet historical avg EV as display percent (+1.0%). */
 export const MIN_WALLET_AVG_EV_THRESHOLD_PCT = MIN_AVG_EV_THRESHOLD_PCT;
 
-/** Minimum resolved bets on wallet registry for credibility (default 300). */
+/** Minimum resolved bets on wallet registry for credibility (default 100). */
 export const MIN_WALLET_RESOLVED_BETS = (() => {
   const parsed = Number(process.env.RESOLVED_BETS_FLOOR);
   return Number.isFinite(parsed) && parsed > 0
@@ -355,7 +355,7 @@ export function printGateSummaryBox(
     `   ❌ Failed Credibility (Bets < ${MIN_WALLET_RESOLVED_BETS}):      ${formatGateFraction(metrics.failedCredibility_ResolvedBets, total)}`,
     `   ❌ Failed Credibility (AVG EV < ${walletEvLabel}):   ${formatGateFraction(metrics.failedCredibility_AvgEv, total)}`,
     `❌ Failed Alignment/Mapping:      ${formatGateFraction(metrics.failedLegibilityOrAlignment, total)}`,
-    `❌ Failed Freshness (>10m):       ${formatGateFraction(metrics.failedFreshness, total)}`,
+    `❌ Failed Freshness (>30m):       ${formatGateFraction(metrics.failedFreshness, total)}`,
     `❌ Failed Kalshi Source:          ${formatGateFraction(metrics.failedKalshiSource, total)}`,
     "--------------------------------------------------",
     `✅ Passed ALL Gates (Queued):     ${formatGateFraction(metrics.queuedSuccessfully, total)}`,
