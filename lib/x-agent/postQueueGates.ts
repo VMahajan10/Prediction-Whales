@@ -16,7 +16,7 @@ import type {
   MarketPositionTranslation,
   TranslatableMarket,
 } from "@/lib/marketTranslator";
-import { translateMarketPosition } from "@/lib/marketTranslator";
+import { translateMarketPositionWithFallback } from "@/lib/marketTranslator";
 import {
   findWhaleByWalletCaseInsensitive,
   isAnonymousWalletAddress,
@@ -42,7 +42,17 @@ export const BELOW_RESOLVED_BETS = "BELOW_RESOLVED_BETS" as const;
 export const UNTRANSLATABLE_MARKET = "UNTRANSLATABLE_MARKET" as const;
 
 /** Shadow-mode stake floor to bypass missing registry / resolved-bet history. */
-export const SHADOW_UNREGISTERED_STAKE_BYPASS_USD = 1_000;
+export const SHADOW_UNREGISTERED_STAKE_BYPASS_USD = 250;
+
+/** Resolved-bets floor used during shadow credibility override (0 = skip check). */
+export const SHADOW_RESOLVED_BETS_FLOOR = 0;
+
+export function getEffectiveResolvedBetsFloor(): number {
+  if (isAllowUnregisteredWalletsInShadow()) {
+    return SHADOW_RESOLVED_BETS_FLOOR;
+  }
+  return CREDIBILITY_CONFIG.MIN_RESOLVED_BETS;
+}
 
 export function isAllowUnregisteredWalletsInShadow(): boolean {
   const explicit = process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW?.trim().toLowerCase();
@@ -229,7 +239,7 @@ export function evaluatePostQueueCredibilityGate(
   if (shadowOverride) {
     gateLog(
       input.tradeId,
-      `[Pass: Credibility] Shadow override — stake (${formatStake(stake)}) >= ${formatStake(SHADOW_UNREGISTERED_STAKE_BYPASS_USD)}; skipping registry resolved-bet / avg EV checks`
+      `[Pass: Credibility] Shadow override — stake (${formatStake(stake)}) >= ${formatStake(SHADOW_UNREGISTERED_STAKE_BYPASS_USD)}; skipping registry checks (resolved bets floor=${SHADOW_RESOLVED_BETS_FLOOR})`
     );
     return { passed: true };
   }
@@ -243,31 +253,42 @@ export function evaluatePostQueueCredibilityGate(
 }
 
 /**
- * Market position translation gate — rejects trades that cannot be rendered
- * without raw YES/NO copy.
+ * Market position translation gate — uses title/outcome fallback when custom
+ * mapping cannot express the position without raw YES/NO tokens.
  */
 export function evaluatePostQueueMarketTranslationGate(
   input: PostQueueMarketTranslationGateInput
 ): PostQueueMarketTranslationGateResult {
-  const translation = translateMarketPosition(input.market, input.position);
-  if (!translation) {
-    if (input.tradeId) {
-      gateLog(
-        input.tradeId,
-        "[Fail: Market Translation] Position is untranslatable for feed display"
-      );
-    }
-    return { passed: false, reason: UNTRANSLATABLE_MARKET };
-  }
+  const { translation, usedFallback } = translateMarketPositionWithFallback(
+    input.market,
+    input.position
+  );
 
   if (input.tradeId) {
-    gateLog(
-      input.tradeId,
-      `[Pass: Market Translation] ${translation.backingLabel}${
-        translation.exitByLabel ? ` · ${translation.exitByLabel}` : ""
-      }`
-    );
+    if (usedFallback) {
+      gateLog(
+        input.tradeId,
+        `[Pass: Market Translation] Fallback — ${translation.backingLabel} on "${translation.sideName}"`
+      );
+    } else {
+      gateLog(
+        input.tradeId,
+        `[Pass: Market Translation] ${translation.backingLabel}${
+          translation.exitByLabel ? ` · ${translation.exitByLabel}` : ""
+        }`
+      );
+    }
   }
 
   return { passed: true, translation };
+}
+
+export function logPostQueueIngestionSuccess(
+  tradeId: string,
+  queueId: string
+): void {
+  gateLog(
+    tradeId,
+    `[Pass: All Gates] Trade queued for review — x_post_queue id=${queueId} status=PENDING_REVIEW`
+  );
 }

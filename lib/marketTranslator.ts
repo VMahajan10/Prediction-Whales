@@ -213,6 +213,57 @@ export function translateMarketPosition(
   return null;
 }
 
+function cleanMarketTitleForFallback(title: string): string {
+  const cleaned = title
+    .trim()
+    .replace(/\?+$/g, "")
+    .replace(/^Will\s+/i, "")
+    .trim();
+  return cleaned || "market";
+}
+
+function formatFallbackOutcomeLabel(outcome: string): string {
+  const outcomeToken = classifyOutcome(outcome);
+  if (outcomeToken === "YES") return "yes";
+  if (outcomeToken === "NO") return "no";
+  const named = cleanCandidateLabel(outcome);
+  return (named ?? outcome.trim()).toLowerCase();
+}
+
+/**
+ * Plain-language fallback when custom matchup / will-question mapping fails.
+ * Produces copy like "bought yes" + market title for feed / queue rendering.
+ */
+export function buildMarketTranslationFallback(
+  market: TranslatableMarket,
+  position: MarketPosition
+): MarketPositionTranslation {
+  const verb = position.side === "SELL" ? "sold" : "bought";
+  const outcomeLabel = formatFallbackOutcomeLabel(position.outcome);
+  const marketTitle = cleanMarketTitleForFallback(market.title);
+
+  return {
+    backingLabel: `${verb} ${outcomeLabel}`,
+    sideName: marketTitle,
+    exitByLabel: formatExitByLabel(market.endDate),
+  };
+}
+
+export function translateMarketPositionWithFallback(
+  market: TranslatableMarket,
+  position: MarketPosition
+): { translation: MarketPositionTranslation; usedFallback: boolean } {
+  const primary = translateMarketPosition(market, position);
+  if (primary) {
+    return { translation: primary, usedFallback: false };
+  }
+
+  return {
+    translation: buildMarketTranslationFallback(market, position),
+    usedFallback: true,
+  };
+}
+
 export interface WhaleTradeTranslationInput {
   title: string;
   outcome: string;
@@ -226,7 +277,7 @@ export interface WhaleTradeTranslationInput {
 export function translateWhaleTradeMarket(
   trade: WhaleTradeTranslationInput
 ): MarketPositionTranslation | null {
-  return translateMarketPosition(
+  const { translation } = translateMarketPositionWithFallback(
     {
       title: trade.title,
       slug: trade.slug,
@@ -239,4 +290,6 @@ export function translateWhaleTradeMarket(
       side: trade.side,
     }
   );
+
+  return translation;
 }

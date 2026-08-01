@@ -3,6 +3,7 @@ import {
   BELOW_EV_THRESHOLD,
   BELOW_RESOLVED_BETS,
   evaluatePostQueueCredibilityGate,
+  evaluatePostQueueMarketTranslationGate,
   evaluatePostQueueSourceGate,
   isAllowUnregisteredWalletsInShadow,
   isPostQueueSourceAllowed,
@@ -16,6 +17,24 @@ import {
   MIN_AVG_EV_THRESHOLD,
   MIN_STAKE_THRESHOLD,
 } from "@/lib/feedQualification";
+
+function withStrictCredibilityGates<T>(fn: () => T): T {
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousShadow = process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
+  process.env.NODE_ENV = "production";
+  process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW = "false";
+
+  try {
+    return fn();
+  } finally {
+    process.env.NODE_ENV = previousNodeEnv;
+    if (previousShadow === undefined) {
+      delete process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
+    } else {
+      process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW = previousShadow;
+    }
+  }
+}
 
 describe("postQueueGates", () => {
   it("hardcodes Kalshi public posting as disabled", () => {
@@ -60,36 +79,42 @@ describe("postQueueGates", () => {
   });
 
   it("rejects wallets below the resolved-bets threshold", () => {
-    const result = evaluatePostQueueCredibilityGate({
-      tradeId: "trade-resolved-low",
-      stakeNotional: MIN_STAKE_THRESHOLD,
-      walletAvgEv: MIN_AVG_EV_THRESHOLD,
-      resolvedBetCount: CREDIBILITY_CONFIG.MIN_RESOLVED_BETS - 1,
-    });
+    const result = withStrictCredibilityGates(() =>
+      evaluatePostQueueCredibilityGate({
+        tradeId: "trade-resolved-low",
+        stakeNotional: MIN_STAKE_THRESHOLD,
+        walletAvgEv: MIN_AVG_EV_THRESHOLD,
+        resolvedBetCount: CREDIBILITY_CONFIG.MIN_RESOLVED_BETS - 1,
+      })
+    );
 
     expect(result.passed).toBe(false);
     expect(result.reason).toBe(BELOW_RESOLVED_BETS);
   });
 
   it("rejects wallets below the avg EV threshold", () => {
-    const result = evaluatePostQueueCredibilityGate({
-      tradeId: "trade-ev-low",
-      stakeNotional: MIN_STAKE_THRESHOLD,
-      walletAvgEv: MIN_AVG_EV_THRESHOLD - 0.001,
-      resolvedBetCount: CREDIBILITY_CONFIG.MIN_RESOLVED_BETS,
-    });
+    const result = withStrictCredibilityGates(() =>
+      evaluatePostQueueCredibilityGate({
+        tradeId: "trade-ev-low",
+        stakeNotional: MIN_STAKE_THRESHOLD,
+        walletAvgEv: MIN_AVG_EV_THRESHOLD - 0.001,
+        resolvedBetCount: CREDIBILITY_CONFIG.MIN_RESOLVED_BETS,
+      })
+    );
 
     expect(result.passed).toBe(false);
     expect(result.reason).toBe(BELOW_EV_THRESHOLD);
   });
 
   it("rejects negative wallet avg EV", () => {
-    const result = evaluatePostQueueCredibilityGate({
-      tradeId: "trade-ev-negative",
-      stakeNotional: MIN_STAKE_THRESHOLD,
-      walletAvgEv: -0.011,
-      resolvedBetCount: CREDIBILITY_CONFIG.MIN_RESOLVED_BETS,
-    });
+    const result = withStrictCredibilityGates(() =>
+      evaluatePostQueueCredibilityGate({
+        tradeId: "trade-ev-negative",
+        stakeNotional: MIN_STAKE_THRESHOLD,
+        walletAvgEv: -0.011,
+        resolvedBetCount: CREDIBILITY_CONFIG.MIN_RESOLVED_BETS,
+      })
+    );
 
     expect(result.passed).toBe(false);
     expect(result.reason).toBe(BELOW_EV_THRESHOLD);
@@ -107,7 +132,7 @@ describe("postQueueGates", () => {
     expect(result.reason).toBeUndefined();
   });
 
-  it("bypasses missing registry stats in shadow when stake >= $1,000", () => {
+  it("bypasses missing registry stats in shadow when stake >= $250", () => {
     const previous = process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
     process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW = "true";
 
@@ -154,5 +179,20 @@ describe("postQueueGates", () => {
         process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW = previousShadow;
       }
     }
+  });
+
+  it("uses title/outcome fallback instead of failing market translation", () => {
+    const result = evaluatePostQueueMarketTranslationGate({
+      tradeId: "trade-fallback-translation",
+      market: { title: "Obscure prop market without mapping?" },
+      position: { outcome: "Yes", side: "BUY" },
+    });
+
+    expect(result.passed).toBe(true);
+    expect(result.translation).toEqual({
+      backingLabel: "bought yes",
+      sideName: "Obscure prop market without mapping",
+      exitByLabel: undefined,
+    });
   });
 });

@@ -21,6 +21,24 @@ import {
 } from "@/lib/x-agent/stakeFloor";
 import { ANONYMOUS_WALLET_ADDRESS } from "@/lib/x-agent/whaleRegistryDb";
 
+function withStrictCredibilityGates<T>(fn: () => T): T {
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousShadow = process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
+  process.env.NODE_ENV = "production";
+  process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW = "false";
+
+  try {
+    return fn();
+  } finally {
+    process.env.NODE_ENV = previousNodeEnv;
+    if (previousShadow === undefined) {
+      delete process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
+    } else {
+      process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW = previousShadow;
+    }
+  }
+}
+
 function makeWhale(overrides: Partial<WhaleRegistry> = {}): WhaleRegistry {
   return {
     walletAddress: "0xwhale",
@@ -114,7 +132,9 @@ describe("evaluateDeterministicPreGates", () => {
 
 describe("evaluateWalletCredibilityPreGate", () => {
   it("fails when whale is missing from registry", () => {
-    const result = evaluateWalletCredibilityPreGate(makeTrade(), null);
+    const result = withStrictCredibilityGates(() =>
+      evaluateWalletCredibilityPreGate(makeTrade(), null)
+    );
 
     expect(result.passed).toBe(false);
     expect(result.failedStep).toBe("credibility");
@@ -137,11 +157,16 @@ describe("evaluateTradeEvPreGate", () => {
 
 describe("evaluateTradeGateMatrix", () => {
   it("evaluates trade EV and wallet credibility independently", () => {
-    const highTradeLowWallet = evaluateTradeGateMatrix({
-      trade: makeTrade(),
-      whale: makeWhale({ resolvedBetsCount: MIN_RESOLVED_BETS - 1, avgEv: 0.01 }),
-      tradeEvPercent: 5,
-    });
+    const highTradeLowWallet = withStrictCredibilityGates(() =>
+      evaluateTradeGateMatrix({
+        trade: makeTrade(),
+        whale: makeWhale({
+          resolvedBetsCount: MIN_RESOLVED_BETS - 1,
+          avgEv: 0.01,
+        }),
+        tradeEvPercent: 5,
+      })
+    );
     expect(highTradeLowWallet.passesEv).toBe(true);
     expect(highTradeLowWallet.passesCredibility).toBe(false);
     expect(highTradeLowWallet.tradeEvDecimal).toBe(0.05);
@@ -159,14 +184,19 @@ describe("evaluateTradeGateMatrix", () => {
   });
 
   it("records independent failures across multiple gates", () => {
-    const matrix = evaluateTradeGateMatrix({
-      trade: makeTrade({
-        source: "kalshi",
-        stakeNotional: STAKE_FLOOR_DEFAULT_USD - 1,
-      }),
-      whale: makeWhale({ resolvedBetsCount: MIN_RESOLVED_BETS - 1, avgEv: 0.01 }),
-      tradeEvPercent: -1.0,
-    });
+    const matrix = withStrictCredibilityGates(() =>
+      evaluateTradeGateMatrix({
+        trade: makeTrade({
+          source: "kalshi",
+          stakeNotional: STAKE_FLOOR_DEFAULT_USD - 1,
+        }),
+        whale: makeWhale({
+          resolvedBetsCount: MIN_RESOLVED_BETS - 1,
+          avgEv: 0.01,
+        }),
+        tradeEvPercent: -1.0,
+      })
+    );
 
     expect(matrix.passesSource).toBe(false);
     expect(matrix.passesEv).toBe(false);
@@ -176,14 +206,16 @@ describe("evaluateTradeGateMatrix", () => {
   });
 
   it("fails credibility for anonymous zero-address trades without whale lookup", () => {
-    const matrix = evaluateTradeGateMatrix({
-      trade: makeTrade({
-        walletAddress: ANONYMOUS_WALLET_ADDRESS,
-        stakeNotional: SHADOW_UNREGISTERED_STAKE_BYPASS_USD - 1,
-      }),
-      whale: null,
-      tradeEvPercent: 3.0,
-    });
+    const matrix = withStrictCredibilityGates(() =>
+      evaluateTradeGateMatrix({
+        trade: makeTrade({
+          walletAddress: ANONYMOUS_WALLET_ADDRESS,
+          stakeNotional: STAKE_FLOOR_DEFAULT_USD,
+        }),
+        whale: null,
+        tradeEvPercent: 3.0,
+      })
+    );
 
     expect(matrix.passesCredibility).toBe(false);
     expect(matrix.passesAll).toBe(false);
@@ -257,11 +289,13 @@ describe("evaluateTradeEligibility", () => {
   });
 
   it("rejects whales below the resolved-bets floor", async () => {
-    const result = await evaluateTradeEligibility(
-      makeTrade(),
-      makeWhale({ resolvedBetsCount: MIN_RESOLVED_BETS - 1 }),
-      Date.now(),
-      { tradeEvPercent: 5 }
+    const result = await withStrictCredibilityGates(() =>
+      evaluateTradeEligibility(
+        makeTrade(),
+        makeWhale({ resolvedBetsCount: MIN_RESOLVED_BETS - 1 }),
+        Date.now(),
+        { tradeEvPercent: 5 }
+      )
     );
 
     expect(result.eligible).toBe(false);
@@ -269,11 +303,13 @@ describe("evaluateTradeEligibility", () => {
   });
 
   it("rejects whales below the wallet avg EV floor", async () => {
-    const result = await evaluateTradeEligibility(
-      makeTrade(),
-      makeWhale({ avgEv: MIN_AVG_EV - 0.001 }),
-      Date.now(),
-      { tradeEvPercent: 5 }
+    const result = await withStrictCredibilityGates(() =>
+      evaluateTradeEligibility(
+        makeTrade(),
+        makeWhale({ avgEv: MIN_AVG_EV - 0.001 }),
+        Date.now(),
+        { tradeEvPercent: 5 }
+      )
     );
 
     expect(result.eligible).toBe(false);
@@ -297,11 +333,13 @@ describe("evaluateTradeEligibility", () => {
   });
 
   it("rejects anonymous trades with zero resolved history", async () => {
-    const result = await evaluateTradeEligibility(
-      makeTrade({ walletAddress: ANONYMOUS_WALLET_ADDRESS }),
-      null,
-      Date.now(),
-      { tradeEvPercent: 3.0 }
+    const result = await withStrictCredibilityGates(() =>
+      evaluateTradeEligibility(
+        makeTrade({ walletAddress: ANONYMOUS_WALLET_ADDRESS }),
+        null,
+        Date.now(),
+        { tradeEvPercent: 3.0 }
+      )
     );
 
     expect(result.matrix.passesCredibility).toBe(false);
@@ -310,11 +348,13 @@ describe("evaluateTradeEligibility", () => {
   });
 
   it("rejects wallets with zero resolved bets", async () => {
-    const result = await evaluateTradeEligibility(
-      makeTrade(),
-      makeWhale({ resolvedBetsCount: 0 }),
-      Date.now(),
-      { tradeEvPercent: 5 }
+    const result = await withStrictCredibilityGates(() =>
+      evaluateTradeEligibility(
+        makeTrade(),
+        makeWhale({ resolvedBetsCount: 0 }),
+        Date.now(),
+        { tradeEvPercent: 5 }
+      )
     );
 
     expect(result.eligible).toBe(false);

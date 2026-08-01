@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatExitByLabel,
   translateMarketPosition,
+  translateMarketPositionWithFallback,
   translateWhaleTradeMarket,
 } from "@/lib/marketTranslator";
 
@@ -42,6 +43,20 @@ describe("translateMarketPosition", () => {
         { outcome: "No" }
       )
     ).toBeNull();
+  });
+
+  it("falls back to bought yes + title when custom mapping fails", () => {
+    const result = translateMarketPositionWithFallback(
+      { title: "Will Candidate A win the election?" },
+      { outcome: "No", side: "BUY" }
+    );
+
+    expect(result.usedFallback).toBe(true);
+    expect(result.translation).toEqual({
+      backingLabel: "bought no",
+      sideName: "Candidate A win the election",
+      exitByLabel: undefined,
+    });
   });
 
   it("maps YES on a will-question market to the named subject", () => {

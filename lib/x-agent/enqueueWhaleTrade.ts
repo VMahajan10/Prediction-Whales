@@ -21,6 +21,7 @@ import {
   hydrateWalletForPostQueueCredibility,
   isAllowUnregisteredWalletsInShadow,
   KALSHI_PUBLIC_POSTING_DISABLED,
+  logPostQueueIngestionSuccess,
   SHADOW_UNREGISTERED_STAKE_BYPASS_USD,
 } from "@/lib/x-agent/postQueueGates";
 import {
@@ -411,9 +412,7 @@ export async function processWhaleTradeForXAgent(
     });
   }
 
-  console.log(
-    `[Gate] tradeId=${payload.tradeId} [Pass: All Gates] Trade queued for review`
-  );
+  logPostQueueIngestionSuccess(payload.tradeId, insertedRecord.id);
   console.log(
     `[Gate] tradeId=${payload.tradeId} [Pass: Queue] Trade entered x_post_queue with status PENDING_REVIEW (id=${insertedRecord.id})`
   );
