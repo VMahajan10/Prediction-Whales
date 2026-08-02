@@ -5,6 +5,7 @@ import {
   evaluatePostQueueCredibilityGate,
   evaluatePostQueueMarketTranslationGate,
   evaluatePostQueueSourceGate,
+  evaluateResolvedBetsCredibilityFloor,
   isAllowUnregisteredWalletsInShadow,
   isPostQueueSourceAllowed,
   KALSHI_PUBLIC_POSTING_DISABLED,
@@ -146,19 +147,20 @@ describe("postQueueGates", () => {
     expect(result.reason).toBeUndefined();
   });
 
-  it("bypasses missing registry stats in shadow when stake >= $500", () => {
+  it("rejects missing resolved bets in shadow even when stake >= $500", () => {
     const previous = process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
     process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW = "true";
 
     try {
       const result = evaluatePostQueueCredibilityGate({
-        tradeId: "trade-shadow-bypass",
+        tradeId: "trade-shadow-missing-bets",
         stakeNotional: SHADOW_UNREGISTERED_STAKE_BYPASS_USD,
         walletAvgEv: null,
         resolvedBetCount: null,
       });
 
-      expect(result.passed).toBe(true);
+      expect(result.passed).toBe(false);
+      expect(result.reason).toBe(BELOW_RESOLVED_BETS);
       expect(isAllowUnregisteredWalletsInShadow()).toBe(true);
     } finally {
       if (previous === undefined) {
@@ -169,7 +171,29 @@ describe("postQueueGates", () => {
     }
   });
 
-  it("allows high-stake unindexed wallets in production via stake bypass", () => {
+  it("bypasses only wallet avg EV in shadow when resolved bets meet threshold", () => {
+    const previous = process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
+    process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW = "true";
+
+    try {
+      const result = evaluatePostQueueCredibilityGate({
+        tradeId: "trade-shadow-ev-bypass",
+        stakeNotional: SHADOW_UNREGISTERED_STAKE_BYPASS_USD,
+        walletAvgEv: null,
+        resolvedBetCount: CREDIBILITY_CONFIG.MIN_RESOLVED_BETS,
+      });
+
+      expect(result.passed).toBe(true);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
+      } else {
+        process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW = previous;
+      }
+    }
+  });
+
+  it("rejects high-stake unindexed wallets with zero resolved bets in production", () => {
     const previousNodeEnv = process.env.NODE_ENV;
     const previousShadow = process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
     const previousUnindexed = process.env.ALLOW_UNINDEXED_WALLETS;
@@ -185,7 +209,8 @@ describe("postQueueGates", () => {
         resolvedBetCount: 0,
       });
 
-      expect(result.passed).toBe(true);
+      expect(result.passed).toBe(false);
+      expect(result.reason).toBe(BELOW_RESOLVED_BETS);
     } finally {
       process.env.NODE_ENV = previousNodeEnv;
       if (previousShadow === undefined) {
@@ -234,7 +259,7 @@ describe("postQueueGates", () => {
     }
   });
 
-  it("bypasses missing registry stats when ALLOW_UNINDEXED_WALLETS is true", () => {
+  it("rejects missing resolved bets even when ALLOW_UNINDEXED_WALLETS is true", () => {
     const previousNodeEnv = process.env.NODE_ENV;
     const previousUnindexed = process.env.ALLOW_UNINDEXED_WALLETS;
     process.env.NODE_ENV = "production";
@@ -243,13 +268,14 @@ describe("postQueueGates", () => {
 
     try {
       const result = evaluatePostQueueCredibilityGate({
-        tradeId: "trade-unindexed-bypass",
+        tradeId: "trade-unindexed-reject",
         stakeNotional: SHADOW_UNREGISTERED_STAKE_BYPASS_USD,
         walletAvgEv: null,
         resolvedBetCount: null,
       });
 
-      expect(result.passed).toBe(true);
+      expect(result.passed).toBe(false);
+      expect(result.reason).toBe(BELOW_RESOLVED_BETS);
     } finally {
       process.env.NODE_ENV = previousNodeEnv;
       if (previousUnindexed === undefined) {
@@ -258,6 +284,17 @@ describe("postQueueGates", () => {
         process.env.ALLOW_UNINDEXED_WALLETS = previousUnindexed;
       }
     }
+  });
+
+  it("logs and rejects wallets with zero resolved bets after hydration", () => {
+    const result = evaluateResolvedBetsCredibilityFloor({
+      tradeId: "trade-zero-bets",
+      walletAddress: "0xabc123",
+      resolvedBetCount: 0,
+    });
+
+    expect(result.passed).toBe(false);
+    expect(result.reason).toBe(BELOW_RESOLVED_BETS);
   });
 
   it("uses title/outcome fallback instead of failing market translation", () => {

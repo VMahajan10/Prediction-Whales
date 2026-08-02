@@ -50,23 +50,17 @@ describe("formatBoundAvgEv", () => {
 });
 
 describe("selectPostTemplate EV gloss rotation", () => {
-  it("excludes the prior gloss when rendering a new draft", () => {
+  it("excludes the prior gloss when selecting the next draft gloss", () => {
     const selection = selectPostTemplate(baseInputs(), {
       lastEvGloss: "profitable on average",
       random: () => 0,
     });
 
     expect(selection.evGloss).not.toBe("profitable on average");
-    expect(selection.renderedDraft).toContain(selection.evGloss);
-    expect(selection.renderedDraft).toMatch(/AVG EV —/);
   });
 
-  it("does not render bare AVG EV percent without a gloss phrase", () => {
+  it("still returns an evGloss token for downstream persistence", () => {
     const selection = selectPostTemplate(baseInputs(), { random: () => 0 });
-    expect(selection.renderedDraft).not.toMatch(/\+8%(?!\s+AVG EV —)/);
-    if (selection.renderedDraft.includes("+8%")) {
-      expect(selection.renderedDraft).toContain("AVG EV —");
-      expect(selection.renderedDraft).toContain(selection.evGloss);
-    }
+    expect(selection.evGloss.length).toBeGreaterThan(0);
   });
 });

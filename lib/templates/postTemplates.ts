@@ -6,6 +6,9 @@ import {
   selectEvGloss,
   type EvGloss,
 } from "@/constants/evGlosses";
+import { CREDIBILITY_CONFIG } from "@/lib/feedQualification";
+
+export const MIN_TRADER_EV_TRACK_RECORD_BETS = CREDIBILITY_CONFIG.MIN_RESOLVED_BETS;
 
 export const TEMPLATE_FAMILIES = [
   "V1",
@@ -29,6 +32,8 @@ export interface PostTemplateInputs {
   now?: number;
   /** Wallet avg EV decimal (0.12 = +12%). */
   avg_ev: number;
+  /** Live trade EV display percent (+2.5 = +2.5%). */
+  tradeEvPercent?: number | null;
   marketPlain: string;
   stakeNotional: number;
   avgStakeNotional?: number;
@@ -113,8 +118,12 @@ interface RenderContext {
   stake: string;
   avgStake: string | null;
   avgEv: string;
-  /** AVG EV percent always paired with gloss — never bare. */
+  /** @deprecated Prefer traderAvgEvLabel in new copy. */
   avgEvBound: string;
+  tradeEvLabel: string | null;
+  traderAvgEvLabel: string | null;
+  traderAvgEvClause: string | null;
+  evParenthetical: string | null;
   winRate: string | null;
   resolved: string | null;
   postedCount: string | null;
@@ -156,6 +165,57 @@ function formatWinRate(winRate?: number): string | null {
   return `${Math.round(winRate * 100)}`;
 }
 
+function formatSignedEvPercentFromDecimal(evDecimal: number): string {
+  return formatAvgEvPercent(evDecimal);
+}
+
+function formatSignedEvPercentFromDisplayPercent(evPercent: number): string {
+  const sign = evPercent >= 0 ? "+" : "";
+  return `${sign}${evPercent.toFixed(1).replace(/\.0$/, "")}%`;
+}
+
+/** Explicit live-trade EV label for tweet drafts. */
+export function formatTradeEvLabel(
+  tradeEvPercent: number | null | undefined
+): string | null {
+  if (tradeEvPercent == null || !Number.isFinite(tradeEvPercent)) {
+    return null;
+  }
+  return `Trade EV: ${formatSignedEvPercentFromDisplayPercent(tradeEvPercent)}`;
+}
+
+/** Explicit wallet lifetime EV label for tweet drafts. */
+export function formatTraderAvgEvLabel(avgEvDecimal: number): string {
+  return `Trader Avg EV: ${formatSignedEvPercentFromDecimal(avgEvDecimal)}`;
+}
+
+export function buildTraderAvgEvClause(
+  data: Pick<PostTemplateInputs, "avg_ev" | "resolvedBetsCount">
+): string | null {
+  const resolved = data.resolvedBetsCount ?? 0;
+  if (
+    resolved < MIN_TRADER_EV_TRACK_RECORD_BETS ||
+    !Number.isFinite(data.avg_ev)
+  ) {
+    return null;
+  }
+  return `${formatTraderAvgEvLabel(data.avg_ev)} over ${resolved.toLocaleString("en-US")} bets`;
+}
+
+export function buildEvParenthetical(input: {
+  tradeEvLabel: string | null;
+  traderAvgEvClause: string | null;
+}): string | null {
+  const { tradeEvLabel, traderAvgEvClause } = input;
+  if (tradeEvLabel && traderAvgEvClause) {
+    return `(${tradeEvLabel} · ${traderAvgEvClause})`;
+  }
+  if (tradeEvLabel) {
+    return `(${tradeEvLabel})`;
+  }
+  return null;
+}
+
 function buildRenderContext(
   data: PostTemplateInputs,
   random: () => number,
@@ -170,6 +230,15 @@ function buildRenderContext(
     ? data.evGloss
     : selectEvGloss({ excludeGloss: lastEvGloss, random });
   const avgEvBound = formatBoundAvgEv(data.avg_ev, evGloss);
+  const tradeEvLabel = formatTradeEvLabel(data.tradeEvPercent);
+  const traderAvgEvClause = buildTraderAvgEvClause(data);
+  const traderAvgEvLabel = traderAvgEvClause
+    ? formatTraderAvgEvLabel(data.avg_ev)
+    : null;
+  const evParenthetical = buildEvParenthetical({
+    tradeEvLabel,
+    traderAvgEvClause,
+  });
 
   const ctx: RenderContext = {
     whale: data.whale.trim(),
@@ -185,6 +254,10 @@ function buildRenderContext(
     avgStake: hasStakeHistory(data) ? formatUsd(data.avgStakeNotional!) : null,
     avgEv: formatAvgEvPercent(data.avg_ev),
     avgEvBound,
+    tradeEvLabel,
+    traderAvgEvLabel,
+    traderAvgEvClause,
+    evParenthetical,
     winRate: formatWinRate(data.winRate),
     resolved:
       data.resolvedBetsCount != null && Number.isFinite(data.resolvedBetsCount)
@@ -234,12 +307,16 @@ function hasStakeHistory(data: PostTemplateInputs): boolean {
   );
 }
 
-function hasTrackRecord(data: PostTemplateInputs): boolean {
+function hasTraderAvgEvTrackRecord(data: PostTemplateInputs): boolean {
   return (
     data.resolvedBetsCount != null &&
     Number.isFinite(data.resolvedBetsCount) &&
-    data.resolvedBetsCount > 0
+    data.resolvedBetsCount >= MIN_TRADER_EV_TRACK_RECORD_BETS
   );
+}
+
+function hasTrackRecord(data: PostTemplateInputs): boolean {
+  return hasTraderAvgEvTrackRecord(data);
 }
 
 function assertVariantSlots(
@@ -285,13 +362,13 @@ const TEMPLATE_FAMILIES_DEF: TemplateFamilyDefinition[] = [
       {
         id: "d",
         render: (ctx) =>
-          `${ctx.whale} just moved ${ctx.stake} to ${ctx.side} at ${ctx.entry}¢. This wallet runs ${ctx.avgEvBound} over ${ctx.resolved ?? "—"} resolved bets.`,
-        requiredSlots: ["resolved"],
+          `${ctx.whale} just moved ${ctx.stake} to ${ctx.side} at ${ctx.entry}¢. This wallet runs ${ctx.traderAvgEvLabel ?? ctx.avgEvBound} over ${ctx.resolved ?? "—"} resolved bets.`,
+        requiredSlots: ["resolved", "traderAvgEvLabel"],
       },
       {
         id: "e",
         render: (ctx) =>
-          `${ctx.whale} just made a move: ${ctx.side} on ${ctx.market} at ${ctx.entry}¢. Track record: ${ctx.avgEvBound}.`,
+          `${ctx.whale} just made a move: ${ctx.side} on ${ctx.market} at ${ctx.entry}¢.${ctx.traderAvgEvLabel ? ` Track record: ${ctx.traderAvgEvLabel}.` : ctx.tradeEvLabel ? ` ${ctx.tradeEvLabel}.` : ""}`,
       },
     ],
   },
@@ -314,14 +391,14 @@ const TEMPLATE_FAMILIES_DEF: TemplateFamilyDefinition[] = [
       {
         id: "c",
         render: (ctx) =>
-          `This wallet averages ${ctx.avgEvBound} across ${ctx.resolved} bets. New position: ${ctx.stake} on ${ctx.side} at ${ctx.entry}¢.`,
-        requiredSlots: ["resolved"],
+          `This wallet averages ${ctx.traderAvgEvLabel ?? ctx.avgEvBound} across ${ctx.resolved} bets. New position: ${ctx.stake} on ${ctx.side} at ${ctx.entry}¢.`,
+        requiredSlots: ["resolved", "traderAvgEvLabel"],
       },
       {
         id: "d",
         render: (ctx) =>
-          `Anyone can win 80% betting favorites. This whale runs ${ctx.avgEvBound} over ${ctx.resolved} bets. Just in: ${ctx.stake} on ${ctx.side}.`,
-        requiredSlots: ["resolved"],
+          `Anyone can win 80% betting favorites. This whale runs ${ctx.traderAvgEvLabel ?? ctx.avgEvBound} over ${ctx.resolved} bets. Just in: ${ctx.stake} on ${ctx.side}.`,
+        requiredSlots: ["resolved", "traderAvgEvLabel"],
       },
     ],
   },
@@ -344,7 +421,7 @@ const TEMPLATE_FAMILIES_DEF: TemplateFamilyDefinition[] = [
       {
         id: "c",
         render: (ctx) =>
-          `${ctx.whale} entered ${ctx.side} at ${ctx.entry}¢ — it's ${ctx.now}¢ now. Their ${ctx.avgEvBound}. That gap is the edge.`,
+          `${ctx.whale} entered ${ctx.side} at ${ctx.entry}¢ — it's ${ctx.now}¢ now.${ctx.tradeEvLabel ? ` ${ctx.tradeEvLabel}.` : ""}${ctx.traderAvgEvLabel ? ` ${ctx.traderAvgEvLabel}.` : ""} That gap is the edge.`,
         requiredSlots: ["now"],
       },
     ],
@@ -368,8 +445,8 @@ const TEMPLATE_FAMILIES_DEF: TemplateFamilyDefinition[] = [
       {
         id: "c",
         render: (ctx) =>
-          `${ctx.stake} on ${ctx.side} — ${ctx.whale}'s biggest swing this month, from a wallet running ${ctx.avgEvBound} across ${ctx.resolved ?? "—"} bets.`,
-        requiredSlots: ["avgStake"],
+          `${ctx.stake} on ${ctx.side} — ${ctx.whale}'s biggest swing this month, from a wallet running ${ctx.traderAvgEvLabel ?? ctx.avgEvBound} across ${ctx.resolved ?? "—"} bets.`,
+        requiredSlots: ["avgStake", "traderAvgEvLabel"],
       },
     ],
   },
@@ -384,8 +461,11 @@ const TEMPLATE_FAMILIES_DEF: TemplateFamilyDefinition[] = [
       },
       {
         id: "b",
-        render: (ctx) =>
-          `The crowd has this at ${ctx.now ?? ctx.entry}¢. ${ctx.whale} took ${ctx.side} at ${ctx.entry}¢ with ${ctx.stake} — ${ctx.avgEvBound} over ${ctx.resolved ?? "—"} bets.`,
+        render: (ctx) => {
+          const evSuffix = ctx.evParenthetical ? ` ${ctx.evParenthetical}` : "";
+          return `The crowd has this at ${ctx.now ?? ctx.entry}¢. A whale took ${ctx.side} with ${ctx.stake}${evSuffix}.`;
+        },
+        requiredSlots: ["tradeEvLabel"],
       },
     ],
   },
@@ -402,7 +482,7 @@ const TEMPLATE_FAMILIES_DEF: TemplateFamilyDefinition[] = [
       {
         id: "b",
         render: (ctx) =>
-          `${ctx.whale} again. Third ${ctx.category} move this week: ${ctx.stake} on ${ctx.side} at ${ctx.entry}¢. Still ${ctx.avgEvBound} over ${ctx.resolved ?? "—"} bets.`,
+          `${ctx.whale} again. Third ${ctx.category} move this week: ${ctx.stake} on ${ctx.side} at ${ctx.entry}¢.${ctx.traderAvgEvLabel ? ` Still ${ctx.traderAvgEvLabel} over ${ctx.resolved ?? "—"} bets.` : ""}`,
         requiredSlots: ["postedCount"],
       },
     ],
@@ -426,8 +506,8 @@ const TEMPLATE_FAMILIES_DEF: TemplateFamilyDefinition[] = [
       {
         id: "c",
         render: (ctx) =>
-          `${ctx.stake} on ${ctx.side} at ${ctx.entry}¢ from a wallet with ${ctx.avgEvBound} across ${ctx.resolved ?? "—"} bets. The market hasn't noticed yet.`,
-        requiredSlots: ["now"],
+          `${ctx.stake} on ${ctx.side} at ${ctx.entry}¢ from a wallet with ${ctx.traderAvgEvLabel ?? ctx.avgEvBound} across ${ctx.resolved ?? "—"} bets. The market hasn't noticed yet.`,
+        requiredSlots: ["now", "traderAvgEvLabel"],
       },
       {
         id: "d",
@@ -451,7 +531,7 @@ const TEMPLATE_FAMILIES_DEF: TemplateFamilyDefinition[] = [
       {
         id: "b",
         render: (ctx) =>
-          `Receipt: ${ctx.whale}'s ${ctx.stake} on ${ctx.side} resolved YES. Posted at ${ctx.entry}¢, paid out at 100¢. This is what ${ctx.avgEvBound} looks like in practice.`,
+          `Receipt: ${ctx.whale}'s ${ctx.stake} on ${ctx.side} resolved YES. Posted at ${ctx.entry}¢, paid out at 100¢.${ctx.traderAvgEvLabel ? ` This is what ${ctx.traderAvgEvLabel} looks like in practice.` : ""}`,
         requiredSlots: ["gain"],
       },
     ],

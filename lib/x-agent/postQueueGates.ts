@@ -80,9 +80,9 @@ export function shouldApplyShadowCredibilityOverride(input: {
 }): boolean {
   if (!isMissingRegistryOverrideEnabled()) return false;
 
-  const hasResolvedBets = meetsFeedResolvedBetsThreshold(input.resolvedBetCount);
-  const hasAvgEv = meetsWalletAvgEvThreshold(input.walletAvgEv);
-  if (hasResolvedBets && hasAvgEv) return false;
+  // Resolved-bets floor is never bypassed — shadow only relaxes avg EV.
+  if (!meetsFeedResolvedBetsThreshold(input.resolvedBetCount)) return false;
+  if (meetsWalletAvgEvThreshold(input.walletAvgEv)) return false;
 
   return (
     Number.isFinite(input.stakeNotional) &&
@@ -90,26 +90,13 @@ export function shouldApplyShadowCredibilityOverride(input: {
   );
 }
 
-/**
- * High-stake bypass for wallets missing from the registry or with zero resolved
- * bets after Polymarket hydration. Applies in production for live queuing.
- */
-export function shouldAllowUnindexedWhaleBypass(input: {
+/** @deprecated Unindexed whale bypass removed — resolved bets floor is always enforced. */
+export function shouldAllowUnindexedWhaleBypass(_input: {
   stakeNotional: number;
   resolvedBetCount?: number | null;
   whaleMissing?: boolean;
 }): boolean {
-  if (
-    !Number.isFinite(input.stakeNotional) ||
-    input.stakeNotional < UNINDEXED_WALLET_STAKE_BYPASS_USD
-  ) {
-    return false;
-  }
-
-  if (input.whaleMissing) return true;
-
-  const resolved = input.resolvedBetCount ?? 0;
-  return resolved === 0;
+  return false;
 }
 
 export function needsWalletCredibilityHydration(
@@ -121,16 +108,40 @@ export function needsWalletCredibilityHydration(
   return (whale.resolvedBetsCount ?? 0) === 0;
 }
 
-export function resolveUnindexedWhaleBypass(input: {
+export function resolveUnindexedWhaleBypass(_input: {
   stakeNotional: number;
   resolvedBetCount?: number | null;
   walletAvgEv?: number | null;
   whaleMissing?: boolean;
 }): boolean {
-  return (
-    shouldAllowUnindexedWhaleBypass(input) ||
-    shouldApplyShadowCredibilityOverride(input)
+  return false;
+}
+
+export function formatResolvedBetCountForLog(
+  resolvedBetCount: number | null | undefined
+): number {
+  if (resolvedBetCount == null || !Number.isFinite(resolvedBetCount)) {
+    return 0;
+  }
+  return resolvedBetCount;
+}
+
+/** Strict resolved-bets floor — no shadow or unindexed bypass. */
+export function evaluateResolvedBetsCredibilityFloor(input: {
+  tradeId: string;
+  walletAddress: string;
+  resolvedBetCount?: number | null;
+}): PostQueueCredibilityGateResult {
+  if (meetsFeedResolvedBetsThreshold(input.resolvedBetCount)) {
+    return { passed: true };
+  }
+
+  const resolvedCount = formatResolvedBetCountForLog(input.resolvedBetCount);
+  gateLog(
+    input.tradeId,
+    `[Fail: Credibility] Wallet ${input.walletAddress} has ${resolvedCount} resolved bets (< ${CREDIBILITY_CONFIG.MIN_RESOLVED_BETS})`
   );
+  return { passed: false, reason: BELOW_RESOLVED_BETS };
 }
 
 /**
@@ -172,8 +183,7 @@ export async function hydrateWalletForPostQueueCredibility(
 }
 
 /**
- * Hydrate a missing or zero-history registry wallet, then evaluate credibility
- * (with unindexed / shadow overrides when hydration does not produce stats).
+ * Hydrate a missing or zero-history registry wallet for credibility evaluation.
  */
 export async function resolveCredibilityWhaleWithHydration(input: {
   tradeId: string;
@@ -183,15 +193,13 @@ export async function resolveCredibilityWhaleWithHydration(input: {
 }): Promise<{
   whale: WhaleRegistry | null;
   resolution?: WalletCredibilityResolution;
-  isUnindexedWhale?: boolean;
+  resolvedBetCount: number | null;
 }> {
   if (isAnonymousWalletAddress(input.walletAddress)) {
-    const isUnindexedWhale = shouldAllowUnindexedWhaleBypass({
-      stakeNotional: input.stakeNotional,
+    return {
+      whale: input.whale ?? null,
       resolvedBetCount: 0,
-      whaleMissing: true,
-    });
-    return { whale: input.whale ?? null, isUnindexedWhale };
+    };
   }
 
   let whale = input.whale ?? null;
@@ -207,14 +215,8 @@ export async function resolveCredibilityWhaleWithHydration(input: {
 
   const resolvedBetCount =
     whale?.resolvedBetsCount ?? resolution?.stats?.resolvedBetsCount ?? null;
-  const walletAvgEv = whale?.avgEv ?? resolution?.stats?.avgEv ?? null;
-  const isUnindexedWhale = shouldAllowUnindexedWhaleBypass({
-    stakeNotional: input.stakeNotional,
-    resolvedBetCount,
-    whaleMissing: !whale,
-  });
 
-  return { whale, resolution, isUnindexedWhale };
+  return { whale, resolution, resolvedBetCount };
 }
 
 export type PostQueueSourceRejectionReason =
@@ -322,26 +324,12 @@ export function evaluatePostQueueCredibilityGate(
 
   const resolvedBetCount = input.resolvedBetCount ?? null;
   const avgEv = input.walletAvgEv;
-  const unindexedBypass = shouldAllowUnindexedWhaleBypass({
-    stakeNotional: stake,
-    resolvedBetCount,
-    whaleMissing: resolvedBetCount == null,
-  });
-  const shadowOverride = shouldApplyShadowCredibilityOverride({
-    stakeNotional: stake,
-    resolvedBetCount,
-    walletAvgEv: avgEv,
-  });
-  const bypass = unindexedBypass || shadowOverride;
 
-  if (
-    !bypass &&
-    !meetsFeedResolvedBetsThreshold(resolvedBetCount)
-  ) {
+  if (!meetsFeedResolvedBetsThreshold(resolvedBetCount)) {
     const resolvedLabel =
       resolvedBetCount != null && Number.isFinite(resolvedBetCount)
         ? String(resolvedBetCount)
-        : "N/A";
+        : "0";
     gateLog(
       input.tradeId,
       `[Fail: Credibility] resolvedBetCount=${resolvedLabel} (< ${CREDIBILITY_CONFIG.MIN_RESOLVED_BETS})`
@@ -349,7 +337,13 @@ export function evaluatePostQueueCredibilityGate(
     return { passed: false, reason: BELOW_RESOLVED_BETS };
   }
 
-  if (!bypass && !meetsWalletAvgEvThreshold(avgEv)) {
+  const shadowOverride = shouldApplyShadowCredibilityOverride({
+    stakeNotional: stake,
+    resolvedBetCount,
+    walletAvgEv: avgEv,
+  });
+
+  if (!shadowOverride && !meetsWalletAvgEvThreshold(avgEv)) {
     const avgEvPct =
       avgEv != null && Number.isFinite(avgEv)
         ? (avgEv * 100).toFixed(1)
@@ -361,21 +355,13 @@ export function evaluatePostQueueCredibilityGate(
     return { passed: false, reason: BELOW_EV_THRESHOLD };
   }
 
-  if (unindexedBypass) {
-    gateLog(
-      input.tradeId,
-      `[Pass: Credibility] Unindexed whale bypass (isUnindexedWhale=true) — stake (${formatStake(stake)}) >= ${formatStake(UNINDEXED_WALLET_STAKE_BYPASS_USD)}; resolvedBetCount=${resolvedBetCount ?? 0}`
-    );
-    return { passed: true };
-  }
-
   if (shadowOverride) {
     const modeLabel = isAllowUnindexedWallets()
       ? "ALLOW_UNINDEXED_WALLETS"
       : "shadow/unregistered override";
     gateLog(
       input.tradeId,
-      `[Pass: Credibility] ${modeLabel} — stake (${formatStake(stake)}) >= ${formatStake(SHADOW_UNREGISTERED_STAKE_BYPASS_USD)}; skipping registry checks (resolved bets floor=${SHADOW_RESOLVED_BETS_FLOOR})`
+      `[Pass: Credibility] ${modeLabel} — stake (${formatStake(stake)}) >= ${formatStake(SHADOW_UNREGISTERED_STAKE_BYPASS_USD)}; wallet avg EV bypass (resolvedBetCount=${resolvedBetCount})`
     );
     return { passed: true };
   }

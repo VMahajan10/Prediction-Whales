@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildEvParenthetical,
+  buildTraderAvgEvClause,
+  formatTradeEvLabel,
+  formatTraderAvgEvLabel,
   getEligibleTemplateFamilies,
   sanitizePostDraft,
   selectPostTemplate,
@@ -83,5 +87,87 @@ describe("selectPostTemplate", () => {
     expect(selection.renderedDraft).toContain(
       "Both teams enter on a five-game win streak."
     );
+  });
+
+  it("formats Trade EV and Trader Avg EV labels distinctly", () => {
+    expect(formatTradeEvLabel(5.2)).toBe("Trade EV: +5.2%");
+    expect(formatTraderAvgEvLabel(0.08)).toBe("Trader Avg EV: +8%");
+    expect(
+      buildTraderAvgEvClause({ avg_ev: 0.08, resolvedBetsCount: 512 })
+    ).toBe("Trader Avg EV: +8% over 512 bets");
+    expect(
+      buildTraderAvgEvClause({ avg_ev: 0.08, resolvedBetsCount: 99 })
+    ).toBeNull();
+    expect(
+      buildEvParenthetical({
+        tradeEvLabel: "Trade EV: +5.2%",
+        traderAvgEvClause: "Trader Avg EV: +8% over 512 bets",
+      })
+    ).toBe(
+      "(Trade EV: +5.2% · Trader Avg EV: +8% over 512 bets)"
+    );
+    expect(
+      buildEvParenthetical({
+        tradeEvLabel: "Trade EV: +5.2%",
+        traderAvgEvClause: null,
+      })
+    ).toBe("(Trade EV: +5.2%)");
+  });
+
+  it("renders V5-b with explicit trade and trader EV labels", () => {
+    let v5bDraft: string | null = null;
+    for (let seed = 0; seed < 50; seed += 1) {
+      const selection = selectPostTemplate(
+        baseInputs({
+          entry: 35,
+          now: undefined,
+          postedCount30d: 0,
+          avgStakeNotional: undefined,
+          tradeEvPercent: 5.2,
+          resolvedBetsCount: 512,
+        }),
+        {
+          lastTemplateFamily: "V6",
+          random: () => seed / 50,
+        }
+      );
+      if (selection.templateFamily === "V5" && selection.variantId === "V5-b") {
+        v5bDraft = selection.renderedDraft;
+        break;
+      }
+    }
+
+    expect(v5bDraft).not.toBeNull();
+    expect(v5bDraft).toMatch(
+      /^The crowd has this at \d+¢\. A whale took .+ with \$[\d.,kM]+ \(Trade EV: \+5\.2% · Trader Avg EV: \+8% over 512 bets\)\./
+    );
+  });
+
+  it("omits Trader Avg EV from V5-b when resolved bets are below 100", () => {
+    let v5bDraft: string | null = null;
+    for (let seed = 0; seed < 50; seed += 1) {
+      const selection = selectPostTemplate(
+        baseInputs({
+          entry: 35,
+          now: undefined,
+          postedCount30d: 0,
+          avgStakeNotional: undefined,
+          tradeEvPercent: 4,
+          resolvedBetsCount: 50,
+        }),
+        {
+          lastTemplateFamily: "V6",
+          random: () => seed / 50,
+        }
+      );
+      if (selection.templateFamily === "V5" && selection.variantId === "V5-b") {
+        v5bDraft = selection.renderedDraft;
+        break;
+      }
+    }
+
+    expect(v5bDraft).not.toBeNull();
+    expect(v5bDraft).toContain("(Trade EV: +4%)");
+    expect(v5bDraft).not.toContain("Trader Avg EV");
   });
 });

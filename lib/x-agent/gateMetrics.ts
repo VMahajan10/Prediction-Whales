@@ -11,11 +11,15 @@ import {
 } from "@/lib/x-agent/stakeFloor";
 import { CREDIBILITY_CONFIG } from "@/lib/feedQualification";
 
-/** Minimum live trade EV as display percent (0% — non-negative live EV). */
-export const HIGH_EV_TRADE_THRESHOLD_PCT = 0;
+/** Minimum live trade EV as display percent (+3.0%). */
+export const HIGH_EV_TRADE_THRESHOLD_PCT = 3;
 
-/** Minimum live trade EV as decimal (trade.ev >= 0.0). */
-export const MIN_TRADE_EV_DECIMAL = 0.0;
+/** Minimum live trade EV as decimal (trade.ev >= 0.03). */
+export const MIN_TRADE_EV_DECIMAL = HIGH_EV_TRADE_THRESHOLD_PCT / 100;
+
+/** Human-readable post-queue rejection when live trade EV is below the floor. */
+export const FAILED_TRADE_EV_REASON =
+  "Failed Trade EV (< +3.0%)" as const;
 
 /** Minimum USD stake for feed qualification and credibility gate (whale notional). */
 export const MIN_STAKE_THRESHOLD = CREDIBILITY_CONFIG.MIN_STAKE_USD;
@@ -147,7 +151,7 @@ export function recordPreGateFailure(
     | "BELOW_STAKE_FLOOR"
     | "STAKE_TOO_LOW"
     | "ILLEGIBLE_MARKET"
-    | "BELOW_TRADE_EV"
+    | typeof FAILED_TRADE_EV_REASON
     | "BELOW_RESOLVED_BETS"
     | "BELOW_EV_THRESHOLD"
     | "LOW_EV",
@@ -167,7 +171,7 @@ export function recordPreGateFailure(
     case "ILLEGIBLE_MARKET":
       metrics.failedLegibilityOrAlignment += 1;
       break;
-    case "BELOW_TRADE_EV":
+    case FAILED_TRADE_EV_REASON:
       metrics.failedEvThreshold += 1;
       break;
     case "BELOW_RESOLVED_BETS":
@@ -198,7 +202,7 @@ export interface GateMetricsCollector {
       | "BELOW_STAKE_FLOOR"
       | "STAKE_TOO_LOW"
       | "ILLEGIBLE_MARKET"
-      | "BELOW_TRADE_EV"
+      | typeof FAILED_TRADE_EV_REASON
       | "BELOW_RESOLVED_BETS"
       | "BELOW_EV_THRESHOLD"
       | "LOW_EV",
@@ -262,7 +266,7 @@ export class RollingGateMatrixTracker implements GateMetricsCollector {
       | "BELOW_STAKE_FLOOR"
       | "STAKE_TOO_LOW"
       | "ILLEGIBLE_MARKET"
-      | "BELOW_TRADE_EV"
+      | typeof FAILED_TRADE_EV_REASON
       | "BELOW_RESOLVED_BETS"
       | "BELOW_EV_THRESHOLD"
       | "LOW_EV",

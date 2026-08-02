@@ -12,6 +12,9 @@ import {
   type TradePayload,
 } from "@/lib/x-agent/gates";
 import {
+  FAILED_TRADE_EV_REASON,
+} from "@/lib/x-agent/gateMetrics";
+import {
   SHADOW_UNREGISTERED_STAKE_BYPASS_USD,
 } from "@/lib/x-agent/postQueueGates";
 import {
@@ -162,16 +165,16 @@ describe("evaluateWalletCredibilityPreGate", () => {
 });
 
 describe("evaluateTradeEvPreGate", () => {
-  it("fails when live trade EV is negative", () => {
-    const result = evaluateTradeEvPreGate(-0.1);
-
-    expect(result.passed).toBe(false);
-    expect(result.reason).toBe("BELOW_TRADE_EV");
+  it("fails when live trade EV is below +3%", () => {
+    expect(evaluateTradeEvPreGate(-0.1).passed).toBe(false);
+    expect(evaluateTradeEvPreGate(0).passed).toBe(false);
+    expect(evaluateTradeEvPreGate(2.9).passed).toBe(false);
+    expect(evaluateTradeEvPreGate(2.9).reason).toBe(FAILED_TRADE_EV_REASON);
   });
 
-  it("passes when live trade EV is non-negative", () => {
-    expect(evaluateTradeEvPreGate(0).passed).toBe(true);
-    expect(evaluateTradeEvPreGate(2.0).passed).toBe(true);
+  it("passes when live trade EV meets the +3% floor", () => {
+    expect(evaluateTradeEvPreGate(3.0).passed).toBe(true);
+    expect(evaluateTradeEvPreGate(5.0).passed).toBe(true);
   });
 });
 
@@ -195,12 +198,21 @@ describe("evaluateTradeGateMatrix", () => {
     const lowTradeHighWallet = evaluateTradeGateMatrix({
       trade: makeTrade(),
       whale: makeWhale({ resolvedBetsCount: 600, avgEv: 0.04 }),
-      tradeEvPercent: 2.0,
+      tradeEvPercent: 5.0,
     });
     expect(lowTradeHighWallet.passesEv).toBe(true);
     expect(lowTradeHighWallet.passesCredibility).toBe(true);
-    expect(lowTradeHighWallet.tradeEvDecimal).toBe(0.02);
+    expect(lowTradeHighWallet.tradeEvDecimal).toBe(0.05);
     expect(lowTradeHighWallet.walletAvgEv).toBe(0.04);
+
+    const belowTradeEvFloor = evaluateTradeGateMatrix({
+      trade: makeTrade(),
+      whale: makeWhale({ resolvedBetsCount: 600, avgEv: 0.04 }),
+      tradeEvPercent: 2.0,
+    });
+    expect(belowTradeEvFloor.passesEv).toBe(false);
+    expect(belowTradeEvFloor.passesCredibility).toBe(true);
+    expect(belowTradeEvFloor.tradeEvDecimal).toBe(0.02);
   });
 
   it("records independent failures across multiple gates", () => {
@@ -244,7 +256,7 @@ describe("evaluateTradeGateMatrix", () => {
     expect(matrix.primaryFailureReason).toBe("BELOW_RESOLVED_BETS");
   });
 
-  it("allows anonymous high-stake trades through credibility via unindexed bypass", () => {
+  it("rejects anonymous high-stake trades with zero resolved bets", () => {
     const result = withStrictCredibilityGates(() =>
       evaluateWalletCredibilityPreGate(
         makeTrade({
@@ -255,7 +267,8 @@ describe("evaluateTradeGateMatrix", () => {
       )
     );
 
-    expect(result.passed).toBe(true);
+    expect(result.passed).toBe(false);
+    expect(result.reason).toBe("BELOW_RESOLVED_BETS");
   });
 
   it("applies the macro/political stake tier", () => {

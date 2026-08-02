@@ -18,14 +18,12 @@ import {
 import { persistKalshiShadowTradeFromWhale } from "@/lib/x-agent/kalshiShadowTrades";
 import {
   evaluatePostQueueSourceGate,
+  evaluateResolvedBetsCredibilityFloor,
   KALSHI_PUBLIC_POSTING_DISABLED,
   logPostQueueIngestionSuccess,
   resolveCredibilityWhaleWithHydration,
-  shouldAllowUnindexedWhaleBypass,
 } from "@/lib/x-agent/postQueueGates";
 import {
-  MIN_WALLET_AVG_EV_DECIMAL,
-  MIN_WALLET_RESOLVED_BETS,
   type GateSummary,
   type GateMetricsCollector,
   HIGH_EV_TRADE_THRESHOLD_PCT,
@@ -190,7 +188,8 @@ export async function processWhaleTradeForXAgent(
   let whaleForGates: Awaited<
     ReturnType<typeof resolveCredibilityWhaleWithHydration>
   >["whale"] = null;
-  let isUnindexedWhale = false;
+  let resolvedBetCount: number | null = anonymousTrade ? 0 : null;
+
   if (!anonymousTrade) {
     const credibility = await resolveCredibilityWhaleWithHydration({
       tradeId: payload.tradeId,
@@ -198,27 +197,31 @@ export async function processWhaleTradeForXAgent(
       stakeNotional: payload.stakeNotional,
     });
     whaleForGates = credibility.whale;
-    isUnindexedWhale = credibility.isUnindexedWhale === true;
-  } else if (
-    shouldAllowUnindexedWhaleBypass({
-      stakeNotional: trade.usdNotional,
-      resolvedBetCount: 0,
-      whaleMissing: true,
-    })
-  ) {
-    isUnindexedWhale = true;
-    const ensured = await ensureWhaleInRegistry(ANONYMOUS_WALLET_ADDRESS, {
-      resolvedBetsCount: MIN_WALLET_RESOLVED_BETS,
-      avgEv: MIN_WALLET_AVG_EV_DECIMAL,
-      avgStakeNotional: trade.usdNotional,
-    });
-    whaleForGates = ensured?.whale ?? null;
+    resolvedBetCount = credibility.resolvedBetCount;
+  }
+
+  const resolvedBetsFloor = evaluateResolvedBetsCredibilityFloor({
+    tradeId: payload.tradeId,
+    walletAddress,
+    resolvedBetCount,
+  });
+  if (!resolvedBetsFloor.passed) {
+    await handlePreGateRejection(
+      payload,
+      {
+        passed: false,
+        reason: resolvedBetsFloor.reason ?? "BELOW_RESOLVED_BETS",
+        failedStep: "credibility",
+      },
+      metricsOptions,
+      whaleForGates
+    );
+    return;
   }
 
   const credibilityGate = evaluateWalletCredibilityPreGate(
     payload,
-    whaleForGates,
-    { isUnindexedWhale }
+    whaleForGates
   );
   if (!credibilityGate.passed) {
     await handlePreGateRejection(
@@ -348,6 +351,7 @@ export async function processWhaleTradeForXAgent(
         entry: pricedPayload.entryCents,
         now: pricedPayload.nowCents,
         avg_ev: whaleRegistry.whale.avgEv,
+        tradeEvPercent,
         marketPlain: translation.marketPlain,
         stakeNotional: pricedPayload.stakeNotional,
         avgStakeNotional: whaleRegistry.whale.avgStakeNotional,
