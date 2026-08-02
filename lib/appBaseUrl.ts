@@ -22,6 +22,35 @@ export function getPublicAppUrl(): string {
   return getAppBaseUrl();
 }
 
+type BrowserGlobal = {
+  window?: {
+    location?: {
+      origin?: string;
+    };
+  };
+};
+
+/** Read `window.location.origin` without referencing the global `window` identifier. */
+function getBrowserOrigin(): string | null {
+  if (typeof globalThis === "undefined") return null;
+
+  const origin = (globalThis as BrowserGlobal).window?.location?.origin;
+  return typeof origin === "string" && origin.length > 0 ? origin : null;
+}
+
+function resolveServerAppBaseUrl(): string {
+  const fromPublic = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  if (fromPublic) return fromPublic.replace(/\/$/, "");
+
+  const vercelUrl = process.env.VERCEL_URL?.trim();
+  if (vercelUrl) return `https://${vercelUrl.replace(/^https?:\/\//, "")}`;
+
+  const appBaseUrl = process.env.APP_BASE_URL?.trim();
+  if (appBaseUrl) return appBaseUrl.replace(/\/$/, "");
+
+  return "http://localhost:3000";
+}
+
 /**
  * Resolve an absolute URL for same-origin API routes.
  * Browser: current origin. Server/worker: env-based app URL.
@@ -29,17 +58,11 @@ export function getPublicAppUrl(): string {
 export function resolveAppApiUrl(path: string): string {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
 
-  if (typeof window !== "undefined" && window.location?.origin) {
-    return new URL(normalizedPath, window.location.origin).toString();
+  const browserOrigin = getBrowserOrigin();
+  if (browserOrigin) {
+    return new URL(normalizedPath, browserOrigin).toString();
   }
 
-  const baseUrl =
-    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "") ||
-    process.env.APP_BASE_URL?.trim() ||
-    process.env.APP_URL?.trim() ||
-    getAppBaseUrl() ||
-    "http://localhost:3000";
-
-  return new URL(normalizedPath, baseUrl.replace(/\/$/, "")).toString();
+  const baseUrl = resolveServerAppBaseUrl();
+  return new URL(normalizedPath, baseUrl).toString();
 }
