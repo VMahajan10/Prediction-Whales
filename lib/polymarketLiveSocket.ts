@@ -1,5 +1,8 @@
 import { fetchTokenRegistry, type TokenMarketMeta } from "@/lib/polymarket";
-import { MIN_WHALE_USD } from "@/lib/whaleTrades";
+import {
+  passesFeedSocketStakeGate,
+  shouldBroadcastQualifiedSocketTrade,
+} from "@/lib/feedSocketGate";
 
 export interface SocketTrade {
   id: string;
@@ -37,7 +40,7 @@ interface LastTradePriceEvent {
 
 export interface PolymarketLiveSocketOptions {
   onTrade: (trade: SocketTrade) => void | Promise<void>;
-  /** Minimum USD notional before emitting (defaults to MIN_WHALE_USD). */
+  /** @deprecated Tiered stake floors are enforced in feedSocketGate. */
   minUsdNotional?: number;
 }
 
@@ -61,11 +64,8 @@ export class PolymarketLiveSocket {
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectAttempts = 0;
   private stopped = false;
-  private readonly minUsdNotional: number;
 
-  constructor(private readonly options: PolymarketLiveSocketOptions) {
-    this.minUsdNotional = options.minUsdNotional ?? MIN_WHALE_USD;
-  }
+  constructor(private readonly options: PolymarketLiveSocketOptions) {}
 
   get connected(): boolean {
     return this.ws?.readyState === WebSocket.OPEN;
@@ -181,7 +181,7 @@ export class PolymarketLiveSocket {
     const price = parseFloat(raw.price ?? "0");
     const shares = parseFloat(raw.size ?? "0");
     const usdNotional = price * shares;
-    if (!Number.isFinite(usdNotional) || usdNotional < this.minUsdNotional) return;
+    if (!Number.isFinite(usdNotional) || usdNotional <= 0) return;
 
     this.seenHashes.add(hash);
 
@@ -203,6 +203,11 @@ export class PolymarketLiveSocket {
       slug: meta?.slug,
       conditionId: meta?.conditionId ?? raw.market,
     };
+
+    if (!passesFeedSocketStakeGate(trade)) return;
+
+    const qualified = await shouldBroadcastQualifiedSocketTrade(trade);
+    if (!qualified) return;
 
     await this.options.onTrade(trade);
   }

@@ -1,4 +1,6 @@
-import { resolveDetailPanelDisplayEv } from "@/lib/evPipeline/tradeEvRecord";
+import {
+  deriveEvPercentFromPTrue,
+} from "@/lib/evPipeline/tradeEvRecord";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 
 function tradeLevelEvPercent(input: {
@@ -15,7 +17,7 @@ function tradeLevelEvPercent(input: {
   return null;
 }
 
-/** Trade-level EV % for feed gates — never falls back to wallet average EV. */
+/** Trade-level EV % for feed gates — never falls back to wallet averageEv. */
 export function resolveFeedTradeEvPercent(
   trade: {
     price: number;
@@ -28,13 +30,21 @@ export function resolveFeedTradeEvPercent(
   const fromTrade = tradeLevelEvPercent(trade);
   if (fromTrade != null) return fromTrade;
 
-  if (!pipeline) return null;
+  if (!pipeline || pipeline.status === "unmapped") return null;
 
-  const detail = resolveDetailPanelDisplayEv(pipeline, trade.price);
-  if (detail) return detail.netEvPercent;
-
-  return tradeLevelEvPercent({
+  const fromPipeline = tradeLevelEvPercent({
     netEvPercent: pipeline.netEvPercent,
     grossEvPercent: pipeline.grossEvPercent,
   });
+  if (fromPipeline != null) return fromPipeline;
+
+  if (pipeline.pTrue != null && Number.isFinite(pipeline.pTrue)) {
+    return deriveEvPercentFromPTrue(
+      pipeline.pTrue,
+      trade.price,
+      pipeline.pMarket ?? pipeline.pmMid ?? pipeline.kalshiMid
+    );
+  }
+
+  return null;
 }

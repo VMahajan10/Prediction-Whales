@@ -7,7 +7,7 @@ import type { TradeSummary } from "@/lib/polymarket";
 import { usePolymarketSocketContext } from "@/lib/PolymarketSocketProvider";
 import {
   isQualifiedFeedTrade,
-  MIN_FEED_STAKE_PREFILTER_USD,
+  meetsFeedTieredStakeThreshold,
 } from "@/lib/feedQualification";
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import { translateWhaleTradeMarket } from "@/lib/marketTranslator";
@@ -245,7 +245,14 @@ export function useWhaleFeed() {
     for (const whale of liveWhales) {
       const key = whale.transactionHash || whale.id;
       if (!key || metricsReported.current.has(key)) continue;
-      if (!Number.isFinite(whale.usdNotional) || whale.usdNotional < MIN_FEED_STAKE_PREFILTER_USD) {
+      if (
+        !meetsFeedTieredStakeThreshold({
+          stakeUsd: whale.usdNotional,
+          title: whale.title,
+          slug: whale.slug,
+          eventSlug: whale.eventSlug,
+        })
+      ) {
         metricsReported.current.add(key);
         continue;
       }

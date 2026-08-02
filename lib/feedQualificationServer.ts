@@ -3,7 +3,7 @@ import "server-only";
 import {
   isQualifiedFeedTrade,
   isQualifiedWalletForFeed,
-  MIN_FEED_STAKE_PREFILTER_USD,
+  meetsFeedTieredStakeThreshold,
   CREDIBILITY_CONFIG,
   type WalletFeedQualificationInput,
 } from "@/lib/feedQualification";
@@ -126,9 +126,13 @@ export function filterTranslatablePolymarketFeedTrades<
 export async function filterQualifiedPolymarketFeedTrades<
   T extends PolymarketFeedTradeLike,
 >(trades: T[]): Promise<T[]> {
-  const stakeCandidates = trades.filter(
-    (trade) =>
-      Number.isFinite(trade.size) && trade.size >= MIN_FEED_STAKE_PREFILTER_USD
+  const stakeCandidates = trades.filter((trade) =>
+    meetsFeedTieredStakeThreshold({
+      stakeUsd: trade.size,
+      title: trade.title,
+      slug: trade.slug,
+      eventSlug: trade.eventSlug,
+    })
   );
 
   const wallets = stakeCandidates

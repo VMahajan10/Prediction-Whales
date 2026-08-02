@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { MIN_WHALE_USD } from "@/lib/whaleTrades";
+import { shouldBroadcastQualifiedSocketTrade } from "@/lib/feedSocketGate";
 import type { TokenMarketMeta } from "@/lib/polymarket";
 
 export interface SocketTrade {
@@ -98,9 +98,11 @@ export function usePolymarketSocket(maxTrades = 50) {
       };
 
       setTrades((prev) => [trade, ...prev].slice(0, maxTrades));
-      if (usdNotional >= MIN_WHALE_USD) {
+
+      void shouldBroadcastQualifiedSocketTrade(trade).then((qualified) => {
+        if (!qualified || !isMounted.current) return;
         setWhaleTrades((prev) => [trade, ...prev].slice(0, 50));
-      }
+      });
     };
 
     const connect = () => {
