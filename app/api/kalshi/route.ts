@@ -9,9 +9,14 @@ export const revalidate = 0;
 let cache: { data: { markets: unknown[] }; timestamp: number } | null = null;
 const CACHE_TTL = 10000; // 10 seconds
 
-const cleanTitle = (title: string): string => {
-  if (!title) return title;
-  return title
+function asSafeString(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+const cleanTitle = (title: string | null | undefined): string => {
+  const normalized = asSafeString(title);
+  if (!normalized) return "Unknown market";
+  return normalized
     .replace("Pro Basketball Finals", "NBA Finals")
     .replace("Pro Baseball Championship", "MLB World Series")
     .replace("Pro Football Championship", "NFL Super Bowl")
@@ -56,7 +61,9 @@ export async function GET() {
           status: "open",
           series_ticker: series,
         });
-        if (seriesMarkets) allMarkets.push(...seriesMarkets);
+        if (Array.isArray(seriesMarkets) && seriesMarkets.length > 0) {
+          allMarkets.push(...seriesMarkets);
+        }
       } catch {
         // Skip failed series silently
       }
@@ -65,17 +72,24 @@ export async function GET() {
     const markets = allMarkets;
 
     const filtered = (markets ?? []).filter((m: any) => {
-      const noLegs = !m.mve_selected_legs?.length;
-      const notParlay = !m.title?.includes(",yes ");
-      const notMultivariate = !m.ticker?.includes("KXMVE");
-      const hasVolume = parseFloat(m.volume_fp ?? "0") >= 100;
-      return noLegs && notParlay && notMultivariate && hasVolume;
+      const title = asSafeString(m?.title);
+      const ticker = asSafeString(m?.ticker);
+      const category = asSafeString(m?.category).toLowerCase();
+      const noLegs = !m?.mve_selected_legs?.length;
+      const notParlay = !title.includes(",yes ");
+      const notMultivariate = !ticker.includes("KXMVE");
+      const notMultivariateCategory = !category.includes("multivariate");
+      const hasVolume = parseFloat(m?.volume_fp ?? "0") >= 100;
+      return (
+        noLegs && notParlay && notMultivariate && notMultivariateCategory && hasVolume
+      );
     });
 
     // Deduplicate by question — keep highest volume per question
     const seen = new Map<string, any>();
     filtered.forEach((m: any) => {
-      const key = m.title?.slice(0, 40) ?? m.ticker;
+      const key =
+        asSafeString(m?.title).slice(0, 40) || asSafeString(m?.ticker) || "unknown";
       const existing = seen.get(key);
       if (
         !existing ||
@@ -91,20 +105,20 @@ export async function GET() {
       )
       .slice(0, 20)
       .map((m: any) => ({
-        id: m.ticker,
-        conditionId: m.ticker,
+        id: asSafeString(m?.ticker, "unknown"),
+        conditionId: asSafeString(m?.ticker, "unknown"),
         clobTokenIds: [] as string[],
-        question: cleanTitle(m.title ?? m.ticker),
-        probability: parseFloat(m.yes_bid_dollars ?? "0"),
-        volume: parseFloat(m.volume_fp ?? "0"),
+        question: cleanTitle(m?.title ?? m?.ticker),
+        probability: parseFloat(m?.yes_bid_dollars ?? "0"),
+        volume: parseFloat(m?.volume_fp ?? "0"),
         spread:
           Math.round(
-            (parseFloat(m.yes_ask_dollars ?? "0") -
-              parseFloat(m.yes_bid_dollars ?? "0")) *
+            (parseFloat(m?.yes_ask_dollars ?? "0") -
+              parseFloat(m?.yes_bid_dollars ?? "0")) *
               100 *
               10
           ) / 10,
-        active: m.status === "active",
+        active: m?.status === "active",
         source: "kalshi" as const,
         rawContracts: [],
       }));

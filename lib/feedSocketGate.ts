@@ -9,6 +9,7 @@ import {
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import {
   fetchPipelineEvBatch,
+  fetchPipelineTradeEv,
   pipelineEvKeyForWhale,
 } from "@/lib/pipelineEvClient";
 import type { SocketTrade } from "@/lib/usePolymarketSocket";
@@ -45,6 +46,39 @@ function socketTradeToWhale(trade: SocketTrade) {
   );
 }
 
+async function resolveSocketTradeEvPercent(
+  trade: SocketTrade
+): Promise<number | null> {
+  const assetId = trade.assetId?.trim();
+  if (!assetId) return null;
+
+  const evRequest = {
+    source: "polymarket" as const,
+    tokenId: assetId,
+    tradePrice: trade.price,
+  };
+
+  const whale = socketTradeToWhale(trade);
+  const key = pipelineEvKeyForWhale(whale);
+
+  const readEvPercent = (
+    pipeline: Awaited<ReturnType<typeof fetchPipelineTradeEv>> | undefined
+  ) => resolveFeedTradeEvPercent({ price: trade.price }, pipeline ?? null);
+
+  const fetched = await fetchPipelineEvBatch([evRequest]);
+  let pipeline: Awaited<ReturnType<typeof fetchPipelineTradeEv>> | undefined =
+    key ? fetched.get(key) : undefined;
+  let tradeEvPercent = readEvPercent(pipeline);
+
+  if (tradeEvPercent == null) {
+    console.log(`[Feed Gate] Enqueued trade ${trade.id} for EV calculation`);
+    pipeline = (await fetchPipelineTradeEv(evRequest)) ?? undefined;
+    tradeEvPercent = readEvPercent(pipeline);
+  }
+
+  return tradeEvPercent;
+}
+
 /** Async trade EV gate (+3.0% min on trade-level EV, rejects negative EV). */
 export async function passesFeedSocketTradeEvGate(
   trade: SocketTrade
@@ -63,22 +97,7 @@ export async function passesFeedSocketTradeEvGate(
     return false;
   }
 
-  const fetched = await fetchPipelineEvBatch([
-    {
-      source: "polymarket",
-      tokenId: trade.assetId,
-      tradePrice: trade.price,
-    },
-  ]);
-
-  const whale = socketTradeToWhale(trade);
-  const key = pipelineEvKeyForWhale(whale);
-  const pipeline = key ? fetched.get(key) : undefined;
-  const tradeEvPercent = resolveFeedTradeEvPercent(
-    { price: trade.price },
-    pipeline ?? null
-  );
-
+  const tradeEvPercent = await resolveSocketTradeEvPercent(trade);
   const passes = meetsFeedTradeEvThreshold(tradeEvPercent);
   if (!passes) {
     logFeedFilterReject({
