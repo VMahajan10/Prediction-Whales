@@ -33,6 +33,7 @@ import {
   logPostQueueSourceSkip,
   evaluatePostQueueCredibilityGate,
   evaluatePostQueueMarketTranslationGate,
+  resolveCredibilityWhaleWithHydration,
   shouldApplyShadowCredibilityOverride,
   STAKE_TOO_LOW,
   BELOW_EV_THRESHOLD,
@@ -626,18 +627,28 @@ export async function evaluateTradeEligibility(
 ): Promise<TradeEligibilityResult> {
   logGateCheck(trade.tradeId);
 
+  let resolvedWhale = whale ?? null;
+  if (!resolvedWhale && !isAnonymousWalletAddress(trade.walletAddress)) {
+    const hydrated = await resolveCredibilityWhaleWithHydration({
+      tradeId: trade.tradeId,
+      walletAddress: trade.walletAddress,
+      stakeNotional: trade.stakeNotional,
+    });
+    resolvedWhale = hydrated.whale;
+  }
+
   const matrix = evaluateTradeGateMatrix({
     trade,
-    whale,
+    whale: resolvedWhale,
     tradeEvPercent: options?.tradeEvPercent ?? null,
     nowMs,
   });
 
-  logGateMatrix(trade, whale, options?.tradeEvPercent ?? null, matrix, nowMs);
+  logGateMatrix(trade, resolvedWhale, options?.tradeEvPercent ?? null, matrix, nowMs);
 
   const metricsCollector = resolveGateMetricsCollector(options?.metrics);
   if (metricsCollector) {
-    metricsCollector.recordGateMatrixFailures(matrix, whale);
+    metricsCollector.recordGateMatrixFailures(matrix, resolvedWhale);
   }
 
   if (!matrix.passesAll) {

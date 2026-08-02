@@ -137,8 +137,9 @@ export function isWalletHydrationFallbackEnabled(): boolean {
   if (explicit === "true") return true;
   if (explicit === "false") return false;
   const shadowExplicit = process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW?.trim().toLowerCase();
-  if (shadowExplicit === "true") return true;
-  if (shadowExplicit === "false") return false;
+  const unindexedExplicit = process.env.ALLOW_UNINDEXED_WALLETS?.trim().toLowerCase();
+  if (shadowExplicit === "true" || unindexedExplicit === "true") return true;
+  if (shadowExplicit === "false" && unindexedExplicit === "false") return false;
   return process.env.NODE_ENV !== "production";
 }
 

@@ -21,8 +21,10 @@ import {
 function withStrictCredibilityGates<T>(fn: () => T): T {
   const previousNodeEnv = process.env.NODE_ENV;
   const previousShadow = process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
+  const previousUnindexed = process.env.ALLOW_UNINDEXED_WALLETS;
   process.env.NODE_ENV = "production";
   process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW = "false";
+  process.env.ALLOW_UNINDEXED_WALLETS = "false";
 
   try {
     return fn();
@@ -32,6 +34,11 @@ function withStrictCredibilityGates<T>(fn: () => T): T {
       delete process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
     } else {
       process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW = previousShadow;
+    }
+    if (previousUnindexed === undefined) {
+      delete process.env.ALLOW_UNINDEXED_WALLETS;
+    } else {
+      process.env.ALLOW_UNINDEXED_WALLETS = previousUnindexed;
     }
   }
 }
@@ -132,7 +139,7 @@ describe("postQueueGates", () => {
     expect(result.reason).toBeUndefined();
   });
 
-  it("bypasses missing registry stats in shadow when stake >= $250", () => {
+  it("bypasses missing registry stats in shadow when stake >= $500", () => {
     const previous = process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
     process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW = "true";
 
@@ -158,8 +165,10 @@ describe("postQueueGates", () => {
   it("rejects missing registry stats in production shadow-off mode", () => {
     const previousNodeEnv = process.env.NODE_ENV;
     const previousShadow = process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
+    const previousUnindexed = process.env.ALLOW_UNINDEXED_WALLETS;
     process.env.NODE_ENV = "production";
     process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW = "false";
+    process.env.ALLOW_UNINDEXED_WALLETS = "false";
 
     try {
       const result = evaluatePostQueueCredibilityGate({
@@ -177,6 +186,37 @@ describe("postQueueGates", () => {
         delete process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
       } else {
         process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW = previousShadow;
+      }
+      if (previousUnindexed === undefined) {
+        delete process.env.ALLOW_UNINDEXED_WALLETS;
+      } else {
+        process.env.ALLOW_UNINDEXED_WALLETS = previousUnindexed;
+      }
+    }
+  });
+
+  it("bypasses missing registry stats when ALLOW_UNINDEXED_WALLETS is true", () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousUnindexed = process.env.ALLOW_UNINDEXED_WALLETS;
+    process.env.NODE_ENV = "production";
+    process.env.ALLOW_UNINDEXED_WALLETS = "true";
+    process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW = "false";
+
+    try {
+      const result = evaluatePostQueueCredibilityGate({
+        tradeId: "trade-unindexed-bypass",
+        stakeNotional: SHADOW_UNREGISTERED_STAKE_BYPASS_USD,
+        walletAvgEv: null,
+        resolvedBetCount: null,
+      });
+
+      expect(result.passed).toBe(true);
+    } finally {
+      process.env.NODE_ENV = previousNodeEnv;
+      if (previousUnindexed === undefined) {
+        delete process.env.ALLOW_UNINDEXED_WALLETS;
+      } else {
+        process.env.ALLOW_UNINDEXED_WALLETS = previousUnindexed;
       }
     }
   });

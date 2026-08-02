@@ -18,10 +18,10 @@ import {
 import { persistKalshiShadowTradeFromWhale } from "@/lib/x-agent/kalshiShadowTrades";
 import {
   evaluatePostQueueSourceGate,
-  hydrateWalletForPostQueueCredibility,
   isAllowUnregisteredWalletsInShadow,
   KALSHI_PUBLIC_POSTING_DISABLED,
   logPostQueueIngestionSuccess,
+  resolveCredibilityWhaleWithHydration,
   SHADOW_UNREGISTERED_STAKE_BYPASS_USD,
 } from "@/lib/x-agent/postQueueGates";
 import {
@@ -189,21 +189,15 @@ export async function processWhaleTradeForXAgent(
 
   // Step 4: wallet credibility (registry → Polymarket Data API hydration).
   let whaleForGates: Awaited<
-    ReturnType<typeof hydrateWalletForPostQueueCredibility>
+    ReturnType<typeof resolveCredibilityWhaleWithHydration>
   >["whale"] = null;
   if (!anonymousTrade) {
-    const credibility = await hydrateWalletForPostQueueCredibility(walletAddress);
+    const credibility = await resolveCredibilityWhaleWithHydration({
+      tradeId: payload.tradeId,
+      walletAddress,
+      stakeNotional: payload.stakeNotional,
+    });
     whaleForGates = credibility.whale;
-    if (credibility.source === "polymarket_api") {
-      console.log(
-        "[x-agent/enqueue] wallet credibility hydrated from Polymarket Data API",
-        {
-          wallet: walletAddress,
-          resolvedBetsCount: credibility.stats?.resolvedBetsCount,
-          avgEv: credibility.stats?.avgEv,
-        }
-      );
-    }
   } else if (
     isAllowUnregisteredWalletsInShadow() &&
     trade.usdNotional >= SHADOW_UNREGISTERED_STAKE_BYPASS_USD
@@ -412,7 +406,7 @@ export async function processWhaleTradeForXAgent(
     });
   }
 
-  logPostQueueIngestionSuccess(payload.tradeId, insertedRecord.id);
+  logPostQueueIngestionSuccess(payload.tradeId);
   console.log(
     `[Gate] tradeId=${payload.tradeId} [Pass: Queue] Trade entered x_post_queue with status PENDING_REVIEW (id=${insertedRecord.id})`
   );

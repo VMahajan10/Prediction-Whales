@@ -17,6 +17,7 @@ import type {
   TranslatableMarket,
 } from "@/lib/marketTranslator";
 import { translateMarketPositionWithFallback } from "@/lib/marketTranslator";
+import type { WhaleRegistry } from "@/lib/crossmarket/store/schema";
 import {
   findWhaleByWalletCaseInsensitive,
   isAnonymousWalletAddress,
@@ -41,17 +42,17 @@ export const BELOW_RESOLVED_BETS = "BELOW_RESOLVED_BETS" as const;
 
 export const UNTRANSLATABLE_MARKET = "UNTRANSLATABLE_MARKET" as const;
 
-/** Shadow-mode stake floor to bypass missing registry / resolved-bet history. */
-export const SHADOW_UNREGISTERED_STAKE_BYPASS_USD = 250;
+/** Stake floor to bypass missing registry / resolved-bet history in shadow or unindexed mode. */
+export const SHADOW_UNREGISTERED_STAKE_BYPASS_USD = 500;
+
+/** Alias — missing-registry bypass uses the same $500 stake floor. */
+export const UNINDEXED_WALLET_STAKE_BYPASS_USD = SHADOW_UNREGISTERED_STAKE_BYPASS_USD;
 
 /** Resolved-bets floor used during shadow credibility override (0 = skip check). */
 export const SHADOW_RESOLVED_BETS_FLOOR = 0;
 
-export function getEffectiveResolvedBetsFloor(): number {
-  if (isAllowUnregisteredWalletsInShadow()) {
-    return SHADOW_RESOLVED_BETS_FLOOR;
-  }
-  return CREDIBILITY_CONFIG.MIN_RESOLVED_BETS;
+export function isAllowUnindexedWallets(): boolean {
+  return process.env.ALLOW_UNINDEXED_WALLETS?.trim().toLowerCase() === "true";
 }
 
 export function isAllowUnregisteredWalletsInShadow(): boolean {
@@ -61,12 +62,23 @@ export function isAllowUnregisteredWalletsInShadow(): boolean {
   return process.env.NODE_ENV !== "production";
 }
 
+export function isMissingRegistryOverrideEnabled(): boolean {
+  return isAllowUnindexedWallets() || isAllowUnregisteredWalletsInShadow();
+}
+
+export function getEffectiveResolvedBetsFloor(): number {
+  if (isMissingRegistryOverrideEnabled()) {
+    return SHADOW_RESOLVED_BETS_FLOOR;
+  }
+  return CREDIBILITY_CONFIG.MIN_RESOLVED_BETS;
+}
+
 export function shouldApplyShadowCredibilityOverride(input: {
   stakeNotional: number;
   resolvedBetCount?: number | null;
   walletAvgEv?: number | null;
 }): boolean {
-  if (!isAllowUnregisteredWalletsInShadow()) return false;
+  if (!isMissingRegistryOverrideEnabled()) return false;
 
   const hasResolvedBets = meetsFeedResolvedBetsThreshold(input.resolvedBetCount);
   const hasAvgEv = meetsWalletAvgEvThreshold(input.walletAvgEv);
@@ -80,10 +92,11 @@ export function shouldApplyShadowCredibilityOverride(input: {
 
 /**
  * Registry lookup, then Polymarket Data API hydration when the wallet is absent
- * from whale_registry.
+ * from whale_registry. Credible wallets are upserted into whale_registry.
  */
 export async function hydrateWalletForPostQueueCredibility(
-  walletAddress: string
+  walletAddress: string,
+  options?: { tradeId?: string }
 ): Promise<WalletCredibilityResolution> {
   const normalized = normalizeWalletAddress(walletAddress);
   if (!normalized || isAnonymousWalletAddress(normalized)) {
@@ -95,7 +108,52 @@ export async function hydrateWalletForPostQueueCredibility(
     return { whale: fromRegistry, source: "registry" };
   }
 
-  return resolveWhaleForCredibilityGate(normalized);
+  if (options?.tradeId) {
+    gateLog(
+      options.tradeId,
+      `[Hydrate] Wallet missing in whale_registry — fetching Polymarket Data API stats`
+    );
+  }
+
+  const resolution = await resolveWhaleForCredibilityGate(normalized);
+
+  if (options?.tradeId && resolution.source === "polymarket_api") {
+    gateLog(
+      options.tradeId,
+      `[Hydrate] Wallet stats saved to whale_registry (resolvedBetCount=${resolution.stats?.resolvedBetsCount ?? "n/a"}, avgEv=${resolution.stats?.avgEv ?? "n/a"})`
+    );
+  }
+
+  return resolution;
+}
+
+/**
+ * Hydrate a missing registry wallet, then evaluate credibility (with shadow /
+ * unindexed overrides when hydration does not produce qualifying stats).
+ */
+export async function resolveCredibilityWhaleWithHydration(input: {
+  tradeId: string;
+  walletAddress: string;
+  stakeNotional: number;
+  whale?: WhaleRegistry | null;
+}): Promise<{
+  whale: WhaleRegistry | null;
+  resolution?: WalletCredibilityResolution;
+}> {
+  if (isAnonymousWalletAddress(input.walletAddress)) {
+    return { whale: input.whale ?? null };
+  }
+
+  if (input.whale) {
+    return { whale: input.whale };
+  }
+
+  const resolution = await hydrateWalletForPostQueueCredibility(
+    input.walletAddress,
+    { tradeId: input.tradeId }
+  );
+
+  return { whale: resolution.whale, resolution };
 }
 
 export type PostQueueSourceRejectionReason =
@@ -237,9 +295,12 @@ export function evaluatePostQueueCredibilityGate(
   }
 
   if (shadowOverride) {
+    const modeLabel = isAllowUnindexedWallets()
+      ? "ALLOW_UNINDEXED_WALLETS"
+      : "shadow/unregistered override";
     gateLog(
       input.tradeId,
-      `[Pass: Credibility] Shadow override — stake (${formatStake(stake)}) >= ${formatStake(SHADOW_UNREGISTERED_STAKE_BYPASS_USD)}; skipping registry checks (resolved bets floor=${SHADOW_RESOLVED_BETS_FLOOR})`
+      `[Pass: Credibility] ${modeLabel} — stake (${formatStake(stake)}) >= ${formatStake(SHADOW_UNREGISTERED_STAKE_BYPASS_USD)}; skipping registry checks (resolved bets floor=${SHADOW_RESOLVED_BETS_FLOOR})`
     );
     return { passed: true };
   }
@@ -283,12 +344,8 @@ export function evaluatePostQueueMarketTranslationGate(
   return { passed: true, translation };
 }
 
-export function logPostQueueIngestionSuccess(
-  tradeId: string,
-  queueId: string
-): void {
-  gateLog(
-    tradeId,
-    `[Pass: All Gates] Trade queued for review — x_post_queue id=${queueId} status=PENDING_REVIEW`
+export function logPostQueueIngestionSuccess(tradeId: string): void {
+  console.log(
+    `[Pass: All Gates] tradeId=${tradeId} queued into x_post_queue as PENDING_REVIEW`
   );
 }

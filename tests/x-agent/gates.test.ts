@@ -24,8 +24,10 @@ import { ANONYMOUS_WALLET_ADDRESS } from "@/lib/x-agent/whaleRegistryDb";
 function withStrictCredibilityGates<T>(fn: () => T): T {
   const previousNodeEnv = process.env.NODE_ENV;
   const previousShadow = process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
+  const previousUnindexed = process.env.ALLOW_UNINDEXED_WALLETS;
   process.env.NODE_ENV = "production";
   process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW = "false";
+  process.env.ALLOW_UNINDEXED_WALLETS = "false";
 
   try {
     return fn();
@@ -35,6 +37,11 @@ function withStrictCredibilityGates<T>(fn: () => T): T {
       delete process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
     } else {
       process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW = previousShadow;
+    }
+    if (previousUnindexed === undefined) {
+      delete process.env.ALLOW_UNINDEXED_WALLETS;
+    } else {
+      process.env.ALLOW_UNINDEXED_WALLETS = previousUnindexed;
     }
   }
 }
