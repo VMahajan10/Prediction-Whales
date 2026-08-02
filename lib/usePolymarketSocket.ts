@@ -172,7 +172,7 @@ export function usePolymarketSocket(maxTrades = 50) {
     const bootstrap = async () => {
       try {
         const res = await fetch("/api/markets/tokens");
-        const registry: TokenRegistry = await res.json();
+        const registry = (await res.json()) as TokenRegistry;
         if (!isMounted.current) return;
         registryRef.current = {
           tokenIds: registry.tokenIds ?? [],

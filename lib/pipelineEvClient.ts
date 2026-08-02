@@ -177,10 +177,10 @@ export async function fetchPipelineEvBatch(
 
   if (!res.ok) return new Map();
 
-  const data: {
+  const data = (await res.json()) as {
     entries?: PipelineTradeEv[];
     byKey?: Record<string, PipelineTradeEv>;
-  } = await res.json();
+  };
 
   const next = new Map<string, PipelineTradeEv>();
   for (const entry of data.entries ?? []) {
@@ -293,6 +293,6 @@ export async function fetchPipelineTradeEv(input: {
 
   const res = await fetch(`/api/ev/trades?${params.toString()}`);
   if (!res.ok) return null;
-  const data: { entry?: PipelineTradeEv | null } = await res.json();
+  const data = (await res.json()) as { entry?: PipelineTradeEv | null };
   return data.entry ?? null;
 }
