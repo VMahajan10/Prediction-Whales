@@ -1,9 +1,7 @@
 import {
-  meetsFeedResolvedBetsThreshold,
   meetsFeedTieredStakeThreshold,
   meetsFeedTradeEvThreshold,
-  meetsWalletAvgEvThreshold,
-  type FeedQualificationTrade,
+  type LiveFeedQualificationTrade,
 } from "@/lib/feedQualification";
 import { inferCategoryBadge } from "@/lib/marketCategory";
 import { normalizeFeedCategory } from "@/lib/x-agent/stakeFloor";
@@ -54,11 +52,8 @@ export function logFeedFilterReject(input: FeedFilterRejectInput): void {
   );
 }
 
-export function diagnoseFeedTradeRejection(
-  trade: FeedQualificationTrade & {
-    id: string;
-    category?: string | null;
-  }
+export function diagnoseLiveFeedTradeRejection(
+  trade: LiveFeedQualificationTrade
 ): FeedFilterRejectReason | null {
   if (
     !meetsFeedTieredStakeThreshold({
@@ -72,14 +67,6 @@ export function diagnoseFeedTradeRejection(
     return "stake_floor";
   }
 
-  if (!meetsWalletAvgEvThreshold(trade.walletAvgEv)) {
-    return "wallet_avg_ev";
-  }
-
-  if (!meetsFeedResolvedBetsThreshold(trade.resolvedBetCount ?? trade.resolvedBetsCount)) {
-    return "resolved_bets";
-  }
-
   if (trade.tradeEvPercent == null || !Number.isFinite(trade.tradeEvPercent)) {
     return "missing_trade_ev";
   }
@@ -91,14 +78,11 @@ export function diagnoseFeedTradeRejection(
   return null;
 }
 
-export function logFeedTradeRejection(
-  trade: FeedQualificationTrade & {
-    id: string;
-    category?: string | null;
-  },
+export function logLiveFeedTradeRejection(
+  trade: LiveFeedQualificationTrade & { id: string },
   source: FeedFilterRejectInput["source"] = "api"
 ): void {
-  const reason = diagnoseFeedTradeRejection(trade);
+  const reason = diagnoseLiveFeedTradeRejection(trade);
   if (!reason) return;
 
   logFeedFilterReject({

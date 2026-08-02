@@ -1,13 +1,14 @@
 import "server-only";
 
 import {
-  isQualifiedFeedTrade,
+  isQualifiedLiveFeedTrade,
   isQualifiedWalletForFeed,
   meetsFeedTieredStakeThreshold,
+  type WalletFeedQualificationInput,
 } from "@/lib/feedQualification";
 import {
   logFeedFilterReject,
-  logFeedTradeRejection,
+  logLiveFeedTradeRejection,
   resolveFeedFilterCategoryLabel,
 } from "@/lib/feedFilterDiagnostics";
 import { resolveFeedTradeEvPercents } from "@/lib/feedTradeEvServer";
@@ -23,7 +24,6 @@ import {
 } from "@/lib/whaleIdentityResolver";
 import { findWhaleByWalletCaseInsensitive } from "@/lib/x-agent/whaleRegistryDb";
 import type { WhaleRegistry } from "@/lib/crossmarket/store/schema";
-import type { WalletFeedQualificationInput } from "@/lib/feedQualification";
 
 export interface WalletFeedQualification extends WalletFeedQualificationInput {
   qualified: boolean;
@@ -158,65 +158,21 @@ export async function filterQualifiedPolymarketFeedTrades<
     .map((trade) => trade.proxyWallet?.trim().toLowerCase())
     .filter((wallet): wallet is string => Boolean(wallet));
 
-  const qualifications = await qualifyWalletsForFeed(wallets);
-
-  const credibilityCandidates = stakeCandidates.filter((trade) => {
-    const wallet = trade.proxyWallet?.trim().toLowerCase();
-    if (!wallet) {
-      logFeedFilterReject({
-        id: trade.id,
-        stakeUsd: trade.size,
-        title: trade.title,
-        category: resolveFeedFilterCategoryLabel(trade),
-        reason: "missing_wallet",
-        source: "api",
-      });
-      return false;
-    }
-    const walletStats = qualifications[wallet];
-    const resolvedBetCount = walletStats?.resolvedBetsCount ?? null;
-    const passes = isQualifiedWalletForFeed({
-      avgEv: walletStats?.avgEv,
-      resolvedBetCount,
-    });
-    if (!passes) {
-      logFeedTradeRejection(
-        {
-          id: trade.id,
-          stakeUsd: trade.size,
-          walletAvgEv: walletStats?.avgEv,
-          resolvedBetCount,
-          title: trade.title,
-          slug: trade.slug,
-          eventSlug: trade.eventSlug,
-          category: resolveFeedFilterCategoryLabel(trade),
-          tradeEvPercent: null,
-        },
-        "api"
-      );
-    }
-    return passes;
-  });
+  await qualifyWalletsForFeed(wallets);
 
   const tradeEvPercents = await resolveFeedTradeEvPercents(
-    credibilityCandidates.map((trade) => ({
+    stakeCandidates.map((trade) => ({
       id: trade.id,
       price: trade.price,
       assetId: trade.assetId,
     }))
   );
 
-  const qualified = credibilityCandidates.filter((trade) => {
-    const wallet = trade.proxyWallet?.trim().toLowerCase();
-    if (!wallet) return false;
-    const walletStats = qualifications[wallet];
-    const resolvedBetCount = walletStats?.resolvedBetsCount ?? null;
+  const qualified = stakeCandidates.filter((trade) => {
     const tradeEvPercent = tradeEvPercents.get(trade.id) ?? null;
     const category = resolveFeedFilterCategoryLabel(trade);
     const feedTrade = {
       stakeUsd: trade.size,
-      walletAvgEv: walletStats?.avgEv,
-      resolvedBetCount,
       title: trade.title,
       slug: trade.slug,
       eventSlug: trade.eventSlug,
@@ -224,8 +180,8 @@ export async function filterQualifiedPolymarketFeedTrades<
       tradeEvPercent,
     };
 
-    if (!isQualifiedFeedTrade(feedTrade)) {
-      logFeedTradeRejection({ ...feedTrade, id: trade.id }, "api");
+    if (!isQualifiedLiveFeedTrade(feedTrade)) {
+      logLiveFeedTradeRejection({ ...feedTrade, id: trade.id }, "api");
       return false;
     }
 

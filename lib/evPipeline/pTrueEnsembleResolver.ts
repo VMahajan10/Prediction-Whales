@@ -267,10 +267,12 @@ export function resolvePTrueSync(input: PTrueResolveSyncInput): PTrueResult {
   }
 
   contributors.push(contributor("universal_prior", marketPrior, 1, 0.1));
+  // No authoritative estimate — abstain from a synthetic 50/50 p_true anchor.
+  // Downstream EV uses netEvPercent from ensemble tiers or flags low confidence.
   return buildResult({
-    pTrue: marketPrior,
-    source: "universal_prior",
-    confidence: 0.1,
+    pTrue: executionPrice ?? marketPrior,
+    source: executionPrice != null ? "execution_price" : "universal_prior",
+    confidence: executionPrice != null ? 0.25 : 0.1,
     contributors,
     pricingMode: input.mappingPairKey ? "paired_cross" : "standalone_resting",
     pmMid: pmResting,

@@ -1,7 +1,9 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import {
   CREDIBILITY_CONFIG,
+  isQualifiedCredentialedFeedTrade,
   isQualifiedFeedTrade,
+  isQualifiedLiveFeedTrade,
   meetsFeedStakeThreshold,
   meetsFeedTieredStakeThreshold,
   meetsFeedTradeEvThreshold,
@@ -102,9 +104,33 @@ describe("feedQualification", () => {
     expect(meetsWalletAvgEvThreshold(-0.001)).toBe(false);
   });
 
-  it("requires stake, wallet avg EV, resolved bets, and trade EV for feed qualification", () => {
-    expect(CREDIBILITY_CONFIG.MIN_RESOLVED_BETS).toBe(100);
+  it("live feed gate requires only tiered stake and trade EV", () => {
+    expect(
+      isQualifiedLiveFeedTrade({
+        stakeUsd: 500,
+        title: "Will Bitcoin reach $100k?",
+        tradeEvPercent: MIN_FEED_TRADE_EV_PCT,
+      })
+    ).toBe(true);
 
+    expect(
+      isQualifiedLiveFeedTrade({
+        stakeUsd: 500,
+        title: "Will Bitcoin reach $100k?",
+        tradeEvPercent: 2.9,
+      })
+    ).toBe(false);
+
+    expect(
+      isQualifiedLiveFeedTrade({
+        stakeUsd: 499,
+        title: "Will Bitcoin reach $100k?",
+        tradeEvPercent: 9,
+      })
+    ).toBe(false);
+  });
+
+  it("credentialed feed gate still requires wallet history", () => {
     const qualifiedBase = {
       stakeUsd: 500,
       walletAvgEv: MIN_AVG_EV_THRESHOLD,
@@ -113,6 +139,7 @@ describe("feedQualification", () => {
       tradeEvPercent: MIN_FEED_TRADE_EV_PCT,
     };
 
+    expect(isQualifiedCredentialedFeedTrade(qualifiedBase)).toBe(true);
     expect(isQualifiedFeedTrade(qualifiedBase)).toBe(true);
 
     expect(
@@ -158,7 +185,7 @@ describe("feedQualification", () => {
     ).toBe(false);
 
     expect(
-      isQualifiedFeedTrade({
+      isQualifiedCredentialedFeedTrade({
         stakeUsd: 250,
         walletAvgEv: MIN_AVG_EV_THRESHOLD,
         resolvedBetCount: 400,

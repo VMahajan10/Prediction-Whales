@@ -97,14 +97,23 @@ export interface FeedQualificationTrade {
   tradeEvPercent?: number | null;
 }
 
-/**
- * Credibility gate for product feed trades — all criteria required:
- * tiered stake floor, wallet avg EV >= +1.0%, resolved bets >= 100,
- * trade EV >= +3.0%.
- */
-export function isQualifiedFeedTrade(trade: FeedQualificationTrade): boolean {
-  const resolvedBetCount = trade.resolvedBetCount ?? trade.resolvedBetsCount;
+export type LiveFeedQualificationTrade = Pick<
+  FeedQualificationTrade,
+  | "stakeUsd"
+  | "title"
+  | "slug"
+  | "eventSlug"
+  | "category"
+  | "tradeEvPercent"
+>;
 
+/**
+ * Web live feed gate — trade EV >= +3.0% and tiered stake floor only.
+ * Does NOT apply X-agent wallet credibility (resolved bets / bettor avg EV).
+ */
+export function isQualifiedLiveFeedTrade(
+  trade: LiveFeedQualificationTrade
+): boolean {
   return (
     meetsFeedTieredStakeThreshold({
       stakeUsd: trade.stakeUsd,
@@ -112,11 +121,29 @@ export function isQualifiedFeedTrade(trade: FeedQualificationTrade): boolean {
       slug: trade.slug,
       eventSlug: trade.eventSlug,
       category: trade.category,
-    }) &&
-    meetsWalletAvgEvThreshold(trade.walletAvgEv) &&
-    meetsFeedResolvedBetsThreshold(resolvedBetCount) &&
-    meetsFeedTradeEvThreshold(trade.tradeEvPercent)
+    }) && meetsFeedTradeEvThreshold(trade.tradeEvPercent)
   );
+}
+
+/**
+ * X-agent / credentialed feed gate — live feed rules plus wallet credibility.
+ * @deprecated For web live feed use {@link isQualifiedLiveFeedTrade}.
+ */
+export function isQualifiedCredentialedFeedTrade(
+  trade: FeedQualificationTrade
+): boolean {
+  const resolvedBetCount = trade.resolvedBetCount ?? trade.resolvedBetsCount;
+
+  return (
+    isQualifiedLiveFeedTrade(trade) &&
+    meetsWalletAvgEvThreshold(trade.walletAvgEv) &&
+    meetsFeedResolvedBetsThreshold(resolvedBetCount)
+  );
+}
+
+/** @alias isQualifiedCredentialedFeedTrade — prefer isQualifiedLiveFeedTrade for web feed. */
+export function isQualifiedFeedTrade(trade: FeedQualificationTrade): boolean {
+  return isQualifiedCredentialedFeedTrade(trade);
 }
 
 export interface WalletFeedQualificationInput {

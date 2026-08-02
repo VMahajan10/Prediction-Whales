@@ -25,6 +25,14 @@ const cleanTitle = (title: string | null | undefined): string => {
     .replace("Pro Baseball", "MLB");
 };
 
+function marketTagsInclude(value: unknown, needle: string): boolean {
+  if (typeof value === "string") {
+    return value.toLowerCase().includes(needle);
+  }
+  if (!Array.isArray(value)) return false;
+  return value.some((tag) => marketTagsInclude(tag, needle));
+}
+
 export async function GET() {
   try {
     const now = Date.now();
@@ -75,13 +83,20 @@ export async function GET() {
       const title = asSafeString(m?.title);
       const ticker = asSafeString(m?.ticker);
       const category = asSafeString(m?.category).toLowerCase();
+      const tags = m?.tags;
       const noLegs = !m?.mve_selected_legs?.length;
       const notParlay = !title.includes(",yes ");
       const notMultivariate = !ticker.includes("KXMVE");
       const notMultivariateCategory = !category.includes("multivariate");
+      const notMultivariateTag = !marketTagsInclude(tags, "multivariate");
       const hasVolume = parseFloat(m?.volume_fp ?? "0") >= 100;
       return (
-        noLegs && notParlay && notMultivariate && notMultivariateCategory && hasVolume
+        noLegs &&
+        notParlay &&
+        notMultivariate &&
+        notMultivariateCategory &&
+        notMultivariateTag &&
+        hasVolume
       );
     });
 
@@ -93,7 +108,7 @@ export async function GET() {
       const existing = seen.get(key);
       if (
         !existing ||
-        parseFloat(m.volume_fp) > parseFloat(existing.volume_fp)
+        parseFloat(m?.volume_fp ?? "0") > parseFloat(existing?.volume_fp ?? "0")
       ) {
         seen.set(key, m);
       }
@@ -101,7 +116,8 @@ export async function GET() {
 
     const simple = Array.from(seen.values())
       .sort(
-        (a, b) => parseFloat(b.volume_fp) - parseFloat(a.volume_fp)
+        (a, b) =>
+          parseFloat(b?.volume_fp ?? "0") - parseFloat(a?.volume_fp ?? "0")
       )
       .slice(0, 20)
       .map((m: any) => ({
