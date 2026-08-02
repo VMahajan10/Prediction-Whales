@@ -4,7 +4,10 @@
  */
 
 import { pipelineMappingPairKey } from "@/lib/evPipeline/crossAssetLookup";
-import { prefetchMappingRedisBatch } from "@/lib/evPipeline/redisCache";
+import {
+  mappingRedisPairKey,
+  prefetchMappingRedisBatch,
+} from "@/lib/evPipeline/redisCache";
 import {
   evaluateBinaryBoxArbitrage,
   evaluateDirectionalWindows,
@@ -242,11 +245,12 @@ export async function scanArbitrageWindows(
   const nowMs = options.nowMs ?? Date.now();
 
   for (const mapping of mappings) {
-    const pairKey = pipelineMappingPairKey(
-      mapping.polymarketTokenId,
-      mapping.kalshiTicker
+    const books = prefetch.get(
+      mappingRedisPairKey(
+        mapping.polymarketTokenId,
+        mapping.kalshiTicker
+      )
     );
-    const books = prefetch.get(pairKey);
     const pmOb = books?.pmOb ?? null;
     const kalshiOb = books?.kalshiOb ?? null;
     const pairWindows = scanArbitrageWindowsForPair(

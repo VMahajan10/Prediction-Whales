@@ -33,6 +33,17 @@ function marketTagsInclude(value: unknown, needle: string): boolean {
   return value.some((tag) => marketTagsInclude(tag, needle));
 }
 
+function marketFieldIncludes(
+  value: unknown,
+  needle: string,
+  options?: { ignoreCase?: boolean }
+): boolean {
+  if (typeof value !== "string") return false;
+  const haystack = options?.ignoreCase ? value.toLowerCase() : value;
+  const n = options?.ignoreCase ? needle.toLowerCase() : needle;
+  return haystack.includes(n);
+}
+
 export async function GET() {
   try {
     const now = Date.now();
@@ -80,14 +91,15 @@ export async function GET() {
     const markets = allMarkets;
 
     const filtered = (markets ?? []).filter((m: any) => {
-      const title = asSafeString(m?.title);
-      const ticker = asSafeString(m?.ticker);
-      const category = asSafeString(m?.category).toLowerCase();
       const tags = m?.tags;
       const noLegs = !m?.mve_selected_legs?.length;
-      const notParlay = !title.includes(",yes ");
-      const notMultivariate = !ticker.includes("KXMVE");
-      const notMultivariateCategory = !category.includes("multivariate");
+      const notParlay = !marketFieldIncludes(m?.title, ",yes ");
+      const notMultivariate = !marketFieldIncludes(m?.ticker, "KXMVE");
+      const notMultivariateCategory = !marketFieldIncludes(
+        m?.category,
+        "multivariate",
+        { ignoreCase: true }
+      );
       const notMultivariateTag = !marketTagsInclude(tags, "multivariate");
       const hasVolume = parseFloat(m?.volume_fp ?? "0") >= 100;
       return (

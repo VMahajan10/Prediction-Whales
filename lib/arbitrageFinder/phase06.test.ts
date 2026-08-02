@@ -11,6 +11,8 @@ import {
   formatArbitrageScanCoverageSummary,
   ARB_ORDER_BOOK_STALE_MS,
 } from "@/lib/arbitrageFinder/observability/pairDiagnostics";
+import { pipelineMappingPairKey } from "@/lib/evPipeline/crossAssetLookup";
+import { mappingRedisPairKey } from "@/lib/evPipeline/redisCache";
 import type {
   ArbPairMapping,
   ArbitrageWindow,
@@ -164,6 +166,17 @@ test("formatArbitrageScanCoverageSummary includes key lines", () => {
   const summary = formatArbitrageScanCoverageSummary(report);
   assert.ok(summary.includes("[arb-finder] scan coverage summary"));
   assert.ok(summary.includes("redis: disabled"));
+});
+
+test("prefetch batch uses mappingRedisPairKey (not pipelineMappingPairKey)", () => {
+  const tokenId = "abc123";
+  const ticker = "KXTEST";
+  const redisKey = mappingRedisPairKey(tokenId, ticker);
+  const pipelineKey = pipelineMappingPairKey(tokenId, ticker);
+
+  assert.notEqual(redisKey, pipelineKey);
+  assert.equal(redisKey, "abc123:KXTEST");
+  assert.equal(pipelineKey, "pair:abc123:KXTEST");
 });
 
 console.log("\n" + "─".repeat(48));

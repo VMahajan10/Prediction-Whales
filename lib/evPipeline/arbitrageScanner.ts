@@ -12,6 +12,7 @@ import {
   getMappingByPm,
   getOrderBookMid,
   evRedisKeys,
+  mappingRedisPairKey,
   prefetchMappingRedisBatch,
   type CachedOrderBookMid,
 } from "@/lib/evPipeline/redisCache";
@@ -415,11 +416,12 @@ export async function scanArbitrageOpportunities(
   const opportunities: ArbitrageOpportunity[] = [];
 
   for (const mapping of mappings) {
-    const pairKey = pipelineMappingPairKey(
-      mapping.polymarketTokenId,
-      mapping.kalshiTicker
+    const books = prefetch.get(
+      mappingRedisPairKey(
+        mapping.polymarketTokenId,
+        mapping.kalshiTicker
+      )
     );
-    const books = prefetch.get(pairKey);
     const pairOpps = evaluatePairArbitrage(
       mapping,
       books?.pmOb ?? null,
