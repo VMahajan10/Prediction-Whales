@@ -9,6 +9,11 @@ import {
   isQualifiedFeedTrade,
   meetsFeedTieredStakeThreshold,
 } from "@/lib/feedQualification";
+import {
+  logFeedFilterReject,
+  logFeedTradeRejection,
+  resolveFeedFilterCategoryLabel,
+} from "@/lib/feedFilterDiagnostics";
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import { translateWhaleTradeMarket } from "@/lib/marketTranslator";
 import { pipelineEvKeyForWhale } from "@/lib/pipelineEvClient";
@@ -64,7 +69,8 @@ function reportFeedMetrics(input: {
 function isPolymarketTradeQualifiedForFeed(
   trade: WhaleTrade,
   walletQualification: WalletQualification | undefined,
-  pipelineEvIndex: Map<string, PipelineTradeEv>
+  pipelineEvIndex: Map<string, PipelineTradeEv>,
+  loggedRejects?: Set<string>
 ): boolean {
   if (trade.source !== "polymarket") return false;
 
@@ -73,17 +79,37 @@ function isPolymarketTradeQualifiedForFeed(
 
   const pipelineKey = pipelineEvKeyForWhale(trade);
   const pipeline = pipelineKey ? pipelineEvIndex.get(pipelineKey) : undefined;
-  const tradeEvPercent = resolveFeedTradeEvPercent(trade, pipeline);
+  const tradeEvPercent = resolveFeedTradeEvPercent(
+    {
+      price: trade.price,
+      netEvPercent: trade.netEvPercent,
+      grossEvPercent: trade.grossEvPercent,
+    },
+    pipeline
+  );
 
-  return isQualifiedFeedTrade({
+  const category = resolveFeedFilterCategoryLabel(trade);
+  const feedTrade = {
     stakeUsd: trade.usdNotional,
     walletAvgEv: walletQualification.avgEv,
     resolvedBetCount: walletQualification.resolvedBetsCount,
     title: trade.title,
     slug: trade.slug,
     eventSlug: trade.eventSlug,
+    category,
     tradeEvPercent,
-  });
+  };
+
+  const qualified = isQualifiedFeedTrade(feedTrade);
+  if (!qualified) {
+    const logKey = `${trade.id}:${tradeEvPercent ?? "na"}`;
+    if (!loggedRejects?.has(logKey)) {
+      loggedRejects?.add(logKey);
+      logFeedTradeRejection({ ...feedTrade, id: trade.id }, "client");
+    }
+  }
+
+  return qualified;
 }
 
 function attachWhaleIdentity(
@@ -104,13 +130,15 @@ function attachWhaleIdentity(
 function isPolymarketTradeEligibleForFeed(
   trade: WhaleTrade,
   walletQualification: WalletQualification | undefined,
-  pipelineEvIndex: Map<string, PipelineTradeEv>
+  pipelineEvIndex: Map<string, PipelineTradeEv>,
+  loggedRejects?: Set<string>
 ): boolean {
   if (
     !isPolymarketTradeQualifiedForFeed(
       trade,
       walletQualification,
-      pipelineEvIndex
+      pipelineEvIndex,
+      loggedRejects
     )
   ) {
     return false;
@@ -129,6 +157,7 @@ export function useWhaleFeed() {
   const liveDetectedAt = useRef<Map<string, number>>(new Map());
   const metricsReported = useRef<Set<string>>(new Set());
   const qualifiedNotified = useRef<Set<string>>(new Set());
+  const loggedFilterRejects = useRef<Set<string>>(new Set());
   const [newWhale, setNewWhale] = useState<WhaleTrade | null>(null);
 
   useEffect(() => {
@@ -222,7 +251,8 @@ export function useWhaleFeed() {
           trade.proxyWallet
             ? walletQualifications.get(trade.proxyWallet.trim().toLowerCase())
             : undefined,
-          pipelineEvIndex
+          pipelineEvIndex,
+          loggedFilterRejects.current
         )
       )
       .map((trade) =>
@@ -251,8 +281,19 @@ export function useWhaleFeed() {
           title: whale.title,
           slug: whale.slug,
           eventSlug: whale.eventSlug,
+          category: resolveFeedFilterCategoryLabel(whale),
         })
       ) {
+        logFeedFilterReject({
+          id: whale.id,
+          stakeUsd: whale.usdNotional,
+          title: whale.title,
+          slug: whale.slug,
+          eventSlug: whale.eventSlug,
+          category: resolveFeedFilterCategoryLabel(whale),
+          reason: "stake_floor",
+          source: "client",
+        });
         metricsReported.current.add(key);
         continue;
       }
@@ -266,7 +307,12 @@ export function useWhaleFeed() {
         : undefined;
 
       if (
-        isPolymarketTradeQualifiedForFeed(whale, qualification, pipelineEvIndex)
+        isPolymarketTradeQualifiedForFeed(
+          whale,
+          qualification,
+          pipelineEvIndex,
+          loggedFilterRejects.current
+        )
       ) {
         passed += 1;
         if (wallet) passedWallets.push(wallet);
@@ -326,7 +372,8 @@ export function useWhaleFeed() {
         !isPolymarketTradeEligibleForFeed(
           whale,
           qualification,
-          pipelineEvIndex
+          pipelineEvIndex,
+          loggedFilterRejects.current
         )
       )
         continue;

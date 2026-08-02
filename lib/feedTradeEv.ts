@@ -17,7 +17,7 @@ function tradeLevelEvPercent(input: {
   return null;
 }
 
-/** Trade-level EV % for feed gates — never falls back to wallet averageEv. */
+/** Trade-level EV % for feed gates — never uses wallet averageEv / traderAvgEv. */
 export function resolveFeedTradeEvPercent(
   trade: {
     price: number;

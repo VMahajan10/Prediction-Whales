@@ -20,6 +20,29 @@ const MACRO_LIQUIDITY_PROBE =
 const POLITICS_PROBE =
   /congress|trump|election|senate|president|house|federal|fed |governor|primary|democrat|republican/i;
 
+/** Case-insensitive feed category slug (e.g. sports, ESPORTS, gaming). */
+export function normalizeFeedCategory(category?: string | null): string {
+  return (category ?? "").trim().toLowerCase();
+}
+
+const SPORTS_ENTERTAINMENT_CATEGORIES = new Set([
+  "sports",
+  "culture",
+  "entertainment",
+  "esports",
+  "esport",
+  "gaming",
+]);
+
+const MACRO_POLITICAL_CATEGORIES = new Set([
+  "macro_politics",
+  "macro",
+  "politics",
+  "political",
+]);
+
+const GAMING_PROBE = /\bgaming\b|esports?|esport/i;
+
 export interface StakeFloorResolution {
   tier: StakeFloorTier;
   floorUsd: number;
@@ -36,18 +59,32 @@ function readTierOverrideUsd(
 export function classifyStakeFloorTier(
   title: string,
   slug?: string | null,
-  eventSlug?: string | null
+  eventSlug?: string | null,
+  category?: string | null
 ): StakeFloorTier {
   const probe = `${title} ${slug ?? ""} ${eventSlug ?? ""}`;
+  const cat = normalizeFeedCategory(category);
+
+  if (MACRO_POLITICAL_CATEGORIES.has(cat)) {
+    return "macro_political";
+  }
+
+  if (SPORTS_ENTERTAINMENT_CATEGORIES.has(cat)) {
+    return "sports_entertainment";
+  }
 
   // Politics / macro before sports — ESPORTS_PROBE can false-match "presidential" (msi).
   if (POLITICS_PROBE.test(title) || MACRO_LIQUIDITY_PROBE.test(probe)) {
     return "macro_political";
   }
 
-  const category = inferMarketCategory(title);
+  if (GAMING_PROBE.test(probe)) {
+    return "sports_entertainment";
+  }
 
-  if (category === "SPORTS" || category === "CULTURE") {
+  const inferred = inferMarketCategory(title);
+
+  if (inferred === "SPORTS" || inferred === "CULTURE") {
     return "sports_entertainment";
   }
 
@@ -57,9 +94,10 @@ export function classifyStakeFloorTier(
 export function resolveStakeFloorUsd(
   title: string,
   slug?: string | null,
-  eventSlug?: string | null
+  eventSlug?: string | null,
+  category?: string | null
 ): StakeFloorResolution {
-  const tier = classifyStakeFloorTier(title, slug, eventSlug);
+  const tier = classifyStakeFloorTier(title, slug, eventSlug, category);
 
   switch (tier) {
     case "sports_entertainment":

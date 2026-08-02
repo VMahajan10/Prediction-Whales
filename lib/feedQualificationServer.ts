@@ -4,9 +4,12 @@ import {
   isQualifiedFeedTrade,
   isQualifiedWalletForFeed,
   meetsFeedTieredStakeThreshold,
-  CREDIBILITY_CONFIG,
-  type WalletFeedQualificationInput,
 } from "@/lib/feedQualification";
+import {
+  logFeedFilterReject,
+  logFeedTradeRejection,
+  resolveFeedFilterCategoryLabel,
+} from "@/lib/feedFilterDiagnostics";
 import { resolveFeedTradeEvPercents } from "@/lib/feedTradeEvServer";
 import { recordFeedMetrics } from "@/lib/feedMetrics";
 import {
@@ -20,6 +23,7 @@ import {
 } from "@/lib/whaleIdentityResolver";
 import { findWhaleByWalletCaseInsensitive } from "@/lib/x-agent/whaleRegistryDb";
 import type { WhaleRegistry } from "@/lib/crossmarket/store/schema";
+import type { WalletFeedQualificationInput } from "@/lib/feedQualification";
 
 export interface WalletFeedQualification extends WalletFeedQualificationInput {
   qualified: boolean;
@@ -126,14 +130,29 @@ export function filterTranslatablePolymarketFeedTrades<
 export async function filterQualifiedPolymarketFeedTrades<
   T extends PolymarketFeedTradeLike,
 >(trades: T[]): Promise<T[]> {
-  const stakeCandidates = trades.filter((trade) =>
-    meetsFeedTieredStakeThreshold({
+  const stakeCandidates = trades.filter((trade) => {
+    const category = resolveFeedFilterCategoryLabel(trade);
+    const passes = meetsFeedTieredStakeThreshold({
       stakeUsd: trade.size,
       title: trade.title,
       slug: trade.slug,
       eventSlug: trade.eventSlug,
-    })
-  );
+      category,
+    });
+    if (!passes) {
+      logFeedFilterReject({
+        id: trade.id,
+        stakeUsd: trade.size,
+        title: trade.title,
+        slug: trade.slug,
+        eventSlug: trade.eventSlug,
+        category,
+        reason: "stake_floor",
+        source: "api",
+      });
+    }
+    return passes;
+  });
 
   const wallets = stakeCandidates
     .map((trade) => trade.proxyWallet?.trim().toLowerCase())
@@ -143,14 +162,40 @@ export async function filterQualifiedPolymarketFeedTrades<
 
   const credibilityCandidates = stakeCandidates.filter((trade) => {
     const wallet = trade.proxyWallet?.trim().toLowerCase();
-    if (!wallet) return false;
+    if (!wallet) {
+      logFeedFilterReject({
+        id: trade.id,
+        stakeUsd: trade.size,
+        title: trade.title,
+        category: resolveFeedFilterCategoryLabel(trade),
+        reason: "missing_wallet",
+        source: "api",
+      });
+      return false;
+    }
     const walletStats = qualifications[wallet];
     const resolvedBetCount = walletStats?.resolvedBetsCount ?? null;
-
-    return isQualifiedWalletForFeed({
+    const passes = isQualifiedWalletForFeed({
       avgEv: walletStats?.avgEv,
       resolvedBetCount,
     });
+    if (!passes) {
+      logFeedTradeRejection(
+        {
+          id: trade.id,
+          stakeUsd: trade.size,
+          walletAvgEv: walletStats?.avgEv,
+          resolvedBetCount,
+          title: trade.title,
+          slug: trade.slug,
+          eventSlug: trade.eventSlug,
+          category: resolveFeedFilterCategoryLabel(trade),
+          tradeEvPercent: null,
+        },
+        "api"
+      );
+    }
+    return passes;
   });
 
   const tradeEvPercents = await resolveFeedTradeEvPercents(
@@ -167,6 +212,7 @@ export async function filterQualifiedPolymarketFeedTrades<
     const walletStats = qualifications[wallet];
     const resolvedBetCount = walletStats?.resolvedBetsCount ?? null;
     const tradeEvPercent = tradeEvPercents.get(trade.id) ?? null;
+    const category = resolveFeedFilterCategoryLabel(trade);
     const feedTrade = {
       stakeUsd: trade.size,
       walletAvgEv: walletStats?.avgEv,
@@ -174,13 +220,12 @@ export async function filterQualifiedPolymarketFeedTrades<
       title: trade.title,
       slug: trade.slug,
       eventSlug: trade.eventSlug,
+      category,
       tradeEvPercent,
     };
 
     if (!isQualifiedFeedTrade(feedTrade)) {
-      console.log(
-        `[api/feed] trade rejected by credibility gate: wallet=${wallet} resolvedBetCount=${resolvedBetCount ?? "N/A"} stakeUsd=${trade.size} avgEv=${walletStats?.avgEv ?? "N/A"} tradeEv=${tradeEvPercent ?? "N/A"} floor=${CREDIBILITY_CONFIG.MIN_RESOLVED_BETS}`
-      );
+      logFeedTradeRejection({ ...feedTrade, id: trade.id }, "api");
       return false;
     }
 

@@ -41,12 +41,14 @@ export function meetsFeedTieredStakeThreshold(input: {
   title?: string | null;
   slug?: string | null;
   eventSlug?: string | null;
+  category?: string | null;
 }): boolean {
   if (!Number.isFinite(input.stakeUsd)) return false;
   const { floorUsd } = resolveStakeFloorUsd(
     input.title ?? "",
     input.slug,
-    input.eventSlug
+    input.eventSlug,
+    input.category
   );
   return input.stakeUsd >= floorUsd;
 }
@@ -90,6 +92,7 @@ export interface FeedQualificationTrade {
   title?: string | null;
   slug?: string | null;
   eventSlug?: string | null;
+  category?: string | null;
   /** Trade-level EV % at entry — required for feed display (+3.0% min). */
   tradeEvPercent?: number | null;
 }
@@ -108,6 +111,7 @@ export function isQualifiedFeedTrade(trade: FeedQualificationTrade): boolean {
       title: trade.title,
       slug: trade.slug,
       eventSlug: trade.eventSlug,
+      category: trade.category,
     }) &&
     meetsWalletAvgEvThreshold(trade.walletAvgEv) &&
     meetsFeedResolvedBetsThreshold(resolvedBetCount) &&

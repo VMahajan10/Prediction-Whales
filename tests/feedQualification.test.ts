@@ -39,6 +39,27 @@ describe("feedQualification", () => {
 
     expect(
       meetsFeedTieredStakeThreshold({
+        stakeUsd: 250,
+        category: "ESPORTS",
+      })
+    ).toBe(true);
+
+    expect(
+      meetsFeedTieredStakeThreshold({
+        stakeUsd: 250,
+        category: "gaming",
+      })
+    ).toBe(true);
+
+    expect(
+      meetsFeedTieredStakeThreshold({
+        stakeUsd: 250,
+        category: "SPORTS",
+      })
+    ).toBe(true);
+
+    expect(
+      meetsFeedTieredStakeThreshold({
         stakeUsd: 500,
         title: "Will Bitcoin reach $100k by end of year?",
       })

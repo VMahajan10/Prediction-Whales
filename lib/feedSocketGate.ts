@@ -1,4 +1,8 @@
 import {
+  logFeedFilterReject,
+  resolveFeedFilterCategoryLabel,
+} from "@/lib/feedFilterDiagnostics";
+import {
   meetsFeedTradeEvThreshold,
   meetsFeedTieredStakeThreshold,
 } from "@/lib/feedQualification";
@@ -17,6 +21,7 @@ export function passesFeedSocketStakeGate(trade: SocketTrade): boolean {
     title: trade.title,
     slug: trade.slug,
     eventSlug: trade.eventSlug,
+    category: resolveFeedFilterCategoryLabel(trade),
   });
 }
 
@@ -40,11 +45,23 @@ function socketTradeToWhale(trade: SocketTrade) {
   );
 }
 
-/** Async trade EV gate (+3.0% min, rejects negative EV). */
+/** Async trade EV gate (+3.0% min on trade-level EV, rejects negative EV). */
 export async function passesFeedSocketTradeEvGate(
   trade: SocketTrade
 ): Promise<boolean> {
-  if (!trade.assetId?.trim()) return false;
+  if (!trade.assetId?.trim()) {
+    logFeedFilterReject({
+      id: trade.id,
+      stakeUsd: trade.usdNotional,
+      title: trade.title,
+      slug: trade.slug,
+      eventSlug: trade.eventSlug,
+      category: resolveFeedFilterCategoryLabel(trade),
+      reason: "missing_asset",
+      source: "socket",
+    });
+    return false;
+  }
 
   const fetched = await fetchPipelineEvBatch([
     {
@@ -62,13 +79,43 @@ export async function passesFeedSocketTradeEvGate(
     pipeline ?? null
   );
 
-  return meetsFeedTradeEvThreshold(tradeEvPercent);
+  const passes = meetsFeedTradeEvThreshold(tradeEvPercent);
+  if (!passes) {
+    logFeedFilterReject({
+      id: trade.id,
+      stakeUsd: trade.usdNotional,
+      tradeEvPercent,
+      title: trade.title,
+      slug: trade.slug,
+      eventSlug: trade.eventSlug,
+      category: resolveFeedFilterCategoryLabel(trade),
+      reason:
+        tradeEvPercent == null || !Number.isFinite(tradeEvPercent)
+          ? "missing_trade_ev"
+          : "trade_ev",
+      source: "socket",
+    });
+  }
+
+  return passes;
 }
 
 /** Full websocket broadcast gate: tiered stake + trade EV >= +3.0%. */
 export async function shouldBroadcastQualifiedSocketTrade(
   trade: SocketTrade
 ): Promise<boolean> {
-  if (!passesFeedSocketStakeGate(trade)) return false;
+  if (!passesFeedSocketStakeGate(trade)) {
+    logFeedFilterReject({
+      id: trade.id,
+      stakeUsd: trade.usdNotional,
+      title: trade.title,
+      slug: trade.slug,
+      eventSlug: trade.eventSlug,
+      category: resolveFeedFilterCategoryLabel(trade),
+      reason: "stake_floor",
+      source: "socket",
+    });
+    return false;
+  }
   return passesFeedSocketTradeEvGate(trade);
 }
