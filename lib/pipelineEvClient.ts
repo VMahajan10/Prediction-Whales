@@ -1,5 +1,6 @@
 "use client";
 
+import { resolveAppApiUrl } from "@/lib/appBaseUrl";
 import type { FeedTrade } from "@/lib/kalshiTrades";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import {
@@ -169,30 +170,38 @@ export async function fetchPipelineEvBatch(
   const deduped = dedupeRequestItems(items);
   if (deduped.length === 0) return new Map();
 
-  const res = await fetch("/api/ev/trades", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ items: deduped }),
-  });
+  try {
+    const res = await fetch(resolveAppApiUrl("/api/ev/trades"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items: deduped }),
+    });
 
-  if (!res.ok) return new Map();
+    if (!res.ok) return new Map();
 
-  const data = (await res.json()) as {
-    entries?: PipelineTradeEv[];
-    byKey?: Record<string, PipelineTradeEv>;
-  };
+    const data = (await res.json()) as {
+      entries?: PipelineTradeEv[];
+      byKey?: Record<string, PipelineTradeEv>;
+    };
 
-  const next = new Map<string, PipelineTradeEv>();
-  for (const entry of data.entries ?? []) {
-    const normalized = normalizePipelineTradeEv(entry, entry.key);
-    if (normalized) indexPipelineTradeEvAliases(next, normalized, entry.key);
+    const next = new Map<string, PipelineTradeEv>();
+    for (const entry of data.entries ?? []) {
+      const normalized = normalizePipelineTradeEv(entry, entry.key);
+      if (normalized) indexPipelineTradeEvAliases(next, normalized, entry.key);
+    }
+    for (const [key, entry] of Object.entries(data.byKey ?? {})) {
+      if (next.has(key)) continue;
+      const normalized = normalizePipelineTradeEv(entry, key);
+      if (normalized) indexPipelineTradeEvAliases(next, normalized, key);
+    }
+    return next;
+  } catch (error) {
+    console.error(
+      "[pipelineEvClient] fetchPipelineEvBatch failed:",
+      error instanceof Error ? error.message : error
+    );
+    return new Map();
   }
-  for (const [key, entry] of Object.entries(data.byKey ?? {})) {
-    if (next.has(key)) continue;
-    const normalized = normalizePipelineTradeEv(entry, key);
-    if (normalized) indexPipelineTradeEvAliases(next, normalized, key);
-  }
-  return next;
 }
 
 async function fetchPipelineEv(
@@ -291,8 +300,18 @@ export async function fetchPipelineTradeEv(input: {
     params.set("price", String(input.tradePrice));
   }
 
-  const res = await fetch(`/api/ev/trades?${params.toString()}`);
-  if (!res.ok) return null;
-  const data = (await res.json()) as { entry?: PipelineTradeEv | null };
-  return data.entry ?? null;
+  try {
+    const res = await fetch(
+      resolveAppApiUrl(`/api/ev/trades?${params.toString()}`)
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as { entry?: PipelineTradeEv | null };
+    return data.entry ?? null;
+  } catch (error) {
+    console.error(
+      "[pipelineEvClient] fetchPipelineTradeEv failed:",
+      error instanceof Error ? error.message : error
+    );
+    return null;
+  }
 }

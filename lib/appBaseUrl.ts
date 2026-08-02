@@ -21,3 +21,25 @@ export function getPublicAppUrl(): string {
   if (publicUrl) return publicUrl.replace(/\/$/, "");
   return getAppBaseUrl();
 }
+
+/**
+ * Resolve an absolute URL for same-origin API routes.
+ * Browser: current origin. Server/worker: env-based app URL.
+ */
+export function resolveAppApiUrl(path: string): string {
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return new URL(normalizedPath, window.location.origin).toString();
+  }
+
+  const baseUrl =
+    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "") ||
+    process.env.APP_BASE_URL?.trim() ||
+    process.env.APP_URL?.trim() ||
+    getAppBaseUrl() ||
+    "http://localhost:3000";
+
+  return new URL(normalizedPath, baseUrl.replace(/\/$/, "")).toString();
+}

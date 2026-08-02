@@ -10,7 +10,9 @@ let cache: { data: { markets: unknown[] }; timestamp: number } | null = null;
 const CACHE_TTL = 10000; // 10 seconds
 
 function asSafeString(value: unknown, fallback = ""): string {
-  return typeof value === "string" ? value : fallback;
+  if (typeof value === "string") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return fallback;
 }
 
 const cleanTitle = (title: string | null | undefined): string => {
@@ -26,22 +28,18 @@ const cleanTitle = (title: string | null | undefined): string => {
 };
 
 function marketTagsInclude(value: unknown, needle: string): boolean {
+  if (value == null) return false;
   if (typeof value === "string") {
-    return value.toLowerCase().includes(needle);
+    return (value || "").toLowerCase().includes(needle);
   }
   if (!Array.isArray(value)) return false;
-  return value.some((tag) => marketTagsInclude(tag, needle));
+  return value.some(
+    (tag) => tag != null && marketTagsInclude(tag, needle)
+  );
 }
 
-function marketFieldIncludes(
-  value: unknown,
-  needle: string,
-  options?: { ignoreCase?: boolean }
-): boolean {
-  if (typeof value !== "string") return false;
-  const haystack = options?.ignoreCase ? value.toLowerCase() : value;
-  const n = options?.ignoreCase ? needle.toLowerCase() : needle;
-  return haystack.includes(n);
+function isSafeMarketCandidate(m: unknown): m is Record<string, unknown> {
+  return m != null && typeof m === "object";
 }
 
 export async function GET() {
@@ -75,11 +73,12 @@ export async function GET() {
 
     for (const series of seriesTickers) {
       try {
-        const { markets: seriesMarkets } = await client.markets.list({
+        const listResult = await client.markets.list({
           limit: 10,
           status: "open",
           series_ticker: series,
         });
+        const seriesMarkets = listResult?.markets;
         if (Array.isArray(seriesMarkets) && seriesMarkets.length > 0) {
           allMarkets.push(...seriesMarkets);
         }
@@ -90,63 +89,82 @@ export async function GET() {
 
     const markets = allMarkets;
 
-    const filtered = (markets ?? []).filter((m: any) => {
-      const tags = m?.tags;
-      const noLegs = !m?.mve_selected_legs?.length;
-      const notParlay = !marketFieldIncludes(m?.title, ",yes ");
-      const notMultivariate = !marketFieldIncludes(m?.ticker, "KXMVE");
-      const notMultivariateCategory = !marketFieldIncludes(
-        m?.category,
-        "multivariate",
-        { ignoreCase: true }
-      );
-      const notMultivariateTag = !marketTagsInclude(tags, "multivariate");
-      const hasVolume = parseFloat(m?.volume_fp ?? "0") >= 100;
-      return (
-        noLegs &&
-        notParlay &&
-        notMultivariate &&
-        notMultivariateCategory &&
-        notMultivariateTag &&
-        hasVolume
-      );
+    const filtered = (markets ?? []).filter((m: unknown) => {
+      if (!isSafeMarketCandidate(m)) return false;
+
+      try {
+        const tags = m.tags;
+        const legs = m.mve_selected_legs;
+        const noLegs = !Array.isArray(legs) || legs.length === 0;
+        const notParlay = !asSafeString(m.title).includes(",yes ");
+        const notMultivariate = !asSafeString(m.ticker).includes("KXMVE");
+        const notMultivariateCategory = !asSafeString(m.category)
+          .toLowerCase()
+          .includes("multivariate");
+        const notMultivariateTag = !marketTagsInclude(tags, "multivariate");
+        const hasVolume = parseFloat(asSafeString(m.volume_fp, "0")) >= 100;
+        return (
+          noLegs &&
+          notParlay &&
+          notMultivariate &&
+          notMultivariateCategory &&
+          notMultivariateTag &&
+          hasVolume
+        );
+      } catch {
+        return false;
+      }
     });
 
     // Deduplicate by question — keep highest volume per question
     const seen = new Map<string, any>();
-    filtered.forEach((m: any) => {
+    filtered.forEach((m: unknown) => {
+      if (!isSafeMarketCandidate(m)) return;
+
       const key =
-        asSafeString(m?.title).slice(0, 40) || asSafeString(m?.ticker) || "unknown";
+        asSafeString(m.title).slice(0, 40) ||
+        asSafeString(m.ticker) ||
+        "unknown";
       const existing = seen.get(key);
-      if (
-        !existing ||
-        parseFloat(m?.volume_fp ?? "0") > parseFloat(existing?.volume_fp ?? "0")
-      ) {
+      const volume = parseFloat(asSafeString(m.volume_fp, "0"));
+      const existingVolume = parseFloat(
+        asSafeString(
+          existing && typeof existing === "object"
+            ? (existing as Record<string, unknown>).volume_fp
+            : undefined,
+          "0"
+        )
+      );
+      if (!existing || volume > existingVolume) {
         seen.set(key, m);
       }
     });
 
     const simple = Array.from(seen.values())
+      .filter(isSafeMarketCandidate)
       .sort(
         (a, b) =>
-          parseFloat(b?.volume_fp ?? "0") - parseFloat(a?.volume_fp ?? "0")
+          parseFloat(asSafeString(b.volume_fp, "0")) -
+          parseFloat(asSafeString(a.volume_fp, "0"))
       )
       .slice(0, 20)
-      .map((m: any) => ({
-        id: asSafeString(m?.ticker, "unknown"),
-        conditionId: asSafeString(m?.ticker, "unknown"),
+      .map((m) => ({
+        id: asSafeString(m.ticker, "unknown"),
+        conditionId: asSafeString(m.ticker, "unknown"),
         clobTokenIds: [] as string[],
-        question: cleanTitle(m?.title ?? m?.ticker),
-        probability: parseFloat(m?.yes_bid_dollars ?? "0"),
-        volume: parseFloat(m?.volume_fp ?? "0"),
+        question: cleanTitle(
+          asSafeString(m.title) || asSafeString(m.ticker) || undefined
+        ),
+        probability: parseFloat(asSafeString(m.yes_bid_dollars, "0")),
+        volume: parseFloat(asSafeString(m.volume_fp, "0")),
         spread:
           Math.round(
-            (parseFloat(m?.yes_ask_dollars ?? "0") -
-              parseFloat(m?.yes_bid_dollars ?? "0")) *
+            (parseFloat(asSafeString(m.yes_ask_dollars, "0")) -
+              parseFloat(asSafeString(m.yes_bid_dollars, "0"))) *
               100 *
               10
           ) / 10,
-        active: m?.status === "active",
+        active: m.status === "active",
         source: "kalshi" as const,
         rawContracts: [],
       }));

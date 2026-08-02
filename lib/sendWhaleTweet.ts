@@ -147,19 +147,56 @@ function createTwitterOAuthClient(credentials: {
   });
 }
 
+function buildTweetRef(payload: WhaleTweetPayload): string {
+  const tradeId = payload.tradeId?.trim();
+  if (tradeId) return tradeId.slice(0, 8);
+  return Date.now().toString(36);
+}
+
 function formatTweet(payload: WhaleTweetPayload): string {
   const amountStr = formatAmount(payload.amount);
+  const ref = buildTweetRef(payload);
 
   return `🚨 WHALE ALERT 🚨
 Address: ${payload.whaleAddress}
 Market: ${payload.marketName}
 Position: ${payload.side} ($${amountStr})
-#WhaleTracker #Crypto`;
+#WhaleTracker #Crypto
+
+[Ref: ${ref}]`;
 }
 
 function isRateLimitError(error: unknown): boolean {
   const apiError = error as { code?: number; status?: number };
   return apiError?.code === 429 || apiError?.status === 429;
+}
+
+function isDuplicateTweetError(error: unknown): boolean {
+  const apiError = error as {
+    code?: number;
+    status?: number;
+    data?: { detail?: string; title?: string; type?: string };
+    message?: string;
+  };
+  const status = apiError?.code ?? apiError?.status;
+  if (status !== 403) return false;
+
+  const haystack = [
+    apiError.message,
+    apiError.data?.detail,
+    apiError.data?.title,
+    apiError.data?.type,
+    JSON.stringify(apiError.data ?? ""),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return (
+    haystack.includes("duplicate") ||
+    haystack.includes("already posted") ||
+    haystack.includes("status is a duplicate")
+  );
 }
 
 function normalizePayload(
@@ -209,7 +246,10 @@ export async function sendWhaleTweet(
     return {
       ok: false,
       skipped: true,
-      reason: "Cooldown active",
+      reason:
+        normalized.tradeId && activeCooldownKey === `trade:${normalized.tradeId}`
+          ? "Trade already tweeted recently"
+          : "Cooldown active",
     };
   }
 
@@ -257,6 +297,18 @@ export async function sendWhaleTweet(
       text: data.text,
     };
   } catch (error) {
+    if (isDuplicateTweetError(error)) {
+      registerCooldown(dedupKeys);
+      console.warn(
+        "[sendWhaleTweet] X rejected duplicate content (403) — registering cooldown"
+      );
+      return {
+        ok: false,
+        skipped: true,
+        reason: "Duplicate tweet content",
+      };
+    }
+
     if (isRateLimitError(error)) {
       console.warn("[sendWhaleTweet] X rate limit reached (429)");
       return {
