@@ -170,8 +170,10 @@ export async function fetchPipelineEvBatch(
   const deduped = dedupeRequestItems(items);
   if (deduped.length === 0) return new Map();
 
+  const fullUrl = resolveAppApiUrl("/api/ev/trades");
+
   try {
-    const res = await fetch(resolveAppApiUrl("/api/ev/trades"), {
+    const res = await fetch(fullUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ items: deduped }),
@@ -196,9 +198,11 @@ export async function fetchPipelineEvBatch(
     }
     return next;
   } catch (error) {
+    const err = error as Error & { cause?: unknown };
     console.error(
-      "[pipelineEvClient] fetchPipelineEvBatch failed:",
-      error instanceof Error ? error.message : error
+      "[pipelineEvClient] Failed target URL:",
+      fullUrl,
+      err?.cause || err
     );
     return new Map();
   }
@@ -300,17 +304,19 @@ export async function fetchPipelineTradeEv(input: {
     params.set("price", String(input.tradePrice));
   }
 
+  const fullUrl = resolveAppApiUrl(`/api/ev/trades?${params.toString()}`);
+
   try {
-    const res = await fetch(
-      resolveAppApiUrl(`/api/ev/trades?${params.toString()}`)
-    );
+    const res = await fetch(fullUrl);
     if (!res.ok) return null;
     const data = (await res.json()) as { entry?: PipelineTradeEv | null };
     return data.entry ?? null;
   } catch (error) {
+    const err = error as Error & { cause?: unknown };
     console.error(
-      "[pipelineEvClient] fetchPipelineTradeEv failed:",
-      error instanceof Error ? error.message : error
+      "[pipelineEvClient] Failed target URL:",
+      fullUrl,
+      err?.cause || err
     );
     return null;
   }

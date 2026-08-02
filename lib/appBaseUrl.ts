@@ -38,17 +38,52 @@ function getBrowserOrigin(): string | null {
   return typeof origin === "string" && origin.length > 0 ? origin : null;
 }
 
+const PRODUCTION_APP_FALLBACK = "https://marketpulse-sand-five.vercel.app";
+
+function isProductionEnvironment(): boolean {
+  return (
+    process.env.NODE_ENV === "production" ||
+    process.env.VERCEL_ENV === "production"
+  );
+}
+
+function isLocalhostUrl(url: string): boolean {
+  try {
+    const normalized = url.startsWith("http://") || url.startsWith("https://")
+      ? url
+      : `https://${url}`;
+    const host = new URL(normalized).hostname;
+    return host === "localhost" || host === "127.0.0.1" || host === "::1";
+  } catch {
+    return /localhost|127\.0\.0\.1/i.test(url);
+  }
+}
+
 function resolveServerAppBaseUrl(): string {
-  const fromPublic = process.env.NEXT_PUBLIC_APP_URL?.trim();
-  if (fromPublic) return fromPublic.replace(/\/$/, "");
+  let baseUrl =
+    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
+    process.env.APP_BASE_URL?.trim() ||
+    (process.env.VERCEL_URL?.trim()
+      ? `https://${process.env.VERCEL_URL.trim().replace(/^https?:\/\//, "")}`
+      : "");
 
-  const vercelUrl = process.env.VERCEL_URL?.trim();
-  if (vercelUrl) return `https://${vercelUrl.replace(/^https?:\/\//, "")}`;
+  if (
+    baseUrl &&
+    !baseUrl.startsWith("http://") &&
+    !baseUrl.startsWith("https://")
+  ) {
+    baseUrl = `https://${baseUrl}`;
+  }
 
-  const appBaseUrl = process.env.APP_BASE_URL?.trim();
-  if (appBaseUrl) return appBaseUrl.replace(/\/$/, "");
+  if (baseUrl) {
+    baseUrl = baseUrl.replace(/\/$/, "");
+  }
 
-  return "http://localhost:3000";
+  if (isProductionEnvironment() && (!baseUrl || isLocalhostUrl(baseUrl))) {
+    return PRODUCTION_APP_FALLBACK;
+  }
+
+  return baseUrl || "http://localhost:3000";
 }
 
 /**
