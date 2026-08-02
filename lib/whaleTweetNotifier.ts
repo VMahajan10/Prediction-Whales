@@ -6,7 +6,6 @@ import {
 } from "@/lib/whaleTrades";
 import {
   sendWhaleTweet,
-  _sendWhaleTweetForTests,
   type WhaleTweetPayload,
 } from "@/lib/sendWhaleTweet";
 
