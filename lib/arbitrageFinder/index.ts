@@ -16,6 +16,7 @@ export {
   fetchKalshiOrderBookMid,
   fetchPairOrderBooks,
   fetchPmOrderBookMid,
+  hydrateOrderBooksForMappings,
   maxOrderBookStalenessMs,
 } from "@/lib/arbitrageFinder/adapters/orderBookAdapter";
 

@@ -252,7 +252,7 @@ function clampUnit(x: number): number {
 // ---------------------------------------------------------------------------
 
 function resolveLanguageModel() {
-  const modelId = process.env.PROBABILITY_LLM_MODEL ?? "gpt-4o";
+  const modelId = process.env.PROBABILITY_LLM_MODEL ?? "gpt-4o-mini";
   return openai(modelId);
 }
 

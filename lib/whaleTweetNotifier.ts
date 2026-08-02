@@ -5,9 +5,10 @@ import {
   type WhaleTrade,
 } from "@/lib/whaleTrades";
 import {
-  triggerTweetWhaleTrade,
-  type TweetWhaleTradePayload,
-} from "@/lib/tweetWhaleTrade";
+  sendWhaleTweet,
+  _sendWhaleTweetForTests,
+  type WhaleTweetPayload,
+} from "@/lib/sendWhaleTweet";
 
 const tweetedTradeKeys = new Set<string>();
 
@@ -21,7 +22,7 @@ export function whaleTradeDedupKey(trade: {
 
 export function whaleTradeToTweetPayload(
   trade: WhaleTrade
-): TweetWhaleTradePayload {
+): WhaleTweetPayload {
   const whaleAddress =
     trade.proxyWallet?.trim() ||
     (trade.source === "kalshi" ? "Anonymous" : "Unknown");
@@ -75,7 +76,12 @@ export function notifyWhaleTradeIfEligible(trade: WhaleTrade): void {
   if (tweetedTradeKeys.has(key)) return;
   tweetedTradeKeys.add(key);
 
-  void triggerTweetWhaleTrade(whaleTradeToTweetPayload(trade));
+  void sendWhaleTweet(whaleTradeToTweetPayload(trade)).catch((error) => {
+    console.error(
+      "[whaleTweetNotifier] sendWhaleTweet error:",
+      error instanceof Error ? error.message : error
+    );
+  });
 }
 
 /**

@@ -6,6 +6,7 @@ import {
   notifyWhaleTradeIfEligible,
   whaleTradeDedupKey,
 } from "@/lib/whaleTweetNotifier";
+import { whaleTweetTestHooks } from "@/lib/sendWhaleTweet";
 import { MIN_WHALE_USD } from "@/lib/whaleTrades";
 
 process.env.BOT_API_SECRET = "test-secret";
@@ -42,9 +43,9 @@ const polymarketWhale = {
 
 let tweetCalls = 0;
 
-(globalThis as { fetch?: typeof fetch }).fetch = async () => {
+whaleTweetTestHooks.override = async () => {
   tweetCalls += 1;
-  return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  return { ok: true, tweetId: "test-tweet" };
 };
 
 function resetTweetCalls(): void {

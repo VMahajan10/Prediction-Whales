@@ -16,6 +16,7 @@ import { deriveYesNoAsksFromOrderBook } from "@/lib/finance/orderBookQuotes";
 import { loadActiveArbPairMappings } from "@/lib/arbitrageFinder/adapters/pairCatalogAdapter";
 import {
   fetchPairOrderBooks,
+  hydrateOrderBooksForMappings,
   maxOrderBookStalenessMs,
 } from "@/lib/arbitrageFinder/adapters/orderBookAdapter";
 import { resolveMappingForPair } from "@/lib/arbitrageFinder/adapters/mappingAdapter";
@@ -239,20 +240,25 @@ export async function scanArbitrageWindows(
     }))
   );
 
+  const booksByPair = await hydrateOrderBooksForMappings(mappings, prefetch, {
+    liveFallback: options.liveOrderBookFallback !== false,
+  });
+
   const windows: ArbitrageWindow[] = [];
   const diagnostics: ArbPairScanDiagnostic[] = [];
   const scannedAt = options.scannedAt ?? new Date().toISOString();
   const nowMs = options.nowMs ?? Date.now();
 
   for (const mapping of mappings) {
-    const books = prefetch.get(
-      mappingRedisPairKey(
-        mapping.polymarketTokenId,
-        mapping.kalshiTicker
-      )
-    );
-    const pmOb = books?.pmOb ?? null;
-    const kalshiOb = books?.kalshiOb ?? null;
+    const books =
+      booksByPair.get(
+        mappingRedisPairKey(
+          mapping.polymarketTokenId,
+          mapping.kalshiTicker
+        )
+      ) ?? { pmOb: null, kalshiOb: null };
+    const pmOb = books.pmOb;
+    const kalshiOb = books.kalshiOb;
     const pairWindows = scanArbitrageWindowsForPair(
       {
         mapping,

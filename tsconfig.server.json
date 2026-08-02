@@ -54,7 +54,9 @@
     "lib/tradeDetail.ts",
     "lib/whaleSignals.ts",
     "lib/whaleTrackStore.ts",
-    "lib/whaleTweetNotifier.ts"
+    "lib/whaleTweetNotifier.ts",
+    "lib/sendWhaleTweet.ts",
+    "lib/tweetWhaleTrade.ts"
   ],
   "exclude": [
     "node_modules",

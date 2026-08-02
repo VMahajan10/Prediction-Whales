@@ -81,4 +81,6 @@ export interface WindowScannerOptions {
   maxCombinedCost?: number;
   scannedAt?: string;
   nowMs?: number;
+  /** Fetch live PM/Kalshi quotes when Redis order books are missing (default true). */
+  liveOrderBookFallback?: boolean;
 }

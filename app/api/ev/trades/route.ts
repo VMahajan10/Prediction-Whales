@@ -24,10 +24,18 @@ import {
   normalizeIncomingTradePrice,
   sealClientTradeEvPayload,
 } from "@/lib/evPipeline/tradeEvRecord";
+import { sleep } from "@/lib/kalshi/http";
 
 initGlobalLocalEvCache();
 
 export const dynamic = "force-dynamic";
+
+/** Max trades resolved in parallel per wave — caps concurrent LLM calls. */
+const TRADE_EV_BATCH_CONCURRENCY = 3;
+/** Pause between waves so OpenAI TPM limits are not exhausted. */
+const TRADE_EV_BATCH_DELAY_MS = 250;
+/** Mapping prefetch can run slightly wider — no LLM on this path. */
+const MAPPING_PREFETCH_CONCURRENCY = 5;
 
 interface TradeEvRequestItem {
   source: "polymarket" | "kalshi";
@@ -131,21 +139,66 @@ async function enrichBatchItemsFromMappings(
     { item: PipelineTradeEvInput; lookupKey: string; mapping: CachedMapping | null }
   >();
 
-  await Promise.all(
-    Array.from(items.entries()).map(async ([lookupKey, row]) => {
-      const tokenId = normalizePmTokenId(row.item.tokenId);
-      const kalshiTicker = normalizeKalshiTicker(row.item.kalshiTicker);
-      const mapping = await loadMappingForTradeEv(tokenId, kalshiTicker);
+  const rows = Array.from(items.entries());
+  for (let i = 0; i < rows.length; i += MAPPING_PREFETCH_CONCURRENCY) {
+    if (i > 0) await sleep(TRADE_EV_BATCH_DELAY_MS);
+    const batch = rows.slice(i, i + MAPPING_PREFETCH_CONCURRENCY);
+    await Promise.all(
+      batch.map(async ([lookupKey, row]) => {
+        const tokenId = normalizePmTokenId(row.item.tokenId);
+        const kalshiTicker = normalizeKalshiTicker(row.item.kalshiTicker);
+        const mapping = await loadMappingForTradeEv(tokenId, kalshiTicker);
 
-      enriched.set(lookupKey, {
-        lookupKey,
-        mapping,
-        item: enrichPipelineEvInputFromMapping(row.item, mapping),
-      });
-    })
-  );
+        enriched.set(lookupKey, {
+          lookupKey,
+          mapping,
+          item: enrichPipelineEvInputFromMapping(row.item, mapping),
+        });
+      })
+    );
+  }
 
   return enriched;
+}
+
+type EnrichedTradeEvRow = {
+  item: PipelineTradeEvInput;
+  lookupKey: string;
+  mapping: CachedMapping | null;
+};
+
+async function resolveTradeEvBatch(
+  rows: EnrichedTradeEvRow[]
+): Promise<PipelineTradeEv[]> {
+  const resolved: PipelineTradeEv[] = [];
+
+  for (let i = 0; i < rows.length; i += TRADE_EV_BATCH_CONCURRENCY) {
+    if (i > 0) await sleep(TRADE_EV_BATCH_DELAY_MS);
+    const batch = rows.slice(i, i + TRADE_EV_BATCH_CONCURRENCY);
+    const batchResults = await Promise.all(
+      batch.map(async ({ lookupKey, item, mapping }) => {
+        try {
+          const payload = await ensureFullyComputedTradeEv(
+            lookupKey,
+            item,
+            mapping
+          );
+          const sealed = sealTradeEvResponse(payload, lookupKey);
+          if (sealed.status === "ok") {
+            seedPipelineLocalEvCache(lookupKey, sealed);
+          }
+          return sealed;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error("Batch EV Fetch Error:", message);
+          return createUnmappedPipelineTradeEv(lookupKey, item);
+        }
+      })
+    );
+    resolved.push(...batchResults);
+  }
+
+  return resolved;
 }
 
 function collectUniqueBatchItems(
@@ -194,26 +247,10 @@ export async function POST(request: NextRequest) {
       collectUniqueBatchItems(body.items ?? [])
     );
 
-    for (const { lookupKey, item, mapping } of Array.from(unique.values())) {
-      try {
-        const payload = await ensureFullyComputedTradeEv(
-          lookupKey,
-          item,
-          mapping
-        );
-        const sealed = sealTradeEvResponse(payload, lookupKey);
-        byKey[lookupKey] = sealed;
-        entries.push(sealed);
-        if (sealed.status === "ok") {
-          seedPipelineLocalEvCache(lookupKey, sealed);
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error("Batch EV Fetch Error:", message);
-        const fallback = createUnmappedPipelineTradeEv(lookupKey, item);
-        byKey[lookupKey] = fallback;
-        entries.push(fallback);
-      }
+    const resolved = await resolveTradeEvBatch(Array.from(unique.values()));
+    for (const sealed of resolved) {
+      byKey[sealed.key] = sealed;
+      entries.push(sealed);
     }
 
     try {
