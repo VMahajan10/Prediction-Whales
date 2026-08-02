@@ -34,7 +34,10 @@ import {
   evaluatePostQueueCredibilityGate,
   evaluatePostQueueMarketTranslationGate,
   resolveCredibilityWhaleWithHydration,
+  needsWalletCredibilityHydration,
   shouldApplyShadowCredibilityOverride,
+  shouldAllowUnindexedWhaleBypass,
+  SHADOW_UNREGISTERED_STAKE_BYPASS_USD,
   STAKE_TOO_LOW,
   BELOW_EV_THRESHOLD,
 } from "@/lib/x-agent/postQueueGates";
@@ -264,10 +267,17 @@ function logGateMatrix(
   logStakeGate(trade, matrix.passesStake, stakeFloorUsd, stakeTier);
 
   if (isAnonymousWalletAddress(trade.walletAddress)) {
-    gateLog(
-      trade.tradeId,
-      "[Fail: Credibility] Anonymous wallet has no resolved bet history"
-    );
+    if (matrix.passesCredibility) {
+      gateLog(
+        trade.tradeId,
+        "[Pass: Credibility] Unindexed whale bypass (isUnindexedWhale=true) — anonymous high-stake trade"
+      );
+    } else {
+      gateLog(
+        trade.tradeId,
+        "[Fail: Credibility] Anonymous wallet has no resolved bet history"
+      );
+    }
   } else if (matrix.passesCredibility && whale) {
     gateLog(
       trade.tradeId,
@@ -338,7 +348,9 @@ export function evaluateTradeGateMatrix(
     tradeId: trade.tradeId,
     stakeNotional: trade.stakeNotional,
     walletAvgEv: whale?.avgEv ?? null,
-    resolvedBetCount: whale?.resolvedBetsCount ?? null,
+    resolvedBetCount: isAnonymousWalletAddress(trade.walletAddress)
+      ? 0
+      : whale?.resolvedBetsCount ?? null,
   }).passed;
 
   const marketTranslationGate = evaluatePostQueueMarketTranslationGate({
@@ -480,15 +492,28 @@ export function evaluateDeterministicPreGates(
 /** Step 4 — wallet credibility from registry / Polymarket history (no OpenAI). */
 export function evaluateWalletCredibilityPreGate(
   trade: TradePayload,
-  whale: WhaleRegistry | null | undefined
+  whale: WhaleRegistry | null | undefined,
+  options?: { isUnindexedWhale?: boolean }
 ): PreGateShortCircuitResult {
-  const shadowOverride = shouldApplyShadowCredibilityOverride({
-    stakeNotional: trade.stakeNotional,
-    resolvedBetCount: whale?.resolvedBetsCount ?? null,
-    walletAvgEv: whale?.avgEv ?? null,
-  });
+  const resolvedBetCount = whale?.resolvedBetsCount ?? null;
+  const walletAvgEv = whale?.avgEv ?? null;
+  const isUnindexedWhale =
+    options?.isUnindexedWhale === true ||
+    shouldAllowUnindexedWhaleBypass({
+      stakeNotional: trade.stakeNotional,
+      resolvedBetCount,
+      whaleMissing: !whale,
+    });
+  const shadowOverride =
+    !isUnindexedWhale &&
+    shouldApplyShadowCredibilityOverride({
+      stakeNotional: trade.stakeNotional,
+      resolvedBetCount,
+      walletAvgEv,
+    });
+  const bypass = isUnindexedWhale || shadowOverride;
 
-  if (isAnonymousWalletAddress(trade.walletAddress) && !shadowOverride) {
+  if (isAnonymousWalletAddress(trade.walletAddress) && !bypass) {
     gateLog(
       trade.tradeId,
       `[Fail: Credibility] Anonymous wallet — resolvedBetCount=0 (< ${CREDIBILITY_CONFIG.MIN_RESOLVED_BETS})`
@@ -503,10 +528,10 @@ export function evaluateWalletCredibilityPreGate(
   const credibilityGate = evaluatePostQueueCredibilityGate({
     tradeId: trade.tradeId,
     stakeNotional: trade.stakeNotional,
-    walletAvgEv: shadowOverride ? MIN_WALLET_AVG_EV_DECIMAL : whale?.avgEv,
-    resolvedBetCount: shadowOverride
+    walletAvgEv: bypass ? MIN_WALLET_AVG_EV_DECIMAL : walletAvgEv,
+    resolvedBetCount: bypass
       ? MIN_WALLET_RESOLVED_BETS
-      : whale?.resolvedBetsCount ?? null,
+      : resolvedBetCount,
   });
   if (!credibilityGate.passed) {
     return {
@@ -516,7 +541,12 @@ export function evaluateWalletCredibilityPreGate(
     };
   }
 
-  if (whale) {
+  if (isUnindexedWhale) {
+    gateLog(
+      trade.tradeId,
+      `[Pass: Credibility] Unindexed whale bypass (isUnindexedWhale=true) — stake (${formatStake(trade.stakeNotional)}) >= ${formatStake(SHADOW_UNREGISTERED_STAKE_BYPASS_USD)}; resolvedBetCount=${resolvedBetCount ?? 0} after hydration`
+    );
+  } else if (whale) {
     gateLog(
       trade.tradeId,
       `[Pass: Wallet Credibility] Registry track record: resolvedBetCount=${whale.resolvedBetsCount} (>= ${CREDIBILITY_CONFIG.MIN_RESOLVED_BETS}), wallet avg EV (${formatWalletEvPct(whale.avgEv)}%) >= +${MIN_WALLET_AVG_EV_THRESHOLD_PCT}%`
@@ -628,11 +658,12 @@ export async function evaluateTradeEligibility(
   logGateCheck(trade.tradeId);
 
   let resolvedWhale = whale ?? null;
-  if (!resolvedWhale && !isAnonymousWalletAddress(trade.walletAddress)) {
+  if (needsWalletCredibilityHydration(resolvedWhale, trade.walletAddress)) {
     const hydrated = await resolveCredibilityWhaleWithHydration({
       tradeId: trade.tradeId,
       walletAddress: trade.walletAddress,
       stakeNotional: trade.stakeNotional,
+      whale: resolvedWhale,
     });
     resolvedWhale = hydrated.whale;
   }

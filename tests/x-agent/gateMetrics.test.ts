@@ -22,7 +22,7 @@ describe("recordCredibilityFailureBreakdown", () => {
     const metrics = createGateSummary();
     recordCredibilityFailureBreakdown(metrics, {
       resolvedBetsCount: MIN_WALLET_RESOLVED_BETS - 1,
-      avgEv: 0.01,
+      avgEv: 0.005,
     });
 
     expect(metrics.failedCredibility).toBe(1);
@@ -35,7 +35,7 @@ describe("recordCredibilityFailureBreakdown", () => {
     const metrics = createGateSummary();
     recordCredibilityFailureBreakdown(metrics, {
       resolvedBetsCount: 600,
-      avgEv: 0.01,
+      avgEv: 0.005,
     });
 
     expect(metrics.failedCredibility_ResolvedBets).toBe(0);

@@ -9,6 +9,7 @@ import {
 } from "@/lib/finance/evEngine";
 import { fetchKalshiMarketDetail } from "@/lib/kalshiDetail";
 import { fetchKalshiTrades } from "@/lib/kalshiTrades";
+import { sleep } from "@/lib/kalshi/http";
 import { fetchWhaleBackfill } from "@/lib/polymarket";
 import { MIN_WHALE_USD } from "@/lib/whaleTrades";
 import {
@@ -23,6 +24,8 @@ const TEST_FALLBACK_MATCH_METHOD = "TEST_FALLBACK_PAIR";
 const MAX_HOT_PM_TOKENS = 400;
 const MAX_HOT_KALSHI_TICKERS = 400;
 const INGEST_CONCURRENCY = 16;
+const KALSHI_INGEST_CONCURRENCY = 5;
+const KALSHI_TICKER_DELAY_MS = 100;
 const FETCH_TIMEOUT_MS = 6_000;
 const REDIS_FLUSH_CHUNK = 200;
 
@@ -303,14 +306,16 @@ export async function runOrderBookIngest(): Promise<OrderBookIngestResult> {
     pmCached += 1;
   });
 
-  await runPool(targets.kalshiTickers, INGEST_CONCURRENCY, async (ticker) => {
+  await runPool(targets.kalshiTickers, KALSHI_INGEST_CONCURRENCY, async (ticker) => {
     const snapshot = await fetchKalshiMarketOrderBookMid(ticker);
-    if (!snapshot) return;
-    entries.push({
-      key: evRedisKeys.orderBookKalshi(ticker),
-      value: snapshot,
-    });
-    kalshiCached += 1;
+    if (snapshot) {
+      entries.push({
+        key: evRedisKeys.orderBookKalshi(ticker),
+        value: snapshot,
+      });
+      kalshiCached += 1;
+    }
+    await sleep(KALSHI_TICKER_DELAY_MS);
   });
 
   if (entries.length > 0) {

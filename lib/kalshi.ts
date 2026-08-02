@@ -1,6 +1,10 @@
+import {
+  KALSHI_API,
+  KALSHI_BATCH_DELAY_MS,
+  kalshiFetch,
+  sleep,
+} from "@/lib/kalshi/http";
 import { buildKalshiMarketUrl } from "@/lib/platformTradeUrls";
-
-const KALSHI_API = "https://api.elections.kalshi.com/trade-api/v2";
 
 const DEFAULT_PAGE_LIMIT = 200;
 const DEFAULT_MAX_PAGES = 25;
@@ -49,10 +53,10 @@ async function fetchKalshiMarketsPage(
   params: URLSearchParams,
   signal?: AbortSignal
 ): Promise<KalshiMarketsPage> {
-  const res = await fetch(`${KALSHI_API}/markets?${params}`, {
-    headers: { Accept: "application/json", "User-Agent": "MarketPulse/1.0" },
+  const res = await kalshiFetch(`/markets?${params}`, {
     cache: "no-store",
     signal,
+    label: "markets page",
   });
   if (!res.ok) {
     throw new Error(`Kalshi markets HTTP ${res.status}`);
@@ -81,6 +85,9 @@ export async function fetchKalshiOpenMarkets(
   let cursor: string | null | undefined = undefined;
 
   for (let page = 0; page < maxPages; page++) {
+    if (page > 0) {
+      await sleep(KALSHI_BATCH_DELAY_MS);
+    }
     const params = new URLSearchParams({
       status: "open",
       limit: String(limit),
@@ -105,7 +112,11 @@ export async function fetchKalshiGameMarkets(
   series: readonly string[] = ["KXWCGAME"]
 ): Promise<KalshiMarket[]> {
   const all: KalshiMarket[] = [];
-  for (const s of series) {
+  for (let i = 0; i < series.length; i++) {
+    if (i > 0) {
+      await sleep(KALSHI_BATCH_DELAY_MS);
+    }
+    const s = series[i];
     const markets = await fetchKalshiOpenMarkets({
       seriesTicker: s,
       maxPages: 5,
@@ -115,4 +126,4 @@ export async function fetchKalshiGameMarkets(
   return all;
 }
 
-export { KALSHI_API };
+export { KALSHI_API, KALSHI_BATCH_DELAY_MS } from "@/lib/kalshi/http";

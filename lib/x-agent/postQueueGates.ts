@@ -24,7 +24,7 @@ import {
   normalizeWalletAddress,
 } from "@/lib/x-agent/whaleRegistryDb";
 import {
-  resolveWhaleForCredibilityGate,
+  hydrateWalletStats,
   type WalletCredibilityResolution,
 } from "@/lib/x-agent/walletCredibility";
 
@@ -91,12 +91,55 @@ export function shouldApplyShadowCredibilityOverride(input: {
 }
 
 /**
+ * High-stake bypass for wallets missing from the registry or with zero resolved
+ * bets after Polymarket hydration. Applies in production for live queuing.
+ */
+export function shouldAllowUnindexedWhaleBypass(input: {
+  stakeNotional: number;
+  resolvedBetCount?: number | null;
+  whaleMissing?: boolean;
+}): boolean {
+  if (
+    !Number.isFinite(input.stakeNotional) ||
+    input.stakeNotional < UNINDEXED_WALLET_STAKE_BYPASS_USD
+  ) {
+    return false;
+  }
+
+  if (input.whaleMissing) return true;
+
+  const resolved = input.resolvedBetCount ?? 0;
+  return resolved === 0;
+}
+
+export function needsWalletCredibilityHydration(
+  whale: WhaleRegistry | null | undefined,
+  walletAddress: string
+): boolean {
+  if (isAnonymousWalletAddress(walletAddress)) return false;
+  if (!whale) return true;
+  return (whale.resolvedBetsCount ?? 0) === 0;
+}
+
+export function resolveUnindexedWhaleBypass(input: {
+  stakeNotional: number;
+  resolvedBetCount?: number | null;
+  walletAvgEv?: number | null;
+  whaleMissing?: boolean;
+}): boolean {
+  return (
+    shouldAllowUnindexedWhaleBypass(input) ||
+    shouldApplyShadowCredibilityOverride(input)
+  );
+}
+
+/**
  * Registry lookup, then Polymarket Data API hydration when the wallet is absent
- * from whale_registry. Credible wallets are upserted into whale_registry.
+ * from whale_registry or has zero resolved bets. Credible wallets are upserted.
  */
 export async function hydrateWalletForPostQueueCredibility(
   walletAddress: string,
-  options?: { tradeId?: string }
+  options?: { tradeId?: string; existingWhale?: WhaleRegistry | null }
 ): Promise<WalletCredibilityResolution> {
   const normalized = normalizeWalletAddress(walletAddress);
   if (!normalized || isAnonymousWalletAddress(normalized)) {
@@ -104,23 +147,24 @@ export async function hydrateWalletForPostQueueCredibility(
   }
 
   const fromRegistry = await findWhaleByWalletCaseInsensitive(normalized);
-  if (fromRegistry) {
-    return { whale: fromRegistry, source: "registry" };
+  const existing = options?.existingWhale ?? fromRegistry;
+  if (existing && (existing.resolvedBetsCount ?? 0) > 0) {
+    return { whale: existing, source: "registry" };
   }
 
   if (options?.tradeId) {
     gateLog(
       options.tradeId,
-      `[Hydrate] Wallet missing in whale_registry — fetching Polymarket Data API stats`
+      `[Hydrate] Wallet missing or resolvedBetCount=0 — fetching Polymarket Data API stats`
     );
   }
 
-  const resolution = await resolveWhaleForCredibilityGate(normalized);
+  const resolution = await hydrateWalletStats(normalized, existing);
 
   if (options?.tradeId && resolution.source === "polymarket_api") {
     gateLog(
       options.tradeId,
-      `[Hydrate] Wallet stats saved to whale_registry (resolvedBetCount=${resolution.stats?.resolvedBetsCount ?? "n/a"}, avgEv=${resolution.stats?.avgEv ?? "n/a"})`
+      `[Hydrate] Wallet stats saved to whale_registry (resolvedBetCount=${resolution.stats?.resolvedBetsCount ?? resolution.whale?.resolvedBetsCount ?? "n/a"}, avgEv=${resolution.stats?.avgEv ?? resolution.whale?.avgEv ?? "n/a"})`
     );
   }
 
@@ -128,8 +172,8 @@ export async function hydrateWalletForPostQueueCredibility(
 }
 
 /**
- * Hydrate a missing registry wallet, then evaluate credibility (with shadow /
- * unindexed overrides when hydration does not produce qualifying stats).
+ * Hydrate a missing or zero-history registry wallet, then evaluate credibility
+ * (with unindexed / shadow overrides when hydration does not produce stats).
  */
 export async function resolveCredibilityWhaleWithHydration(input: {
   tradeId: string;
@@ -139,21 +183,38 @@ export async function resolveCredibilityWhaleWithHydration(input: {
 }): Promise<{
   whale: WhaleRegistry | null;
   resolution?: WalletCredibilityResolution;
+  isUnindexedWhale?: boolean;
 }> {
   if (isAnonymousWalletAddress(input.walletAddress)) {
-    return { whale: input.whale ?? null };
+    const isUnindexedWhale = shouldAllowUnindexedWhaleBypass({
+      stakeNotional: input.stakeNotional,
+      resolvedBetCount: 0,
+      whaleMissing: true,
+    });
+    return { whale: input.whale ?? null, isUnindexedWhale };
   }
 
-  if (input.whale) {
-    return { whale: input.whale };
+  let whale = input.whale ?? null;
+  let resolution: WalletCredibilityResolution | undefined;
+
+  if (needsWalletCredibilityHydration(whale, input.walletAddress)) {
+    resolution = await hydrateWalletForPostQueueCredibility(input.walletAddress, {
+      tradeId: input.tradeId,
+      existingWhale: whale,
+    });
+    whale = resolution.whale;
   }
 
-  const resolution = await hydrateWalletForPostQueueCredibility(
-    input.walletAddress,
-    { tradeId: input.tradeId }
-  );
+  const resolvedBetCount =
+    whale?.resolvedBetsCount ?? resolution?.stats?.resolvedBetsCount ?? null;
+  const walletAvgEv = whale?.avgEv ?? resolution?.stats?.avgEv ?? null;
+  const isUnindexedWhale = shouldAllowUnindexedWhaleBypass({
+    stakeNotional: input.stakeNotional,
+    resolvedBetCount,
+    whaleMissing: !whale,
+  });
 
-  return { whale: resolution.whale, resolution };
+  return { whale, resolution, isUnindexedWhale };
 }
 
 export type PostQueueSourceRejectionReason =
@@ -261,14 +322,20 @@ export function evaluatePostQueueCredibilityGate(
 
   const resolvedBetCount = input.resolvedBetCount ?? null;
   const avgEv = input.walletAvgEv;
+  const unindexedBypass = shouldAllowUnindexedWhaleBypass({
+    stakeNotional: stake,
+    resolvedBetCount,
+    whaleMissing: resolvedBetCount == null,
+  });
   const shadowOverride = shouldApplyShadowCredibilityOverride({
     stakeNotional: stake,
     resolvedBetCount,
     walletAvgEv: avgEv,
   });
+  const bypass = unindexedBypass || shadowOverride;
 
   if (
-    !shadowOverride &&
+    !bypass &&
     !meetsFeedResolvedBetsThreshold(resolvedBetCount)
   ) {
     const resolvedLabel =
@@ -282,7 +349,7 @@ export function evaluatePostQueueCredibilityGate(
     return { passed: false, reason: BELOW_RESOLVED_BETS };
   }
 
-  if (!shadowOverride && !meetsWalletAvgEvThreshold(avgEv)) {
+  if (!bypass && !meetsWalletAvgEvThreshold(avgEv)) {
     const avgEvPct =
       avgEv != null && Number.isFinite(avgEv)
         ? (avgEv * 100).toFixed(1)
@@ -292,6 +359,14 @@ export function evaluatePostQueueCredibilityGate(
       `[Fail: Credibility] resolvedBetCount=${resolvedBetCount}, wallet avg EV (${avgEvPct}%) < +${MIN_AVG_EV_THRESHOLD_PCT.toFixed(1)}% threshold`
     );
     return { passed: false, reason: BELOW_EV_THRESHOLD };
+  }
+
+  if (unindexedBypass) {
+    gateLog(
+      input.tradeId,
+      `[Pass: Credibility] Unindexed whale bypass (isUnindexedWhale=true) — stake (${formatStake(stake)}) >= ${formatStake(UNINDEXED_WALLET_STAKE_BYPASS_USD)}; resolvedBetCount=${resolvedBetCount ?? 0}`
+    );
+    return { passed: true };
   }
 
   if (shadowOverride) {
@@ -344,8 +419,11 @@ export function evaluatePostQueueMarketTranslationGate(
   return { passed: true, translation };
 }
 
-export function logPostQueueIngestionSuccess(tradeId: string): void {
+export function logPostQueueIngestionSuccess(
+  tradeId: string,
+  stakeUsd: number
+): void {
   console.log(
-    `[Pass: All Gates] tradeId=${tradeId} queued into x_post_queue as PENDING_REVIEW`
+    `[Pass: ALL GATES] tradeId=${tradeId} (${formatStake(stakeUsd)}) queued into x_post_queue`
   );
 }

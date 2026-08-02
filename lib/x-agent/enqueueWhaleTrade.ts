@@ -18,11 +18,10 @@ import {
 import { persistKalshiShadowTradeFromWhale } from "@/lib/x-agent/kalshiShadowTrades";
 import {
   evaluatePostQueueSourceGate,
-  isAllowUnregisteredWalletsInShadow,
   KALSHI_PUBLIC_POSTING_DISABLED,
   logPostQueueIngestionSuccess,
   resolveCredibilityWhaleWithHydration,
-  SHADOW_UNREGISTERED_STAKE_BYPASS_USD,
+  shouldAllowUnindexedWhaleBypass,
 } from "@/lib/x-agent/postQueueGates";
 import {
   MIN_WALLET_AVG_EV_DECIMAL,
@@ -191,6 +190,7 @@ export async function processWhaleTradeForXAgent(
   let whaleForGates: Awaited<
     ReturnType<typeof resolveCredibilityWhaleWithHydration>
   >["whale"] = null;
+  let isUnindexedWhale = false;
   if (!anonymousTrade) {
     const credibility = await resolveCredibilityWhaleWithHydration({
       tradeId: payload.tradeId,
@@ -198,10 +198,15 @@ export async function processWhaleTradeForXAgent(
       stakeNotional: payload.stakeNotional,
     });
     whaleForGates = credibility.whale;
+    isUnindexedWhale = credibility.isUnindexedWhale === true;
   } else if (
-    isAllowUnregisteredWalletsInShadow() &&
-    trade.usdNotional >= SHADOW_UNREGISTERED_STAKE_BYPASS_USD
+    shouldAllowUnindexedWhaleBypass({
+      stakeNotional: trade.usdNotional,
+      resolvedBetCount: 0,
+      whaleMissing: true,
+    })
   ) {
+    isUnindexedWhale = true;
     const ensured = await ensureWhaleInRegistry(ANONYMOUS_WALLET_ADDRESS, {
       resolvedBetsCount: MIN_WALLET_RESOLVED_BETS,
       avgEv: MIN_WALLET_AVG_EV_DECIMAL,
@@ -212,7 +217,8 @@ export async function processWhaleTradeForXAgent(
 
   const credibilityGate = evaluateWalletCredibilityPreGate(
     payload,
-    whaleForGates
+    whaleForGates,
+    { isUnindexedWhale }
   );
   if (!credibilityGate.passed) {
     await handlePreGateRejection(
@@ -406,7 +412,7 @@ export async function processWhaleTradeForXAgent(
     });
   }
 
-  logPostQueueIngestionSuccess(payload.tradeId);
+  logPostQueueIngestionSuccess(payload.tradeId, pricedPayload.stakeNotional);
   console.log(
     `[Gate] tradeId=${payload.tradeId} [Pass: Queue] Trade entered x_post_queue with status PENDING_REVIEW (id=${insertedRecord.id})`
   );

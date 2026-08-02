@@ -7,6 +7,7 @@ import {
   fetchKalshiOpenMarkets,
   kalshiYesMid,
   KALSHI_API,
+  KALSHI_BATCH_DELAY_MS,
   type KalshiMarket,
 } from "@/lib/kalshi";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
@@ -252,7 +253,11 @@ async function fetchKalshiSeriesMarkets(
   signal?: AbortSignal
 ): Promise<KalshiMarket[]> {
   const merged: KalshiMarket[] = [];
-  for (const seriesTicker of series) {
+  for (let i = 0; i < series.length; i++) {
+    if (i > 0) {
+      await sleep(KALSHI_BATCH_DELAY_MS);
+    }
+    const seriesTicker = series[i];
     try {
       const batch = await fetchKalshiOpenMarketsWithRetry(
         { seriesTicker, maxPages: 4, limit: 200, signal },
@@ -602,7 +607,11 @@ async function fetchKalshiFallbackSeries(
   signal?: AbortSignal
 ): Promise<KalshiMarket[]> {
   const merged: KalshiMarket[] = [];
-  for (const series of KALSHI_FALLBACK_SERIES) {
+  for (let i = 0; i < KALSHI_FALLBACK_SERIES.length; i++) {
+    if (i > 0) {
+      await sleep(KALSHI_BATCH_DELAY_MS);
+    }
+    const series = KALSHI_FALLBACK_SERIES[i];
     try {
       const batch = await fetchKalshiOpenMarketsWithRetry(
         { seriesTicker: series, maxPages: 4, limit: 200, signal },

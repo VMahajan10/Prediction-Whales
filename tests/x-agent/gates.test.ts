@@ -25,9 +25,11 @@ function withStrictCredibilityGates<T>(fn: () => T): T {
   const previousNodeEnv = process.env.NODE_ENV;
   const previousShadow = process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
   const previousUnindexed = process.env.ALLOW_UNINDEXED_WALLETS;
+  const previousHydrationFallback = process.env.X_AGENT_WALLET_HYDRATION_FALLBACK;
   process.env.NODE_ENV = "production";
   process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW = "false";
   process.env.ALLOW_UNINDEXED_WALLETS = "false";
+  process.env.X_AGENT_WALLET_HYDRATION_FALLBACK = "false";
 
   try {
     return fn();
@@ -42,6 +44,11 @@ function withStrictCredibilityGates<T>(fn: () => T): T {
       delete process.env.ALLOW_UNINDEXED_WALLETS;
     } else {
       process.env.ALLOW_UNINDEXED_WALLETS = previousUnindexed;
+    }
+    if (previousHydrationFallback === undefined) {
+      delete process.env.X_AGENT_WALLET_HYDRATION_FALLBACK;
+    } else {
+      process.env.X_AGENT_WALLET_HYDRATION_FALLBACK = previousHydrationFallback;
     }
   }
 }
@@ -138,9 +145,15 @@ describe("evaluateDeterministicPreGates", () => {
 });
 
 describe("evaluateWalletCredibilityPreGate", () => {
-  it("fails when whale is missing from registry", () => {
+  it("fails when whale is missing from registry below unindexed stake bypass", () => {
     const result = withStrictCredibilityGates(() =>
-      evaluateWalletCredibilityPreGate(makeTrade(), null)
+      evaluateWalletCredibilityPreGate(
+        makeTrade({
+          title: "Lakers vs Celtics NBA",
+          stakeNotional: STAKE_FLOOR_SPORTS_ENTERTAINMENT_USD,
+        }),
+        null
+      )
     );
 
     expect(result.passed).toBe(false);
@@ -212,12 +225,13 @@ describe("evaluateTradeGateMatrix", () => {
     expect(matrix.passesAll).toBe(false);
   });
 
-  it("fails credibility for anonymous zero-address trades without whale lookup", () => {
+  it("fails credibility for anonymous zero-address trades below unindexed bypass", () => {
     const matrix = withStrictCredibilityGates(() =>
       evaluateTradeGateMatrix({
         trade: makeTrade({
+          title: "Lakers vs Celtics NBA",
           walletAddress: ANONYMOUS_WALLET_ADDRESS,
-          stakeNotional: STAKE_FLOOR_DEFAULT_USD,
+          stakeNotional: STAKE_FLOOR_SPORTS_ENTERTAINMENT_USD,
         }),
         whale: null,
         tradeEvPercent: 3.0,
@@ -225,31 +239,23 @@ describe("evaluateTradeGateMatrix", () => {
     );
 
     expect(matrix.passesCredibility).toBe(false);
+    expect(matrix.passesStake).toBe(true);
     expect(matrix.passesAll).toBe(false);
     expect(matrix.primaryFailureReason).toBe("BELOW_RESOLVED_BETS");
   });
 
-  it("allows anonymous high-stake trades through credibility in shadow mode", () => {
-    const previous = process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
-    process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW = "true";
-
-    try {
-      const result = evaluateWalletCredibilityPreGate(
+  it("allows anonymous high-stake trades through credibility via unindexed bypass", () => {
+    const result = withStrictCredibilityGates(() =>
+      evaluateWalletCredibilityPreGate(
         makeTrade({
           walletAddress: ANONYMOUS_WALLET_ADDRESS,
           stakeNotional: SHADOW_UNREGISTERED_STAKE_BYPASS_USD,
         }),
         null
-      );
+      )
+    );
 
-      expect(result.passed).toBe(true);
-    } finally {
-      if (previous === undefined) {
-        delete process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
-      } else {
-        process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW = previous;
-      }
-    }
+    expect(result.passed).toBe(true);
   });
 
   it("applies the macro/political stake tier", () => {
@@ -339,10 +345,14 @@ describe("evaluateTradeEligibility", () => {
     });
   });
 
-  it("rejects anonymous trades with zero resolved history", async () => {
+  it("rejects anonymous trades with zero resolved history below unindexed bypass", async () => {
     const result = await withStrictCredibilityGates(() =>
       evaluateTradeEligibility(
-        makeTrade({ walletAddress: ANONYMOUS_WALLET_ADDRESS }),
+        makeTrade({
+          title: "Lakers vs Celtics NBA",
+          walletAddress: ANONYMOUS_WALLET_ADDRESS,
+          stakeNotional: STAKE_FLOOR_SPORTS_ENTERTAINMENT_USD,
+        }),
         null,
         Date.now(),
         { tradeEvPercent: 3.0 }
@@ -350,21 +360,26 @@ describe("evaluateTradeEligibility", () => {
     );
 
     expect(result.matrix.passesCredibility).toBe(false);
+    expect(result.matrix.passesStake).toBe(true);
     expect(result.eligible).toBe(false);
     expect(result.reason).toBe("BELOW_RESOLVED_BETS");
   });
 
-  it("rejects wallets with zero resolved bets", async () => {
+  it("rejects wallets below the resolved-bets floor without hydration bypass", async () => {
     const result = await withStrictCredibilityGates(() =>
       evaluateTradeEligibility(
-        makeTrade(),
-        makeWhale({ resolvedBetsCount: 0 }),
+        makeTrade({
+          title: "Lakers vs Celtics NBA",
+          stakeNotional: STAKE_FLOOR_SPORTS_ENTERTAINMENT_USD,
+        }),
+        makeWhale({ resolvedBetsCount: MIN_RESOLVED_BETS - 1 }),
         Date.now(),
         { tradeEvPercent: 5 }
       )
     );
 
     expect(result.eligible).toBe(false);
+    expect(result.matrix.passesStake).toBe(true);
     expect(result.matrix.passesCredibility).toBe(false);
     expect(result.reason).toBe("BELOW_RESOLVED_BETS");
   });

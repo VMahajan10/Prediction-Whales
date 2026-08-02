@@ -1,5 +1,4 @@
-import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
-import { KALSHI_API } from "@/lib/kalshi";
+import { kalshiFetch } from "@/lib/kalshi/http";
 import {
   formatKalshiMarketDisplayTitle,
   resolveKalshiTitle,
@@ -232,10 +231,10 @@ function normalizeRawTrade(
 
 async function kalshiGet<T>(path: string): Promise<T | null> {
   try {
-    const res = await fetchWithTimeout(`${KALSHI_API}${path}`, {
+    const res = await kalshiFetch(path, {
       timeoutMs: FETCH_TIMEOUT_MS,
-      headers: { Accept: "application/json", "User-Agent": "MarketPulse/1.0" },
       next: { revalidate: 30 },
+      label: path,
     });
     if (!res.ok) return null;
     return (await res.json()) as T;

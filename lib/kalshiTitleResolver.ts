@@ -1,8 +1,12 @@
 import { Redis } from "@upstash/redis";
+import {
+  KALSHI_BATCH_DELAY_MS,
+  kalshiFetch,
+  sleep,
+} from "@/lib/kalshi/http";
 
 const TITLE_KEY_PREFIX = "kalshi:title:";
 const TITLE_TTL_SEC = 60 * 60 * 24; // 24 hours
-const KALSHI_API = "https://api.elections.kalshi.com/trade-api/v2";
 
 const MONTHS: Record<string, string> = {
   JAN: "Jan",
@@ -343,9 +347,9 @@ async function fetchKalshiEvent(
   eventTicker: string
 ): Promise<KalshiEventTitleInput | null> {
   try {
-    const res = await fetch(
-      `${KALSHI_API}/events/${encodeURIComponent(eventTicker)}`,
-      { headers: { Accept: "application/json" }, next: { revalidate: 3600 } }
+    const res = await kalshiFetch(
+      `/events/${encodeURIComponent(eventTicker)}`,
+      { next: { revalidate: 3600 }, label: `events/${eventTicker}` }
     );
     if (!res.ok) return null;
     const data: unknown = await res.json();
@@ -380,10 +384,10 @@ function marketRecordFromApi(
 
 async function fetchKalshiMarketTitle(ticker: string): Promise<string | null> {
   try {
-    const res = await fetch(
-      `${KALSHI_API}/markets/${encodeURIComponent(ticker)}`,
-      { headers: { Accept: "application/json" }, next: { revalidate: 3600 } }
-    );
+    const res = await kalshiFetch(`/markets/${encodeURIComponent(ticker)}`, {
+      next: { revalidate: 3600 },
+      label: `markets/${ticker}`,
+    });
     if (!res.ok) return null;
     const data: unknown = await res.json();
     const market =
@@ -441,7 +445,7 @@ export async function resolveKalshiTitle(ticker: string): Promise<string> {
 /** Resolve many tickers in parallel (deduped), preferring API subtitles over ticker fallbacks. */
 export async function resolveKalshiTitles(
   tickers: string[],
-  concurrency = 8
+  concurrency = 5
 ): Promise<Map<string, string>> {
   const unique = Array.from(new Set(tickers.filter(Boolean)));
   const result = new Map<string, string>();
@@ -464,6 +468,9 @@ export async function resolveKalshiTitles(
       const title = fetched ?? humanizeKalshiTicker(ticker);
       result.set(ticker, title);
       if (fetched) await cacheKalshiTitle(ticker, fetched);
+      if (index < toFetch.length) {
+        await sleep(KALSHI_BATCH_DELAY_MS);
+      }
     }
   }
 

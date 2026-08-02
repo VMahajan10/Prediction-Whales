@@ -1,8 +1,6 @@
 import { resolveKalshiTitles } from "@/lib/kalshiTitleResolver";
+import { kalshiFetch } from "@/lib/kalshi/http";
 import { persistKalshiShadowTrade } from "@/lib/x-agent/kalshiShadowTrades";
-
-const KALSHI_TRADES_URL =
-  "https://api.elections.kalshi.com/trade-api/v2/markets/trades";
 
 export interface FeedTrade {
   id: string;
@@ -114,9 +112,9 @@ export async function fetchKalshiTrades(
     params.set("min_ts", String(minTs));
   }
 
-  const res = await fetch(`${KALSHI_TRADES_URL}?${params}`, {
-    headers: { Accept: "application/json" },
+  const res = await kalshiFetch(`/markets/trades?${params}`, {
     next: { revalidate: 0 },
+    label: "markets/trades",
   });
 
   if (!res.ok) {

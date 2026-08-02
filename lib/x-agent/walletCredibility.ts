@@ -209,6 +209,30 @@ function buildStubWhale(
 }
 
 /**
+ * Hydrate wallet stats from registry or Polymarket Data API when the wallet is
+ * missing or has zero resolved bets. Always await before credibility checks.
+ */
+export async function hydrateWalletStats(
+  walletAddress: string,
+  existing?: WhaleRegistry | null
+): Promise<WalletCredibilityResolution> {
+  if (isAnonymousWalletAddress(walletAddress)) {
+    return { whale: null, source: "anonymous" };
+  }
+
+  const normalized = normalizeWalletAddress(walletAddress);
+  if (!normalized) {
+    return { whale: null, source: "unavailable" };
+  }
+
+  if (existing && (existing.resolvedBetsCount ?? 0) > 0) {
+    return { whale: existing, source: "registry" };
+  }
+
+  return resolveWhaleForCredibilityGate(normalized);
+}
+
+/**
  * Resolve wallet credibility for post-queue gates.
  * 1. Case-insensitive registry lookup
  * 2. Low-credibility cache (skip repeat Polymarket fetches)
