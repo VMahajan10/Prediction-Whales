@@ -14,7 +14,9 @@ import {
 } from "@/lib/sportsTeamMatch";
 
 const MANIFOLD_API = "https://api.manifold.markets";
-const FETCH_TIMEOUT_MS = 8000;
+/** Per-page request cap; overall fetch is bounded by MANIFOLD_SPORTS_TIMEOUT_MS. */
+const FETCH_TIMEOUT_MS = 3000;
+export const MANIFOLD_SPORTS_TIMEOUT_MS = 3000;
 const PAGE_LIMIT = 100;
 const MAX_PAGES = 20;
 
@@ -103,51 +105,72 @@ function manifoldYesPrice(m: ManifoldMarketApi): number | null {
   return prob;
 }
 
-/** Open Manifold binary markets (no API key). */
-export async function fetchManifoldSportsMarkets(): Promise<
-  ManifoldSportsMarket[]
-> {
+async function fetchManifoldSportsMarketsInner(
+  outerSignal?: AbortSignal
+): Promise<ManifoldSportsMarket[]> {
   const out: ManifoldSportsMarket[] = [];
   let before: string | undefined;
 
-  try {
-    for (let page = 0; page < MAX_PAGES; page++) {
-      const params = new URLSearchParams({ limit: String(PAGE_LIMIT) });
-      if (before) params.set("before", before);
+  for (let page = 0; page < MAX_PAGES; page++) {
+    if (outerSignal?.aborted) break;
 
-      const res = await fetchWithTimeout(
-        `${MANIFOLD_API}/v0/markets?${params}`,
-        {
-          headers: { Accept: "application/json" },
-          timeoutMs: FETCH_TIMEOUT_MS,
-        }
-      );
-      if (!res.ok) break;
+    const params = new URLSearchParams({ limit: String(PAGE_LIMIT) });
+    if (before) params.set("before", before);
 
-      const markets = (await res.json()) as ManifoldMarketApi[];
-      if (!Array.isArray(markets) || markets.length === 0) break;
+    const res = await fetchWithTimeout(`${MANIFOLD_API}/v0/markets?${params}`, {
+      headers: { Accept: "application/json" },
+      timeoutMs: FETCH_TIMEOUT_MS,
+      signal: outerSignal,
+    });
+    if (!res.ok) break;
 
-      for (const m of markets) {
-        if (m.isResolved || !m.id || !m.question) continue;
-        const yesPrice = manifoldYesPrice(m);
-        if (yesPrice == null) continue;
-        out.push({
-          id: m.id,
-          title: m.question,
-          yesPrice,
-          volume: m.volume ?? 0,
-        });
-      }
+    const markets = (await res.json()) as ManifoldMarketApi[];
+    if (!Array.isArray(markets) || markets.length === 0) break;
 
-      if (markets.length < PAGE_LIMIT) break;
-      before = markets[markets.length - 1]?.id;
-      if (!before) break;
+    for (const m of markets) {
+      if (m.isResolved || !m.id || !m.question) continue;
+      const yesPrice = manifoldYesPrice(m);
+      if (yesPrice == null) continue;
+      out.push({
+        id: m.id,
+        title: m.question,
+        yesPrice,
+        volume: m.volume ?? 0,
+      });
     }
-  } catch (err) {
-    console.error("[manifoldSports] fetch failed:", err);
+
+    if (markets.length < PAGE_LIMIT) break;
+    before = markets[markets.length - 1]?.id;
+    if (!before) break;
   }
 
   return out;
+}
+
+/** Open Manifold binary markets (no API key). Fails fast with [] on timeout. */
+export async function fetchManifoldSportsMarkets(): Promise<
+  ManifoldSportsMarket[]
+> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    MANIFOLD_SPORTS_TIMEOUT_MS
+  );
+
+  try {
+    return await fetchManifoldSportsMarketsInner(controller.signal);
+  } catch (err) {
+    if (controller.signal.aborted) {
+      console.warn(
+        `[manifoldSports] fetch timed out after ${MANIFOLD_SPORTS_TIMEOUT_MS}ms — returning []`
+      );
+    } else {
+      console.error("[manifoldSports] fetch failed:", err);
+    }
+    return [];
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 /**

@@ -1,6 +1,5 @@
-import {
-  deriveEvPercentFromPTrue,
-} from "@/lib/evPipeline/tradeEvRecord";
+import { isAuthoritativePipelineTradeEv } from "@/lib/evPipeline/pTrueAuthority";
+import { deriveEvPercentFromPTrue } from "@/lib/evPipeline/tradeEvRecord";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 
 function tradeLevelEvPercent(input: {
@@ -17,20 +16,6 @@ function tradeLevelEvPercent(input: {
   return null;
 }
 
-/** Skip synthetic 50/50 priors when deriving feed trade EV from p_true. */
-function isAuthoritativePipelinePTrue(pipeline: PipelineTradeEv): boolean {
-  if (pipeline.pTrueLowConfidence) return false;
-  if (pipeline.pTrueSource === "universal_prior") return false;
-  if (
-    pipeline.pTrueConfidence != null &&
-    Number.isFinite(pipeline.pTrueConfidence) &&
-    pipeline.pTrueConfidence < 0.35
-  ) {
-    return false;
-  }
-  return pipeline.pTrue != null && Number.isFinite(pipeline.pTrue);
-}
-
 /** Trade-level EV % for feed gates — never uses wallet averageEv / traderAvgEv. */
 export function resolveFeedTradeEvPercent(
   trade: {
@@ -45,6 +30,7 @@ export function resolveFeedTradeEvPercent(
   if (fromTrade != null) return fromTrade;
 
   if (!pipeline || pipeline.status === "unmapped") return null;
+  if (!isAuthoritativePipelineTradeEv(pipeline)) return null;
 
   const fromPipeline = tradeLevelEvPercent({
     netEvPercent: pipeline.netEvPercent,
@@ -52,7 +38,7 @@ export function resolveFeedTradeEvPercent(
   });
   if (fromPipeline != null) return fromPipeline;
 
-  if (isAuthoritativePipelinePTrue(pipeline)) {
+  if (pipeline.pTrue != null && Number.isFinite(pipeline.pTrue)) {
     return deriveEvPercentFromPTrue(
       pipeline.pTrue!,
       trade.price,

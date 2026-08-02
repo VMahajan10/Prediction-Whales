@@ -1,4 +1,8 @@
 import { calculateTrueEV, type EvPlatform } from "@/lib/finance/evEngine";
+import {
+  abstainPipelineTradeEvFromPTrue,
+  isAuthoritativePTrueForEv,
+} from "@/lib/evPipeline/pTrueAuthority";
 import type { PTrueResult } from "@/lib/evPipeline/pTrueTypes";
 import { EV_FORMULA_VERSION } from "@/lib/evPipeline/pTrueTypes";
 import {
@@ -98,6 +102,15 @@ export function buildPipelineTradeEvFromPTrue(
 ): PipelineTradeEv {
   const tokenId = normalizePmTokenId(params.tokenId);
   const kalshiTicker = normalizeKalshiTicker(params.kalshiTicker);
+
+  if (!isAuthoritativePTrueForEv(pTrueResult)) {
+    return abstainPipelineTradeEvFromPTrue(lookupKey, pTrueResult, {
+      tokenId,
+      kalshiTicker,
+      mappingPairKey: params.mappingPairKey,
+    });
+  }
+
   const platformMid =
     params.platform === "polymarket"
       ? pTrueResult.pmMid

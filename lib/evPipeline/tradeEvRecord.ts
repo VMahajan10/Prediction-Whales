@@ -2,6 +2,7 @@ import type { EvPlatform } from "@/lib/finance/evEngine";
 import {
   computeTradeEvDisplay,
 } from "@/lib/evPipeline/computeTradeEv";
+import { isAuthoritativePipelineTradeEv } from "@/lib/evPipeline/pTrueAuthority";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import {
   normalizeKalshiTicker,
@@ -255,6 +256,21 @@ export function strictApiTradeEvPayload(
 ): PipelineTradeEv {
   const key = lookupKey ?? item.key;
   if (item.status !== "ok") return { ...item, key };
+
+  if (!isAuthoritativePipelineTradeEv(item)) {
+    return {
+      ...item,
+      key,
+      status: "unmapped",
+      netEvPercent: null,
+      grossEvPercent: null,
+      averageEv: null,
+      netEv: 0,
+      grossEv: 0,
+      pTrue: null,
+      pTrueLowConfidence: true,
+    };
+  }
 
   const pTrue = readOptionalNumber(item.pTrue);
   if (pTrue == null) {

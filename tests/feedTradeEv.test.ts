@@ -66,6 +66,21 @@ describe("resolveFeedTradeEvPercent", () => {
     ).toBeNull();
   });
 
+  it("rejects synthetic netEvPercent from low-confidence pipeline EV", () => {
+    const pipeline = {
+      key: "pm:1",
+      status: "ok",
+      netEvPercent: 35,
+      grossEvPercent: null,
+      pTrue: 0.5,
+      pTrueLowConfidence: true,
+      pTrueSource: "universal_prior",
+      pTrueConfidence: 0.1,
+    } as PipelineTradeEv;
+
+    expect(resolveFeedTradeEvPercent({ price: 0.15 }, pipeline)).toBeNull();
+  });
+
   it("uses authoritative netEvPercent for high-edge trades", () => {
     const pipeline = {
       key: "pm:1",

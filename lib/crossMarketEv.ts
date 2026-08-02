@@ -401,8 +401,12 @@ export async function buildCrossMarketBookIndex(
   }
 
   if (includeManifold) {
-    const manifoldMarkets = await fetchManifoldSportsMarkets();
-    attachManifoldBooksToIndex(index, manifoldMarkets);
+    try {
+      const manifoldMarkets = await fetchManifoldSportsMarkets();
+      attachManifoldBooksToIndex(index, manifoldMarkets);
+    } catch (err) {
+      console.warn("[crossMarketEv] manifold sports fetch skipped:", err);
+    }
   }
 
   if (includeSportsbook) {
