@@ -3,9 +3,12 @@ import {
   CREDIBILITY_CONFIG,
   isQualifiedFeedTrade,
   meetsFeedStakeThreshold,
+  meetsFeedTieredStakeThreshold,
+  meetsFeedTradeEvThreshold,
   meetsWalletAvgEvThreshold,
   MIN_AVG_EV_THRESHOLD,
   MIN_FEED_RESOLVED_BETS,
+  MIN_FEED_TRADE_EV_PCT,
   MIN_STAKE_THRESHOLD,
 } from "@/lib/feedQualification";
 import {
@@ -20,6 +23,56 @@ describe("feedQualification", () => {
     expect(meetsFeedStakeThreshold(MIN_STAKE_THRESHOLD - 1)).toBe(false);
   });
 
+  it("enforces tiered stake floors by market category", () => {
+    expect(
+      meetsFeedTieredStakeThreshold({
+        stakeUsd: 250,
+        title: "Will the Lakers win the NBA Finals?",
+      })
+    ).toBe(true);
+    expect(
+      meetsFeedTieredStakeThreshold({
+        stakeUsd: 249,
+        title: "Will the Lakers win the NBA Finals?",
+      })
+    ).toBe(false);
+
+    expect(
+      meetsFeedTieredStakeThreshold({
+        stakeUsd: 500,
+        title: "Will Bitcoin reach $100k by end of year?",
+      })
+    ).toBe(true);
+    expect(
+      meetsFeedTieredStakeThreshold({
+        stakeUsd: 499,
+        title: "Will Bitcoin reach $100k by end of year?",
+      })
+    ).toBe(false);
+
+    expect(
+      meetsFeedTieredStakeThreshold({
+        stakeUsd: 1000,
+        title: "Will Trump win the 2028 presidential election?",
+      })
+    ).toBe(true);
+    expect(
+      meetsFeedTieredStakeThreshold({
+        stakeUsd: 999,
+        title: "Will Trump win the 2028 presidential election?",
+      })
+    ).toBe(false);
+  });
+
+  it("enforces the minimum trade EV threshold (+3.0%)", () => {
+    expect(meetsFeedTradeEvThreshold(MIN_FEED_TRADE_EV_PCT)).toBe(true);
+    expect(meetsFeedTradeEvThreshold(MIN_FEED_TRADE_EV_PCT - 0.1)).toBe(
+      false
+    );
+    expect(meetsFeedTradeEvThreshold(-14)).toBe(false);
+    expect(meetsFeedTradeEvThreshold(null)).toBe(false);
+  });
+
   it("enforces the minimum wallet avg EV threshold", () => {
     expect(meetsWalletAvgEvThreshold(MIN_AVG_EV_THRESHOLD)).toBe(true);
     expect(meetsWalletAvgEvThreshold(MIN_AVG_EV_THRESHOLD - 0.001)).toBe(
@@ -28,46 +81,68 @@ describe("feedQualification", () => {
     expect(meetsWalletAvgEvThreshold(-0.001)).toBe(false);
   });
 
-  it("requires stake, wallet avg EV, and resolved bets for feed qualification", () => {
+  it("requires stake, wallet avg EV, resolved bets, and trade EV for feed qualification", () => {
     expect(CREDIBILITY_CONFIG.MIN_RESOLVED_BETS).toBe(100);
 
+    const qualifiedBase = {
+      stakeUsd: 500,
+      walletAvgEv: MIN_AVG_EV_THRESHOLD,
+      resolvedBetCount: MIN_FEED_RESOLVED_BETS,
+      title: "Will Bitcoin reach $100k?",
+      tradeEvPercent: MIN_FEED_TRADE_EV_PCT,
+    };
+
+    expect(isQualifiedFeedTrade(qualifiedBase)).toBe(true);
+
     expect(
       isQualifiedFeedTrade({
-        stakeUsd: MIN_STAKE_THRESHOLD,
+        ...qualifiedBase,
         walletAvgEv: -0.011,
-        resolvedBetCount: 400,
       })
     ).toBe(false);
 
     expect(
       isQualifiedFeedTrade({
-        stakeUsd: MIN_STAKE_THRESHOLD - 1,
-        walletAvgEv: MIN_AVG_EV_THRESHOLD,
-        resolvedBetCount: MIN_FEED_RESOLVED_BETS,
+        ...qualifiedBase,
+        stakeUsd: 499,
       })
     ).toBe(false);
 
     expect(
       isQualifiedFeedTrade({
-        stakeUsd: MIN_STAKE_THRESHOLD,
-        walletAvgEv: MIN_AVG_EV_THRESHOLD,
+        ...qualifiedBase,
         resolvedBetCount: MIN_FEED_RESOLVED_BETS - 1,
       })
     ).toBe(false);
 
     expect(
       isQualifiedFeedTrade({
-        stakeUsd: MIN_STAKE_THRESHOLD,
+        ...qualifiedBase,
         walletAvgEv: null,
-        resolvedBetCount: 400,
       })
     ).toBe(false);
 
     expect(
       isQualifiedFeedTrade({
-        stakeUsd: MIN_STAKE_THRESHOLD,
+        ...qualifiedBase,
+        tradeEvPercent: 2.9,
+      })
+    ).toBe(false);
+
+    expect(
+      isQualifiedFeedTrade({
+        ...qualifiedBase,
+        tradeEvPercent: -14,
+      })
+    ).toBe(false);
+
+    expect(
+      isQualifiedFeedTrade({
+        stakeUsd: 250,
         walletAvgEv: MIN_AVG_EV_THRESHOLD,
-        resolvedBetCount: MIN_FEED_RESOLVED_BETS,
+        resolvedBetCount: 400,
+        title: "Will the Lakers win the NBA Finals?",
+        tradeEvPercent: MIN_FEED_TRADE_EV_PCT,
       })
     ).toBe(true);
   });

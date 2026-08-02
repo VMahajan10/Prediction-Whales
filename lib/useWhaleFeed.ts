@@ -7,15 +7,19 @@ import type { TradeSummary } from "@/lib/polymarket";
 import { usePolymarketSocketContext } from "@/lib/PolymarketSocketProvider";
 import {
   isQualifiedFeedTrade,
-  meetsFeedStakeThreshold,
+  MIN_FEED_STAKE_PREFILTER_USD,
 } from "@/lib/feedQualification";
+import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import { translateWhaleTradeMarket } from "@/lib/marketTranslator";
+import { pipelineEvKeyForWhale } from "@/lib/pipelineEvClient";
+import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import {
   useQualifiedWalletFilter,
   type WalletQualification,
 } from "@/lib/useQualifiedWalletFilter";
 import { cacheWhaleTrade, resolveAndCacheWallet } from "@/lib/whaleCache";
 import { useKalshiTrades } from "@/lib/useKalshiTrades";
+import { usePipelineEvForWhales } from "@/lib/usePipelineEvIndex";
 import { useWalletEnrichment } from "@/lib/useWalletEnrichment";
 import {
   mergeWhaleTrades,
@@ -59,17 +63,26 @@ function reportFeedMetrics(input: {
 
 function isPolymarketTradeQualifiedForFeed(
   trade: WhaleTrade,
-  walletQualification: WalletQualification | undefined
+  walletQualification: WalletQualification | undefined,
+  pipelineEvIndex: Map<string, PipelineTradeEv>
 ): boolean {
   if (trade.source !== "polymarket") return false;
 
   const wallet = trade.proxyWallet?.trim().toLowerCase();
   if (!wallet || !walletQualification) return false;
 
+  const pipelineKey = pipelineEvKeyForWhale(trade);
+  const pipeline = pipelineKey ? pipelineEvIndex.get(pipelineKey) : undefined;
+  const tradeEvPercent = resolveFeedTradeEvPercent(trade, pipeline);
+
   return isQualifiedFeedTrade({
     stakeUsd: trade.usdNotional,
     walletAvgEv: walletQualification.avgEv,
     resolvedBetCount: walletQualification.resolvedBetsCount,
+    title: trade.title,
+    slug: trade.slug,
+    eventSlug: trade.eventSlug,
+    tradeEvPercent,
   });
 }
 
@@ -90,9 +103,16 @@ function attachWhaleIdentity(
 
 function isPolymarketTradeEligibleForFeed(
   trade: WhaleTrade,
-  walletQualification: WalletQualification | undefined
+  walletQualification: WalletQualification | undefined,
+  pipelineEvIndex: Map<string, PipelineTradeEv>
 ): boolean {
-  if (!isPolymarketTradeQualifiedForFeed(trade, walletQualification)) {
+  if (
+    !isPolymarketTradeQualifiedForFeed(
+      trade,
+      walletQualification,
+      pipelineEvIndex
+    )
+  ) {
     return false;
   }
   return translateWhaleTradeMarket(trade) != null;
@@ -192,6 +212,7 @@ export function useWhaleFeed() {
     [polymarketWhales]
   );
   const walletQualifications = useQualifiedWalletFilter(polymarketWalletAddresses);
+  const { index: pipelineEvIndex } = usePipelineEvForWhales(polymarketWhales);
 
   const qualifiedPolymarketWhales = useMemo(() => {
     return polymarketWhales
@@ -200,7 +221,8 @@ export function useWhaleFeed() {
           trade,
           trade.proxyWallet
             ? walletQualifications.get(trade.proxyWallet.trim().toLowerCase())
-            : undefined
+            : undefined,
+          pipelineEvIndex
         )
       )
       .map((trade) =>
@@ -211,7 +233,7 @@ export function useWhaleFeed() {
             : undefined
         )
       );
-  }, [polymarketWhales, walletQualifications]);
+  }, [polymarketWhales, walletQualifications, pipelineEvIndex]);
 
   useEffect(() => {
     if (!backfillLoaded) return;
@@ -223,7 +245,7 @@ export function useWhaleFeed() {
     for (const whale of liveWhales) {
       const key = whale.transactionHash || whale.id;
       if (!key || metricsReported.current.has(key)) continue;
-      if (!meetsFeedStakeThreshold(whale.usdNotional)) {
+      if (!Number.isFinite(whale.usdNotional) || whale.usdNotional < MIN_FEED_STAKE_PREFILTER_USD) {
         metricsReported.current.add(key);
         continue;
       }
@@ -236,7 +258,9 @@ export function useWhaleFeed() {
         ? walletQualifications.get(wallet)
         : undefined;
 
-      if (isPolymarketTradeQualifiedForFeed(whale, qualification)) {
+      if (
+        isPolymarketTradeQualifiedForFeed(whale, qualification, pipelineEvIndex)
+      ) {
         passed += 1;
         if (wallet) passedWallets.push(wallet);
       }
@@ -247,7 +271,7 @@ export function useWhaleFeed() {
       gatePassedTrades: passed,
       whaleWallets: passedWallets,
     });
-  }, [liveWhales, walletQualifications, backfillLoaded]);
+  }, [liveWhales, walletQualifications, pipelineEvIndex, backfillLoaded]);
 
   useEffect(() => {
     if (!backfillLoaded) return;
@@ -291,14 +315,21 @@ export function useWhaleFeed() {
         ? walletQualifications.get(wallet)
         : undefined;
 
-      if (!isPolymarketTradeEligibleForFeed(whale, qualification)) continue;
+      if (
+        !isPolymarketTradeEligibleForFeed(
+          whale,
+          qualification,
+          pipelineEvIndex
+        )
+      )
+        continue;
 
       qualifiedNotified.current.add(key);
       const enriched = attachWhaleIdentity(whale, qualification);
       setNewWhale(enriched);
       queueWhaleTweetNotify(enriched);
     }
-  }, [liveWhales, backfillLoaded, walletQualifications]);
+  }, [liveWhales, backfillLoaded, walletQualifications, pipelineEvIndex]);
 
   const whales = useMemo(
     () =>

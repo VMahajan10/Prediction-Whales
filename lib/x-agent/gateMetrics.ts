@@ -9,10 +9,10 @@ import {
   formatStakeFloorSummaryLabel,
   STAKE_FLOOR_DEFAULT_USD,
 } from "@/lib/x-agent/stakeFloor";
-import { CREDIBILITY_CONFIG } from "@/lib/feedQualification";
+import { CREDIBILITY_CONFIG, MIN_FEED_TRADE_EV_PCT } from "@/lib/feedQualification";
 
 /** Minimum live trade EV as display percent (+3.0%). */
-export const HIGH_EV_TRADE_THRESHOLD_PCT = 3;
+export const HIGH_EV_TRADE_THRESHOLD_PCT = MIN_FEED_TRADE_EV_PCT;
 
 /** Minimum live trade EV as decimal (trade.ev >= 0.03). */
 export const MIN_TRADE_EV_DECIMAL = HIGH_EV_TRADE_THRESHOLD_PCT / 100;

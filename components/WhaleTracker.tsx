@@ -16,6 +16,8 @@ import {
   stashTradeForNavigation,
   whaleTradeToKalshiFeedTrade,
 } from "@/lib/tradeNavigationStore";
+import { MIN_FEED_TRADE_EV_PCT } from "@/lib/feedQualification";
+import { formatStakeFloorSummaryLabel } from "@/lib/x-agent/stakeFloor";
 import type { WhaleTrade } from "@/lib/whaleTrades";
 
 const TOP_WHALE_COUNT = 20;
@@ -132,7 +134,7 @@ export default function WhaleTracker({
         <div className="pulse-card rounded-2xl px-4 py-8 text-center">
           <p className="text-sm text-pulse-muted">
             {connected || kalshiOk
-              ? "Watching for qualified whale trades ≥ $500…"
+              ? `Watching for qualified whale trades (+${MIN_FEED_TRADE_EV_PCT}% trade EV · ${formatStakeFloorSummaryLabel()})…`
               : "Connecting to live feed…"}
           </p>
         </div>
