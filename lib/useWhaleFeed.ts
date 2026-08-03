@@ -9,7 +9,10 @@ import {
   evaluateLiveFeedTradeGate,
   passesLiveFeedTradeGate,
 } from "@/lib/feedGate";
-import { meetsFeedTieredStakeThreshold } from "@/lib/feedQualification";
+import {
+  meetsFeedTieredStakeThreshold,
+  resolvePolymarketTradeNotionalUsd,
+} from "@/lib/feedQualification";
 import { resolveFeedFilterCategoryLabel } from "@/lib/feedFilterDiagnostics";
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import { translateWhaleTradeMarket } from "@/lib/marketTranslator";
@@ -162,6 +165,8 @@ export function useWhaleFeed() {
             TradeSummary & {
               whaleIdentity?: ResolvedWhaleIdentity;
               marketTranslation?: WhaleTrade["marketTranslation"];
+              netEvPercent?: number | null;
+              averageEv?: number | null;
             }
           >;
         } = await res.json();
@@ -169,11 +174,13 @@ export function useWhaleFeed() {
           ...tradeToWhale(t, {
             detectedAt: t.timestamp * 1000,
             isLive: false,
-            usdNotional: t.size,
+            usdNotional: resolvePolymarketTradeNotionalUsd(t),
             source: "polymarket",
           }),
           whaleIdentity: t.whaleIdentity,
           marketTranslation: t.marketTranslation,
+          netEvPercent: t.netEvPercent ?? null,
+          averageEv: t.averageEv ?? t.netEvPercent ?? null,
         }));
         setBackfill(whales);
         for (const w of whales) {

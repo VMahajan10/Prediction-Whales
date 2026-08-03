@@ -26,6 +26,7 @@ interface WhaleTrackerProps {
   whales: WhaleTrade[];
   connected: boolean;
   kalshiOk: boolean;
+  backfillLoaded: boolean;
   soundEnabled: boolean;
   onToggleSound: () => void;
 }
@@ -56,6 +57,7 @@ export default function WhaleTracker({
   whales,
   connected,
   kalshiOk,
+  backfillLoaded,
   soundEnabled,
   onToggleSound,
 }: WhaleTrackerProps) {
@@ -133,9 +135,11 @@ export default function WhaleTracker({
       {sortedWhales.length === 0 ? (
         <div className="pulse-card rounded-2xl px-4 py-8 text-center">
           <p className="text-sm text-pulse-muted">
-            {connected || kalshiOk
-              ? `Watching for qualified whale trades (+${MIN_FEED_TRADE_EV_PCT}% trade EV · ${formatStakeFloorSummaryLabel()})…`
-              : "Connecting to live feed…"}
+            {!backfillLoaded
+              ? "Loading recent whale trades…"
+              : connected || kalshiOk
+                ? `Watching for qualified whale trades (+${MIN_FEED_TRADE_EV_PCT}% trade EV · ${formatStakeFloorSummaryLabel()})…`
+                : "Connecting to live feed…"}
           </p>
         </div>
       ) : (

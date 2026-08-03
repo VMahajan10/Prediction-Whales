@@ -52,8 +52,14 @@ function HomeDashboard() {
   const [explorerMode, setExplorerModeState] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [showMore, setShowMore] = useState(false);
-  const { whales, connected, kalshiOk, newWhale, dismissNewWhale } =
-    useWhaleFeed();
+  const {
+    whales,
+    connected,
+    kalshiOk,
+    backfillLoaded,
+    newWhale,
+    dismissNewWhale,
+  } = useWhaleFeed();
   const { bookmarkCount } = useBookmarkedTraders();
 
   useEffect(() => {
@@ -179,6 +185,7 @@ function HomeDashboard() {
               whales={whales}
               connected={connected}
               kalshiOk={kalshiOk}
+              backfillLoaded={backfillLoaded}
               soundEnabled={soundEnabled}
               onToggleSound={toggleSound}
             />

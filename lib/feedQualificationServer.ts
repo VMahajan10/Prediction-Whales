@@ -123,9 +123,16 @@ export function filterTranslatablePolymarketFeedTrades<
   return translatable;
 }
 
+export type QualifiedPolymarketFeedTrade<T extends PolymarketFeedTradeLike> =
+  T & {
+    /** Trade-level EV % at entry (same units as MIN_FEED_TRADE_EV_PCT). */
+    netEvPercent: number;
+    averageEv: number;
+  };
+
 export async function filterQualifiedPolymarketFeedTrades<
   T extends PolymarketFeedTradeLike,
->(trades: T[]): Promise<T[]> {
+>(trades: T[]): Promise<Array<QualifiedPolymarketFeedTrade<T>>> {
   const tradeEvPercents = await resolveFeedTradeEvPercents(
     trades.map((trade) => ({
       id: trade.id,
@@ -134,7 +141,9 @@ export async function filterQualifiedPolymarketFeedTrades<
     }))
   );
 
-  const qualified = trades.filter((trade) => {
+  const qualified: Array<QualifiedPolymarketFeedTrade<T>> = [];
+
+  for (const trade of trades) {
     const notionalUsd = resolvePolymarketTradeNotionalUsd(trade);
     const tradeEvPercent = tradeEvPercents.get(trade.id) ?? null;
     const category = resolveFeedFilterCategoryLabel(trade);
@@ -147,11 +156,25 @@ export async function filterQualifiedPolymarketFeedTrades<
       tradeEvPercent,
     };
 
-    return evaluateLiveFeedTradeGate(feedTrade, {
-      id: trade.id,
-      source: "api",
-    }).passed;
-  });
+    if (
+      !evaluateLiveFeedTradeGate(feedTrade, {
+        id: trade.id,
+        source: "api",
+      }).passed
+    ) {
+      continue;
+    }
+
+    if (tradeEvPercent == null || !Number.isFinite(tradeEvPercent)) {
+      continue;
+    }
+
+    qualified.push({
+      ...trade,
+      netEvPercent: tradeEvPercent,
+      averageEv: tradeEvPercent,
+    });
+  }
 
   recordFeedMetrics({
     tradesDetected: trades.length,
