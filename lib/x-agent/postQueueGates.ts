@@ -9,6 +9,7 @@ import {
   meetsWalletAvgEvThreshold,
 } from "@/lib/feedQualification";
 import {
+  MIN_TRADE_EV_DECIMAL,
   MIN_AVG_EV_THRESHOLD_PCT,
 } from "@/lib/x-agent/gateMetrics";
 import type {
@@ -19,14 +20,16 @@ import type {
 import { translateMarketPositionWithFallback } from "@/lib/marketTranslator";
 import type { WhaleRegistry } from "@/lib/crossmarket/store/schema";
 import {
-  findWhaleByWalletCaseInsensitive,
-  isAnonymousWalletAddress,
-  normalizeWalletAddress,
-} from "@/lib/x-agent/whaleRegistryDb";
-import {
+  coalesceHydratedWhale,
   hydrateWalletStats,
   type WalletCredibilityResolution,
 } from "@/lib/x-agent/walletCredibility";
+import {
+  findWhaleByWalletCaseInsensitive,
+  isAnonymousWalletAddress,
+  normalizeWalletAddress,
+  upsertWhaleRegistry,
+} from "@/lib/x-agent/whaleRegistryDb";
 
 /** Hard kill-switch — public x_post_queue remains Polymarket-only while true (OQ-2). */
 export const KALSHI_PUBLIC_POSTING_DISABLED = true;
@@ -41,6 +44,15 @@ export const BELOW_EV_THRESHOLD = "BELOW_EV_THRESHOLD" as const;
 export const BELOW_RESOLVED_BETS = "BELOW_RESOLVED_BETS" as const;
 
 export const UNTRANSLATABLE_MARKET = "UNTRANSLATABLE_MARKET" as const;
+
+/** Queue variant tag for high-EV trades from wallets pending registry backfill. */
+export const UNVERIFIED_WHALE_QUEUE_TAG = "unverified_whale" as const;
+
+/** Minimum stake to defer credibility until live trade EV is computed. */
+export const UNVERIFIED_WHALE_STAKE_FLOOR_USD = 1000;
+
+/** Minimum live trade EV decimal for unverified-whale credibility bypass (0.03 = +3%). */
+export const UNVERIFIED_WHALE_MIN_TRADE_EV_DECIMAL = MIN_TRADE_EV_DECIMAL;
 
 /** Stake floor to bypass missing registry / resolved-bet history in shadow or unindexed mode. */
 export const SHADOW_UNREGISTERED_STAKE_BYPASS_USD = 500;
@@ -126,14 +138,128 @@ export function formatResolvedBetCountForLog(
   return resolvedBetCount;
 }
 
+export function shouldDeferCredibilityForUnverifiedWhale(input: {
+  whaleNotInRegistry?: boolean;
+  whale?: WhaleRegistry | null;
+  stakeNotional: number;
+}): boolean {
+  const notInRegistry = input.whaleNotInRegistry ?? input.whale == null;
+  return (
+    notInRegistry &&
+    Number.isFinite(input.stakeNotional) &&
+    input.stakeNotional >= UNVERIFIED_WHALE_STAKE_FLOOR_USD
+  );
+}
+
+export function shouldApplyUnverifiedWhaleCredibilityBypass(input: {
+  whaleNotInRegistry?: boolean;
+  whale?: WhaleRegistry | null;
+  stakeNotional?: number;
+  /** Live trade EV as decimal (0.03 = +3%). */
+  calculatedEvDecimal?: number | null;
+}): boolean {
+  const notInRegistry = input.whaleNotInRegistry ?? input.whale == null;
+  if (!notInRegistry) return false;
+
+  const stake = input.stakeNotional;
+  if (!Number.isFinite(stake) || stake! < UNVERIFIED_WHALE_STAKE_FLOOR_USD) {
+    return false;
+  }
+
+  const ev = input.calculatedEvDecimal;
+  return (
+    ev != null &&
+    Number.isFinite(ev) &&
+    ev >= UNVERIFIED_WHALE_MIN_TRADE_EV_DECIMAL
+  );
+}
+
+/** Append the unverified_whale tag to a queue variant id without duplicating it. */
+export function applyUnverifiedWhaleQueueTag(variantId: string): string {
+  if (variantId.includes(UNVERIFIED_WHALE_QUEUE_TAG)) return variantId;
+  return `${variantId}|${UNVERIFIED_WHALE_QUEUE_TAG}`;
+}
+
+/**
+ * Fire-and-forget Polymarket closed-position fetch + whale_registry upsert.
+ * Used when a high-EV trade queues before wallet credibility is established.
+ */
+export function scheduleWhaleRegistryBackfill(walletAddress: string): void {
+  const normalized = normalizeWalletAddress(walletAddress);
+  if (!normalized || isAnonymousWalletAddress(normalized)) return;
+
+  void (async () => {
+    try {
+      const resolution = await hydrateWalletStats(normalized);
+      const whale = coalesceHydratedWhale(normalized, resolution);
+      const stats =
+        resolution.stats ??
+        (whale
+          ? {
+              resolvedBetsCount: whale.resolvedBetsCount,
+              avgEv: whale.avgEv,
+              winRate: whale.winRate,
+              closedCount: whale.resolvedBetsCount,
+            }
+          : null);
+      if (!stats) return;
+
+      await upsertWhaleRegistry({
+        walletAddress: normalized,
+        resolvedBetsCount: stats.resolvedBetsCount,
+        avgEv: stats.avgEv,
+        winRate: stats.winRate,
+      });
+
+      console.log("[x-agent/postQueueGates] whale registry backfill complete", {
+        wallet: normalized,
+        resolvedBetsCount: stats.resolvedBetsCount,
+        avgEv: stats.avgEv,
+      });
+    } catch (error) {
+      console.warn("[x-agent/postQueueGates] whale registry backfill failed", {
+        wallet: normalized,
+        error: error instanceof Error ? error.message : error,
+      });
+    }
+  })();
+}
+
+function passUnverifiedWhaleCredibilityGate(
+  tradeId: string,
+  walletAddress: string
+): PostQueueCredibilityGateResult {
+  scheduleWhaleRegistryBackfill(walletAddress);
+  gateLog(
+    tradeId,
+    `[Pass: Credibility] ${UNVERIFIED_WHALE_QUEUE_TAG} — stake >= ${formatStake(UNVERIFIED_WHALE_STAKE_FLOOR_USD)}, trade EV >= +${(UNVERIFIED_WHALE_MIN_TRADE_EV_DECIMAL * 100).toFixed(1)}%; registry backfill queued`
+  );
+  return { passed: true, unverifiedWhale: true };
+}
+
 /** Strict resolved-bets floor — no shadow or unindexed bypass. */
 export function evaluateResolvedBetsCredibilityFloor(input: {
   tradeId: string;
   walletAddress: string;
   resolvedBetCount?: number | null;
+  stakeNotional?: number;
+  calculatedEvDecimal?: number | null;
+  whaleNotInRegistry?: boolean;
+  whale?: WhaleRegistry | null;
 }): PostQueueCredibilityGateResult {
   if (meetsFeedResolvedBetsThreshold(input.resolvedBetCount)) {
     return { passed: true };
+  }
+
+  if (
+    shouldApplyUnverifiedWhaleCredibilityBypass({
+      whaleNotInRegistry: input.whaleNotInRegistry,
+      whale: input.whale,
+      stakeNotional: input.stakeNotional,
+      calculatedEvDecimal: input.calculatedEvDecimal,
+    })
+  ) {
+    return passUnverifiedWhaleCredibilityGate(input.tradeId, input.walletAddress);
   }
 
   const resolvedCount = formatResolvedBetCountForLog(input.resolvedBetCount);
@@ -172,11 +298,28 @@ export async function hydrateWalletForPostQueueCredibility(
 
   const resolution = await hydrateWalletStats(normalized, existing);
 
-  if (options?.tradeId && resolution.source === "polymarket_api") {
-    gateLog(
-      options.tradeId,
-      `[Hydrate] Wallet stats saved to whale_registry (resolvedBetCount=${resolution.stats?.resolvedBetsCount ?? resolution.whale?.resolvedBetsCount ?? "n/a"}, avgEv=${resolution.stats?.avgEv ?? resolution.whale?.avgEv ?? "n/a"})`
-    );
+  if (options?.tradeId) {
+    const hydratedWhale = coalesceHydratedWhale(normalized, resolution);
+    const resolvedBetCount =
+      resolution.stats?.resolvedBetsCount ??
+      hydratedWhale?.resolvedBetsCount ??
+      "n/a";
+    const avgEv = resolution.stats?.avgEv ?? hydratedWhale?.avgEv ?? "n/a";
+
+    if (resolution.source === "polymarket_api") {
+      gateLog(
+        options.tradeId,
+        `[Hydrate] Wallet stats saved to whale_registry (resolvedBetCount=${resolvedBetCount}, avgEv=${avgEv})`
+      );
+    } else if (
+      resolution.source === "low_credibility_cache" ||
+      (resolution.source === "unavailable" && resolution.stats)
+    ) {
+      gateLog(
+        options.tradeId,
+        `[Hydrate] Wallet profile built in-memory from Polymarket API (resolvedBetCount=${resolvedBetCount}, avgEv=${avgEv})`
+      );
+    }
   }
 
   return resolution;
@@ -194,15 +337,23 @@ export async function resolveCredibilityWhaleWithHydration(input: {
   whale: WhaleRegistry | null;
   resolution?: WalletCredibilityResolution;
   resolvedBetCount: number | null;
+  whaleNotInRegistry: boolean;
 }> {
   if (isAnonymousWalletAddress(input.walletAddress)) {
     return {
       whale: input.whale ?? null,
       resolvedBetCount: 0,
+      whaleNotInRegistry: false,
     };
   }
 
-  let whale = input.whale ?? null;
+  const walletAddress = normalizeWalletAddress(input.walletAddress);
+  const registryRow = walletAddress
+    ? await findWhaleByWalletCaseInsensitive(walletAddress)
+    : null;
+  const whaleNotInRegistry = !registryRow;
+
+  let whale = input.whale ?? registryRow ?? null;
   let resolution: WalletCredibilityResolution | undefined;
 
   if (needsWalletCredibilityHydration(whale, input.walletAddress)) {
@@ -210,13 +361,15 @@ export async function resolveCredibilityWhaleWithHydration(input: {
       tradeId: input.tradeId,
       existingWhale: whale,
     });
-    whale = resolution.whale;
+    whale = coalesceHydratedWhale(input.walletAddress, resolution);
   }
 
   const resolvedBetCount =
-    whale?.resolvedBetsCount ?? resolution?.stats?.resolvedBetsCount ?? null;
+    resolution?.stats?.resolvedBetsCount ??
+    whale?.resolvedBetsCount ??
+    null;
 
-  return { whale, resolution, resolvedBetCount };
+  return { whale, resolution, resolvedBetCount, whaleNotInRegistry };
 }
 
 export type PostQueueSourceRejectionReason =
@@ -242,11 +395,17 @@ export interface PostQueueCredibilityGateInput {
   stakeNotional: number;
   walletAvgEv?: number | null;
   resolvedBetCount?: number | null;
+  /** Live trade EV as decimal (0.03 = +3%). */
+  calculatedEvDecimal?: number | null;
+  whaleNotInRegistry?: boolean;
+  whale?: WhaleRegistry | null;
+  walletAddress?: string;
 }
 
 export interface PostQueueCredibilityGateResult {
   passed: boolean;
   reason?: PostQueueCredibilityRejectionReason;
+  unverifiedWhale?: boolean;
 }
 
 export interface PostQueueMarketTranslationGateInput {
@@ -326,6 +485,21 @@ export function evaluatePostQueueCredibilityGate(
   const avgEv = input.walletAvgEv;
 
   if (!meetsFeedResolvedBetsThreshold(resolvedBetCount)) {
+    if (
+      shouldApplyUnverifiedWhaleCredibilityBypass({
+        whaleNotInRegistry: input.whaleNotInRegistry,
+        whale: input.whale,
+        stakeNotional: stake,
+        calculatedEvDecimal: input.calculatedEvDecimal,
+      }) &&
+      input.walletAddress
+    ) {
+      return passUnverifiedWhaleCredibilityGate(
+        input.tradeId,
+        input.walletAddress
+      );
+    }
+
     const resolvedLabel =
       resolvedBetCount != null && Number.isFinite(resolvedBetCount)
         ? String(resolvedBetCount)
@@ -344,6 +518,21 @@ export function evaluatePostQueueCredibilityGate(
   });
 
   if (!shadowOverride && !meetsWalletAvgEvThreshold(avgEv)) {
+    if (
+      shouldApplyUnverifiedWhaleCredibilityBypass({
+        whaleNotInRegistry: input.whaleNotInRegistry,
+        whale: input.whale,
+        stakeNotional: stake,
+        calculatedEvDecimal: input.calculatedEvDecimal,
+      }) &&
+      input.walletAddress
+    ) {
+      return passUnverifiedWhaleCredibilityGate(
+        input.tradeId,
+        input.walletAddress
+      );
+    }
+
     const avgEvPct =
       avgEv != null && Number.isFinite(avgEv)
         ? (avgEv * 100).toFixed(1)

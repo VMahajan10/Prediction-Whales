@@ -182,13 +182,23 @@ async function resolveTestingFallbackWhale(
   }
 
   return {
-    whale: buildStubWhale(walletAddress, stats),
+    whale: buildInMemoryWhaleProfile(walletAddress, stats),
     source: "polymarket_api",
     stats,
   };
 }
 
-function buildStubWhale(
+export function emptyWalletCredibilityStats(): WalletCredibilityStats {
+  return {
+    resolvedBetsCount: 0,
+    avgEv: 0,
+    winRate: 0,
+    closedCount: 0,
+  };
+}
+
+/** In-memory whale_registry row for gate evaluation when DB has no row yet. */
+export function buildInMemoryWhaleProfile(
   wallet: string,
   stats: WalletCredibilityStats
 ): WhaleRegistry {
@@ -206,6 +216,24 @@ function buildStubWhale(
     createdAt: now,
     updatedAt: now,
   };
+}
+
+/** Prefer persisted registry whale; otherwise build from hydrated API stats. */
+export function coalesceHydratedWhale(
+  walletAddress: string,
+  resolution: WalletCredibilityResolution
+): WhaleRegistry | null {
+  if (resolution.whale) return resolution.whale;
+  if (resolution.stats) {
+    return buildInMemoryWhaleProfile(walletAddress, resolution.stats);
+  }
+  if (resolution.source === "unavailable") {
+    return buildInMemoryWhaleProfile(
+      walletAddress,
+      emptyWalletCredibilityStats()
+    );
+  }
+  return null;
 }
 
 /**
@@ -252,7 +280,7 @@ export async function resolveWhaleForCredibilityGate(
   }
 
   const fromRegistry = await findWhaleByWalletCaseInsensitive(walletAddress);
-  if (fromRegistry) {
+  if (fromRegistry && (fromRegistry.resolvedBetsCount ?? 0) > 0) {
     return { whale: fromRegistry, source: "registry" };
   }
 
@@ -271,7 +299,7 @@ export async function resolveWhaleForCredibilityGate(
       walletAddress
     );
     return {
-      whale: buildStubWhale(walletAddress, cached.stats),
+      whale: buildInMemoryWhaleProfile(walletAddress, cached.stats),
       source: "low_credibility_cache",
       stats: cached.stats,
     };
@@ -294,16 +322,22 @@ export async function resolveWhaleForCredibilityGate(
       "polymarket_fetch_failed"
     );
     if (testingFallback) return testingFallback;
-    return { whale: null, source: "unavailable" };
+    const emptyStats = emptyWalletCredibilityStats();
+    return {
+      whale: buildInMemoryWhaleProfile(walletAddress, emptyStats),
+      source: "unavailable",
+      stats: emptyStats,
+    };
   }
 
   const registryAfterFetch =
     await findWhaleByWalletCaseInsensitive(walletAddress);
-  if (registryAfterFetch) {
+  if (registryAfterFetch && (registryAfterFetch.resolvedBetsCount ?? 0) > 0) {
     return { whale: registryAfterFetch, source: "registry" };
   }
 
   const stats = computeWalletCredibilityStats(closedPositions);
+  const inMemoryWhale = buildInMemoryWhaleProfile(walletAddress, stats);
 
   if (walletMeetsCredibilityCriteria(stats)) {
     const upserted = await upsertWhaleRegistry({
@@ -330,14 +364,28 @@ export async function resolveWhaleForCredibilityGate(
     if (fallback) {
       return { whale: fallback, source: "registry", stats };
     }
-  } else {
-    writeLowCredibilityCache(walletAddress, stats);
-    console.log("[x-agent/walletCredibility] cached low-credibility wallet", {
-      wallet: walletAddress,
-      resolvedBetsCount: stats.resolvedBetsCount,
-      avgEv: stats.avgEv,
-    });
+
+    console.log(
+      "[x-agent/walletCredibility] registry upsert unavailable — using in-memory profile",
+      {
+        wallet: walletAddress,
+        resolvedBetsCount: stats.resolvedBetsCount,
+        avgEv: stats.avgEv,
+      }
+    );
+    return {
+      whale: inMemoryWhale,
+      source: "polymarket_api",
+      stats,
+    };
   }
+
+  writeLowCredibilityCache(walletAddress, stats);
+  console.log("[x-agent/walletCredibility] cached low-credibility wallet", {
+    wallet: walletAddress,
+    resolvedBetsCount: stats.resolvedBetsCount,
+    avgEv: stats.avgEv,
+  });
 
   if (!walletMeetsCredibilityCriteria(stats)) {
     const testingFallback = await resolveTestingFallbackWhale(
@@ -348,10 +396,8 @@ export async function resolveWhaleForCredibilityGate(
   }
 
   return {
-    whale: buildStubWhale(walletAddress, stats),
-    source: walletMeetsCredibilityCriteria(stats)
-      ? "polymarket_api"
-      : "low_credibility_cache",
+    whale: inMemoryWhale,
+    source: "low_credibility_cache",
     stats,
   };
 }

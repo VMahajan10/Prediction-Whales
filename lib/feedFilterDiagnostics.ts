@@ -3,13 +3,16 @@ import {
   meetsFeedTradeEvThreshold,
   type LiveFeedQualificationTrade,
 } from "@/lib/feedQualification";
+import {
+  diagnoseLiveFeedTradeGate,
+  evaluateLiveFeedTradeGate,
+  type FeedGateRejectReason,
+} from "@/lib/feedGate";
 import { inferCategoryBadge } from "@/lib/marketCategory";
 import { normalizeFeedCategory } from "@/lib/x-agent/stakeFloor";
 
 export type FeedFilterRejectReason =
-  | "stake_floor"
-  | "trade_ev"
-  | "missing_trade_ev"
+  | FeedGateRejectReason
   | "wallet_avg_ev"
   | "resolved_bets"
   | "missing_wallet"
@@ -54,46 +57,17 @@ export function logFeedFilterReject(input: FeedFilterRejectInput): void {
 
 export function diagnoseLiveFeedTradeRejection(
   trade: LiveFeedQualificationTrade
-): FeedFilterRejectReason | null {
-  if (
-    !meetsFeedTieredStakeThreshold({
-      stakeUsd: trade.stakeUsd,
-      title: trade.title,
-      slug: trade.slug,
-      eventSlug: trade.eventSlug,
-      category: trade.category,
-    })
-  ) {
-    return "stake_floor";
-  }
-
-  if (trade.tradeEvPercent == null || !Number.isFinite(trade.tradeEvPercent)) {
-    return "missing_trade_ev";
-  }
-
-  if (!meetsFeedTradeEvThreshold(trade.tradeEvPercent)) {
-    return "trade_ev";
-  }
-
-  return null;
+): FeedGateRejectReason | null {
+  return diagnoseLiveFeedTradeGate(trade).reason;
 }
 
 export function logLiveFeedTradeRejection(
   trade: LiveFeedQualificationTrade & { id: string },
   source: FeedFilterRejectInput["source"] = "api"
 ): void {
-  const reason = diagnoseLiveFeedTradeRejection(trade);
-  if (!reason) return;
-
-  logFeedFilterReject({
+  evaluateLiveFeedTradeGate(trade, {
     id: trade.id,
-    stakeUsd: trade.stakeUsd,
-    tradeEvPercent: trade.tradeEvPercent,
-    title: trade.title,
-    slug: trade.slug,
-    eventSlug: trade.eventSlug,
-    category: trade.category ?? resolveFeedFilterCategoryLabel(trade),
-    reason,
     source,
+    logRejection: true,
   });
 }

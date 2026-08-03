@@ -6,14 +6,11 @@ import type { ResolvedWhaleIdentity } from "@/lib/whaleIdentityResolver";
 import type { TradeSummary } from "@/lib/polymarket";
 import { usePolymarketSocketContext } from "@/lib/PolymarketSocketProvider";
 import {
-  isQualifiedLiveFeedTrade,
-  meetsFeedTieredStakeThreshold,
-} from "@/lib/feedQualification";
-import {
-  logFeedFilterReject,
-  logLiveFeedTradeRejection,
-  resolveFeedFilterCategoryLabel,
-} from "@/lib/feedFilterDiagnostics";
+  evaluateLiveFeedTradeGate,
+  passesLiveFeedTradeGate,
+} from "@/lib/feedGate";
+import { meetsFeedTieredStakeThreshold } from "@/lib/feedQualification";
+import { resolveFeedFilterCategoryLabel } from "@/lib/feedFilterDiagnostics";
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import { translateWhaleTradeMarket } from "@/lib/marketTranslator";
 import { pipelineEvKeyForWhale } from "@/lib/pipelineEvClient";
@@ -94,13 +91,14 @@ function isPolymarketTradeQualifiedForFeed(
     tradeEvPercent,
   };
 
-  const qualified = isQualifiedLiveFeedTrade(feedTrade);
+  const qualified = passesLiveFeedTradeGate(feedTrade, {
+    id: trade.id,
+    source: "client",
+    logRejection: !loggedRejects?.has(`${trade.id}:${tradeEvPercent ?? "na"}`),
+  });
   if (!qualified) {
     const logKey = `${trade.id}:${tradeEvPercent ?? "na"}`;
-    if (!loggedRejects?.has(logKey)) {
-      loggedRejects?.add(logKey);
-      logLiveFeedTradeRejection({ ...feedTrade, id: trade.id }, "client");
-    }
+    loggedRejects?.add(logKey);
   }
 
   return qualified;
@@ -273,16 +271,17 @@ export function useWhaleFeed() {
           category: resolveFeedFilterCategoryLabel(whale),
         })
       ) {
-        logFeedFilterReject({
-          id: whale.id,
-          stakeUsd: whale.usdNotional,
-          title: whale.title,
-          slug: whale.slug,
-          eventSlug: whale.eventSlug,
-          category: resolveFeedFilterCategoryLabel(whale),
-          reason: "stake_floor",
-          source: "client",
-        });
+        evaluateLiveFeedTradeGate(
+          {
+            stakeUsd: whale.usdNotional,
+            title: whale.title,
+            slug: whale.slug,
+            eventSlug: whale.eventSlug,
+            category: resolveFeedFilterCategoryLabel(whale),
+            tradeEvPercent: null,
+          },
+          { id: whale.id, source: "client" }
+        );
         metricsReported.current.add(key);
         continue;
       }

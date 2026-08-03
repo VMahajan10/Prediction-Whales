@@ -1,11 +1,6 @@
-import {
-  logFeedFilterReject,
-  resolveFeedFilterCategoryLabel,
-} from "@/lib/feedFilterDiagnostics";
-import {
-  meetsFeedTradeEvThreshold,
-  meetsFeedTieredStakeThreshold,
-} from "@/lib/feedQualification";
+import { evaluateLiveFeedTradeGate } from "@/lib/feedGate";
+import { resolveFeedFilterCategoryLabel } from "@/lib/feedFilterDiagnostics";
+import { meetsFeedTieredStakeThreshold } from "@/lib/feedQualification";
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import {
   fetchPipelineEvBatch,
@@ -14,17 +9,6 @@ import {
 } from "@/lib/pipelineEvClient";
 import type { SocketTrade } from "@/lib/usePolymarketSocket";
 import { tradeToWhale } from "@/lib/whaleTrades";
-
-/** Synchronous tiered stake floor — sports/culture $250, default $500, macro/politics $1k. */
-export function passesFeedSocketStakeGate(trade: SocketTrade): boolean {
-  return meetsFeedTieredStakeThreshold({
-    stakeUsd: trade.usdNotional,
-    title: trade.title,
-    slug: trade.slug,
-    eventSlug: trade.eventSlug,
-    category: resolveFeedFilterCategoryLabel(trade),
-  });
-}
 
 function socketTradeToWhale(trade: SocketTrade) {
   return tradeToWhale(
@@ -79,62 +63,65 @@ async function resolveSocketTradeEvPercent(
   return tradeEvPercent;
 }
 
+function buildSocketFeedTrade(
+  trade: SocketTrade,
+  tradeEvPercent: number | null
+) {
+  return {
+    stakeUsd: trade.usdNotional,
+    title: trade.title,
+    slug: trade.slug,
+    eventSlug: trade.eventSlug,
+    category: resolveFeedFilterCategoryLabel(trade),
+    tradeEvPercent,
+  };
+}
+
+function logMissingAssetReject(trade: SocketTrade): void {
+  console.log(
+    `[Feed Gate Reject] id=${trade.id} | source=socket | calculatedEv=N/A | stake=$${trade.usdNotional.toFixed(2)} | notional=$${trade.usdNotional.toFixed(2)} | reason=missing_asset (no assetId for EV lookup)`
+  );
+}
+
+/** Synchronous tiered stake floor — sports/culture $250, default $500, macro/politics $1k. */
+export function passesFeedSocketStakeGate(trade: SocketTrade): boolean {
+  return meetsFeedTieredStakeThreshold({
+    stakeUsd: trade.usdNotional,
+    title: trade.title,
+    slug: trade.slug,
+    eventSlug: trade.eventSlug,
+    category: resolveFeedFilterCategoryLabel(trade),
+  });
+}
+
 /** Async trade EV gate (+3.0% min on trade-level EV, rejects negative EV). */
 export async function passesFeedSocketTradeEvGate(
   trade: SocketTrade
 ): Promise<boolean> {
   if (!trade.assetId?.trim()) {
-    logFeedFilterReject({
-      id: trade.id,
-      stakeUsd: trade.usdNotional,
-      title: trade.title,
-      slug: trade.slug,
-      eventSlug: trade.eventSlug,
-      category: resolveFeedFilterCategoryLabel(trade),
-      reason: "missing_asset",
-      source: "socket",
-    });
+    logMissingAssetReject(trade);
     return false;
   }
 
   const tradeEvPercent = await resolveSocketTradeEvPercent(trade);
-  const passes = meetsFeedTradeEvThreshold(tradeEvPercent);
-  if (!passes) {
-    logFeedFilterReject({
-      id: trade.id,
-      stakeUsd: trade.usdNotional,
-      tradeEvPercent,
-      title: trade.title,
-      slug: trade.slug,
-      eventSlug: trade.eventSlug,
-      category: resolveFeedFilterCategoryLabel(trade),
-      reason:
-        tradeEvPercent == null || !Number.isFinite(tradeEvPercent)
-          ? "missing_trade_ev"
-          : "trade_ev",
-      source: "socket",
-    });
-  }
-
-  return passes;
+  return evaluateLiveFeedTradeGate(buildSocketFeedTrade(trade, tradeEvPercent), {
+    id: trade.id,
+    source: "socket",
+  }).passed;
 }
 
-/** Full websocket broadcast gate: tiered stake + trade EV >= +3.0%. */
+/** Full websocket broadcast gate: tiered stake/notional + calculatedEv >= +3.0%. */
 export async function shouldBroadcastQualifiedSocketTrade(
   trade: SocketTrade
 ): Promise<boolean> {
-  if (!passesFeedSocketStakeGate(trade)) {
-    logFeedFilterReject({
-      id: trade.id,
-      stakeUsd: trade.usdNotional,
-      title: trade.title,
-      slug: trade.slug,
-      eventSlug: trade.eventSlug,
-      category: resolveFeedFilterCategoryLabel(trade),
-      reason: "stake_floor",
-      source: "socket",
-    });
+  if (!trade.assetId?.trim()) {
+    logMissingAssetReject(trade);
     return false;
   }
-  return passesFeedSocketTradeEvGate(trade);
+
+  const tradeEvPercent = await resolveSocketTradeEvPercent(trade);
+  return evaluateLiveFeedTradeGate(buildSocketFeedTrade(trade, tradeEvPercent), {
+    id: trade.id,
+    source: "socket",
+  }).passed;
 }

@@ -17,11 +17,14 @@ import {
 } from "@/lib/x-agent/gates";
 import { persistKalshiShadowTradeFromWhale } from "@/lib/x-agent/kalshiShadowTrades";
 import {
+  applyUnverifiedWhaleQueueTag,
+  evaluatePostQueueCredibilityGate,
   evaluatePostQueueSourceGate,
   evaluateResolvedBetsCredibilityFloor,
   KALSHI_PUBLIC_POSTING_DISABLED,
   logPostQueueIngestionSuccess,
   resolveCredibilityWhaleWithHydration,
+  shouldDeferCredibilityForUnverifiedWhale,
 } from "@/lib/x-agent/postQueueGates";
 import {
   type GateSummary,
@@ -184,11 +187,14 @@ export async function processWhaleTradeForXAgent(
   }
   const translation = preGate.translation;
 
-  // Step 4: wallet credibility (registry → Polymarket Data API hydration).
+  // Step 4: wallet credibility — always await registry + Polymarket API hydration
+  // for identified wallets so gate metrics use computed stats, not a null whale.
   let whaleForGates: Awaited<
     ReturnType<typeof resolveCredibilityWhaleWithHydration>
   >["whale"] = null;
   let resolvedBetCount: number | null = anonymousTrade ? 0 : null;
+  let whaleNotInRegistry = false;
+  let unverifiedWhale = false;
 
   if (!anonymousTrade) {
     const credibility = await resolveCredibilityWhaleWithHydration({
@@ -198,39 +204,53 @@ export async function processWhaleTradeForXAgent(
     });
     whaleForGates = credibility.whale;
     resolvedBetCount = credibility.resolvedBetCount;
+    whaleNotInRegistry = credibility.whaleNotInRegistry;
   }
 
-  const resolvedBetsFloor = evaluateResolvedBetsCredibilityFloor({
-    tradeId: payload.tradeId,
-    walletAddress,
-    resolvedBetCount,
-  });
-  if (!resolvedBetsFloor.passed) {
-    await handlePreGateRejection(
-      payload,
-      {
-        passed: false,
-        reason: resolvedBetsFloor.reason ?? "BELOW_RESOLVED_BETS",
-        failedStep: "credibility",
-      },
-      metricsOptions,
-      whaleForGates
-    );
-    return;
-  }
+  const deferCredibilityForUnverifiedWhale =
+    shouldDeferCredibilityForUnverifiedWhale({
+      whaleNotInRegistry,
+      whale: whaleForGates,
+      stakeNotional: payload.stakeNotional,
+    });
 
-  const credibilityGate = evaluateWalletCredibilityPreGate(
-    payload,
-    whaleForGates
-  );
-  if (!credibilityGate.passed) {
-    await handlePreGateRejection(
+  if (!deferCredibilityForUnverifiedWhale) {
+    const resolvedBetsFloor = evaluateResolvedBetsCredibilityFloor({
+      tradeId: payload.tradeId,
+      walletAddress,
+      resolvedBetCount,
+      stakeNotional: payload.stakeNotional,
+      whaleNotInRegistry,
+      whale: whaleForGates,
+    });
+    if (!resolvedBetsFloor.passed) {
+      await handlePreGateRejection(
+        payload,
+        {
+          passed: false,
+          reason: resolvedBetsFloor.reason ?? "BELOW_RESOLVED_BETS",
+          failedStep: "credibility",
+        },
+        metricsOptions,
+        whaleForGates
+      );
+      return;
+    }
+
+    const credibilityGate = evaluateWalletCredibilityPreGate(
       payload,
-      credibilityGate,
-      metricsOptions,
-      whaleForGates
+      whaleForGates,
+      { whaleNotInRegistry }
     );
-    return;
+    if (!credibilityGate.passed) {
+      await handlePreGateRejection(
+        payload,
+        credibilityGate,
+        metricsOptions,
+        whaleForGates
+      );
+      return;
+    }
   }
 
   if (!isPrismaEnabled()) {
@@ -292,6 +312,66 @@ export async function processWhaleTradeForXAgent(
       whaleForGates
     );
     return;
+  }
+
+  const tradeEvDecimal =
+    tradeEvPercent != null && Number.isFinite(tradeEvPercent)
+      ? tradeEvPercent / 100
+      : null;
+
+  if (deferCredibilityForUnverifiedWhale) {
+    const resolvedBetsFloor = evaluateResolvedBetsCredibilityFloor({
+      tradeId: payload.tradeId,
+      walletAddress,
+      resolvedBetCount,
+      stakeNotional: payload.stakeNotional,
+      calculatedEvDecimal: tradeEvDecimal,
+      whaleNotInRegistry,
+      whale: whaleForGates,
+    });
+    if (!resolvedBetsFloor.passed) {
+      await handlePreGateRejection(
+        payload,
+        {
+          passed: false,
+          reason: resolvedBetsFloor.reason ?? "BELOW_RESOLVED_BETS",
+          failedStep: "credibility",
+        },
+        metricsOptions,
+        whaleForGates
+      );
+      return;
+    }
+    if (resolvedBetsFloor.unverifiedWhale) {
+      unverifiedWhale = true;
+    }
+
+    const deferredCredibilityGate = evaluatePostQueueCredibilityGate({
+      tradeId: payload.tradeId,
+      walletAddress,
+      stakeNotional: payload.stakeNotional,
+      walletAvgEv: whaleForGates?.avgEv ?? null,
+      resolvedBetCount,
+      calculatedEvDecimal: tradeEvDecimal,
+      whaleNotInRegistry,
+      whale: whaleForGates,
+    });
+    if (!deferredCredibilityGate.passed) {
+      await handlePreGateRejection(
+        payload,
+        {
+          passed: false,
+          reason: deferredCredibilityGate.reason ?? "BELOW_EV_THRESHOLD",
+          failedStep: "credibility",
+        },
+        metricsOptions,
+        whaleForGates
+      );
+      return;
+    }
+    if (deferredCredibilityGate.unverifiedWhale) {
+      unverifiedWhale = true;
+    }
   }
 
   const pricedPayload: TradePayload = {
@@ -376,9 +456,12 @@ export async function processWhaleTradeForXAgent(
   const {
     renderedDraft: copyText,
     templateFamily: family,
-    variantId,
+    variantId: baseVariantId,
     evGloss,
   } = templateSelection;
+  const variantId = unverifiedWhale
+    ? applyUnverifiedWhaleQueueTag(baseVariantId)
+    : baseVariantId;
 
   let queued: Awaited<ReturnType<typeof prisma.xPostQueue.create>>;
   try {

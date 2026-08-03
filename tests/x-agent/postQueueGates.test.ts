@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyUnverifiedWhaleQueueTag,
   BELOW_EV_THRESHOLD,
   BELOW_RESOLVED_BETS,
   evaluatePostQueueCredibilityGate,
@@ -11,7 +12,12 @@ import {
   KALSHI_PUBLIC_POSTING_DISABLED,
   KALSHI_PUBLIC_POSTING_DISABLED_REASON,
   SHADOW_UNREGISTERED_STAKE_BYPASS_USD,
+  shouldApplyUnverifiedWhaleCredibilityBypass,
+  shouldDeferCredibilityForUnverifiedWhale,
   STAKE_TOO_LOW,
+  UNVERIFIED_WHALE_MIN_TRADE_EV_DECIMAL,
+  UNVERIFIED_WHALE_QUEUE_TAG,
+  UNVERIFIED_WHALE_STAKE_FLOOR_USD,
 } from "@/lib/x-agent/postQueueGates";
 import {
   CREDIBILITY_CONFIG,
@@ -310,5 +316,74 @@ describe("postQueueGates", () => {
       sideName: "Obscure prop market without mapping",
       exitByLabel: undefined,
     });
+  });
+
+  it("defers credibility for high-stake wallets missing from registry", () => {
+    expect(
+      shouldDeferCredibilityForUnverifiedWhale({
+        whaleNotInRegistry: true,
+        whale: null,
+        stakeNotional: UNVERIFIED_WHALE_STAKE_FLOOR_USD,
+      })
+    ).toBe(true);
+    expect(
+      shouldDeferCredibilityForUnverifiedWhale({
+        whaleNotInRegistry: true,
+        whale: null,
+        stakeNotional: UNVERIFIED_WHALE_STAKE_FLOOR_USD - 1,
+      })
+    ).toBe(false);
+  });
+
+  it("bypasses credibility for unregistered whales with stake >= $1000 and EV >= 3%", () => {
+    expect(
+      shouldApplyUnverifiedWhaleCredibilityBypass({
+        whale: null,
+        stakeNotional: UNVERIFIED_WHALE_STAKE_FLOOR_USD,
+        calculatedEvDecimal: UNVERIFIED_WHALE_MIN_TRADE_EV_DECIMAL,
+      })
+    ).toBe(true);
+
+    const result = evaluatePostQueueCredibilityGate({
+      tradeId: "trade-unverified-whale",
+      walletAddress: "0xabc123",
+      stakeNotional: UNVERIFIED_WHALE_STAKE_FLOOR_USD,
+      walletAvgEv: null,
+      resolvedBetCount: 0,
+      calculatedEvDecimal: UNVERIFIED_WHALE_MIN_TRADE_EV_DECIMAL,
+      whaleNotInRegistry: true,
+      whale: null,
+    });
+
+    expect(result.passed).toBe(true);
+    expect(result.unverifiedWhale).toBe(true);
+    expect(result.reason).toBeUndefined();
+  });
+
+  it("rejects unregistered whales below the unverified EV floor", () => {
+    const result = withStrictCredibilityGates(() =>
+      evaluatePostQueueCredibilityGate({
+        tradeId: "trade-unverified-ev-low",
+        walletAddress: "0xabc123",
+        stakeNotional: UNVERIFIED_WHALE_STAKE_FLOOR_USD,
+        walletAvgEv: null,
+        resolvedBetCount: 0,
+        calculatedEvDecimal: UNVERIFIED_WHALE_MIN_TRADE_EV_DECIMAL - 0.001,
+        whaleNotInRegistry: true,
+        whale: null,
+      })
+    );
+
+    expect(result.passed).toBe(false);
+    expect(result.reason).toBe(BELOW_RESOLVED_BETS);
+  });
+
+  it("appends the unverified_whale queue tag once", () => {
+    expect(applyUnverifiedWhaleQueueTag("alpha")).toBe(
+      `alpha|${UNVERIFIED_WHALE_QUEUE_TAG}`
+    );
+    expect(
+      applyUnverifiedWhaleQueueTag(`alpha|${UNVERIFIED_WHALE_QUEUE_TAG}`)
+    ).toBe(`alpha|${UNVERIFIED_WHALE_QUEUE_TAG}`);
   });
 });

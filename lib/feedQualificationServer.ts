@@ -1,16 +1,12 @@
 import "server-only";
 
+import { evaluateLiveFeedTradeGate } from "@/lib/feedGate";
+import { resolveFeedFilterCategoryLabel } from "@/lib/feedFilterDiagnostics";
 import {
-  isQualifiedLiveFeedTrade,
   isQualifiedWalletForFeed,
-  meetsFeedTieredStakeThreshold,
+  resolvePolymarketTradeNotionalUsd,
   type WalletFeedQualificationInput,
 } from "@/lib/feedQualification";
-import {
-  logFeedFilterReject,
-  logLiveFeedTradeRejection,
-  resolveFeedFilterCategoryLabel,
-} from "@/lib/feedFilterDiagnostics";
 import { resolveFeedTradeEvPercents } from "@/lib/feedTradeEvServer";
 import { recordFeedMetrics } from "@/lib/feedMetrics";
 import {
@@ -130,49 +126,20 @@ export function filterTranslatablePolymarketFeedTrades<
 export async function filterQualifiedPolymarketFeedTrades<
   T extends PolymarketFeedTradeLike,
 >(trades: T[]): Promise<T[]> {
-  const stakeCandidates = trades.filter((trade) => {
-    const category = resolveFeedFilterCategoryLabel(trade);
-    const passes = meetsFeedTieredStakeThreshold({
-      stakeUsd: trade.size,
-      title: trade.title,
-      slug: trade.slug,
-      eventSlug: trade.eventSlug,
-      category,
-    });
-    if (!passes) {
-      logFeedFilterReject({
-        id: trade.id,
-        stakeUsd: trade.size,
-        title: trade.title,
-        slug: trade.slug,
-        eventSlug: trade.eventSlug,
-        category,
-        reason: "stake_floor",
-        source: "api",
-      });
-    }
-    return passes;
-  });
-
-  const wallets = stakeCandidates
-    .map((trade) => trade.proxyWallet?.trim().toLowerCase())
-    .filter((wallet): wallet is string => Boolean(wallet));
-
-  await qualifyWalletsForFeed(wallets);
-
   const tradeEvPercents = await resolveFeedTradeEvPercents(
-    stakeCandidates.map((trade) => ({
+    trades.map((trade) => ({
       id: trade.id,
       price: trade.price,
       assetId: trade.assetId,
     }))
   );
 
-  const qualified = stakeCandidates.filter((trade) => {
+  const qualified = trades.filter((trade) => {
+    const notionalUsd = resolvePolymarketTradeNotionalUsd(trade);
     const tradeEvPercent = tradeEvPercents.get(trade.id) ?? null;
     const category = resolveFeedFilterCategoryLabel(trade);
     const feedTrade = {
-      stakeUsd: trade.size,
+      stakeUsd: notionalUsd,
       title: trade.title,
       slug: trade.slug,
       eventSlug: trade.eventSlug,
@@ -180,16 +147,14 @@ export async function filterQualifiedPolymarketFeedTrades<
       tradeEvPercent,
     };
 
-    if (!isQualifiedLiveFeedTrade(feedTrade)) {
-      logLiveFeedTradeRejection({ ...feedTrade, id: trade.id }, "api");
-      return false;
-    }
-
-    return true;
+    return evaluateLiveFeedTradeGate(feedTrade, {
+      id: trade.id,
+      source: "api",
+    }).passed;
   });
 
   recordFeedMetrics({
-    tradesDetected: stakeCandidates.length,
+    tradesDetected: trades.length,
     gatePassedTrades: qualified.length,
     whaleWallets: qualified
       .map((trade) => trade.proxyWallet)

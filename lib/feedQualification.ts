@@ -107,6 +107,34 @@ export type LiveFeedQualificationTrade = Pick<
   | "tradeEvPercent"
 >;
 
+/** USD notional for Polymarket REST trades (shares × price). */
+export function resolvePolymarketTradeNotionalUsd(trade: {
+  price: number;
+  size: number;
+}): number {
+  const { price, size } = trade;
+  if (!Number.isFinite(size) || size <= 0) return 0;
+  if (Number.isFinite(price) && price > 0 && price <= 1) {
+    const notional = price * size;
+    if (Number.isFinite(notional) && notional > 0) return notional;
+  }
+  return size;
+}
+
+export function resolveLiveFeedStakeFloorUsd(
+  trade: Pick<
+    LiveFeedQualificationTrade,
+    "title" | "slug" | "eventSlug" | "category"
+  >
+): number {
+  return resolveStakeFloorUsd(
+    trade.title ?? "",
+    trade.slug,
+    trade.eventSlug,
+    trade.category
+  ).floorUsd;
+}
+
 /**
  * Web live feed gate — trade EV >= +3.0% and tiered stake floor only.
  * Does NOT apply X-agent wallet credibility (resolved bets / bettor avg EV).

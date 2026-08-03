@@ -10,9 +10,15 @@ import {
   meetsWalletAvgEvThreshold,
   MIN_AVG_EV_THRESHOLD,
   MIN_FEED_RESOLVED_BETS,
+  MIN_FEED_TRADE_EV_DECIMAL,
   MIN_FEED_TRADE_EV_PCT,
   MIN_STAKE_THRESHOLD,
+  resolvePolymarketTradeNotionalUsd,
 } from "@/lib/feedQualification";
+import {
+  evaluateLiveFeedTradeGate,
+  passesLiveFeedTradeGate,
+} from "@/lib/feedGate";
 import {
   logFeedMetricsSummary,
   recordFeedMetrics,
@@ -193,6 +199,67 @@ describe("feedQualification", () => {
         tradeEvPercent: MIN_FEED_TRADE_EV_PCT,
       })
     ).toBe(true);
+  });
+});
+
+describe("feedGate", () => {
+  it("rejects trades below calculatedEv floor with explicit debug fields", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const result = evaluateLiveFeedTradeGate(
+      {
+        stakeUsd: 600,
+        title: "Will Bitcoin reach $100k?",
+        tradeEvPercent: 2.5,
+      },
+      { id: "trade-1", source: "api" }
+    );
+
+    expect(result.passed).toBe(false);
+    expect(result.reason).toBe("trade_ev");
+    expect(result.calculatedEvPercent).toBe(2.5);
+    expect(result.requiredEvPercent).toBe(MIN_FEED_TRADE_EV_PCT);
+    expect(result.requiredEvDecimal).toBe(MIN_FEED_TRADE_EV_DECIMAL);
+
+    const line = String(logSpy.mock.calls.at(-1)?.[0]);
+    expect(line).toContain("[Feed Gate Reject]");
+    expect(line).toContain("calculatedEv=2.5%");
+    expect(line).toContain("stake=$600.00");
+    expect(line).toContain(`requiredEv>=${MIN_FEED_TRADE_EV_PCT}%`);
+    expect(line).toContain("reason=trade_ev");
+  });
+
+  it("rejects trades below stake/notional floor", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const result = evaluateLiveFeedTradeGate(
+      {
+        stakeUsd: 300,
+        title: "Will Bitcoin reach $100k?",
+        tradeEvPercent: 5,
+      },
+      { id: "trade-2", source: "socket" }
+    );
+
+    expect(result.passed).toBe(false);
+    expect(result.reason).toBe("stake_floor");
+    expect(result.requiredStakeFloorUsd).toBe(500);
+
+    const line = String(logSpy.mock.calls.at(-1)?.[0]);
+    expect(line).toContain("reason=stake_floor");
+    expect(line).toContain("requiredStake>=$500.00");
+    logSpy.mockRestore();
+  });
+
+  it("computes Polymarket REST notional as price × size", () => {
+    expect(
+      resolvePolymarketTradeNotionalUsd({ price: 0.5, size: 1000 })
+    ).toBe(500);
+    expect(passesLiveFeedTradeGate({
+      stakeUsd: 500,
+      title: "Will Bitcoin reach $100k?",
+      tradeEvPercent: MIN_FEED_TRADE_EV_PCT,
+    }, { logRejection: false })).toBe(true);
   });
 });
 

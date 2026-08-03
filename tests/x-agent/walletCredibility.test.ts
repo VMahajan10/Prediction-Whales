@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildInMemoryWhaleProfile,
   clearLowCredibilityCacheForTests,
   closedPositionsToResolvedBets,
+  coalesceHydratedWhale,
   computeWalletCredibilityStats,
   resolveWhaleForCredibilityGate,
   walletMeetsCredibilityCriteria,
@@ -62,5 +64,42 @@ describe("walletCredibility", () => {
   it("caches low-credibility wallets in memory", () => {
     clearLowCredibilityCacheForTests();
     expect(clearLowCredibilityCacheForTests).toBeDefined();
+  });
+
+  it("builds an in-memory whale profile from hydrated API stats", () => {
+    const wallet = "0xabc123def4567890abcdef1234567890abcdef12";
+    const stats = {
+      resolvedBetsCount: 42,
+      avgEv: 0.02,
+      winRate: 0.55,
+      closedCount: 42,
+    };
+
+    const whale = buildInMemoryWhaleProfile(wallet, stats);
+
+    expect(whale.walletAddress).toBe(wallet);
+    expect(whale.resolvedBetsCount).toBe(42);
+    expect(whale.avgEv).toBe(0.02);
+    expect(whale.winRate).toBe(0.55);
+  });
+
+  it("coalesces hydrated stats into a whale when registry row is missing", () => {
+    const wallet = "0xabc123def4567890abcdef1234567890abcdef12";
+    const stats = {
+      resolvedBetsCount: 12,
+      avgEv: 0.005,
+      winRate: 0.4,
+      closedCount: 12,
+    };
+
+    const whale = coalesceHydratedWhale(wallet, {
+      whale: null,
+      source: "low_credibility_cache",
+      stats,
+    });
+
+    expect(whale).not.toBeNull();
+    expect(whale?.resolvedBetsCount).toBe(12);
+    expect(whale?.avgEv).toBe(0.005);
   });
 });

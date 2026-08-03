@@ -1,8 +1,5 @@
 import { fetchTokenRegistry, type TokenMarketMeta } from "@/lib/polymarket";
-import {
-  passesFeedSocketStakeGate,
-  shouldBroadcastQualifiedSocketTrade,
-} from "@/lib/feedSocketGate";
+import { shouldBroadcastQualifiedSocketTrade } from "@/lib/feedSocketGate";
 
 export interface SocketTrade {
   id: string;
@@ -203,8 +200,6 @@ export class PolymarketLiveSocket {
       slug: meta?.slug,
       conditionId: meta?.conditionId ?? raw.market,
     };
-
-    if (!passesFeedSocketStakeGate(trade)) return;
 
     const qualified = await shouldBroadcastQualifiedSocketTrade(trade);
     if (!qualified) return;

@@ -491,7 +491,11 @@ export function evaluateDeterministicPreGates(
 /** Step 4 — wallet credibility from registry / Polymarket history (no OpenAI). */
 export function evaluateWalletCredibilityPreGate(
   trade: TradePayload,
-  whale: WhaleRegistry | null | undefined
+  whale: WhaleRegistry | null | undefined,
+  options?: {
+    whaleNotInRegistry?: boolean;
+    calculatedEvDecimal?: number | null;
+  }
 ): PreGateShortCircuitResult {
   const resolvedBetCount = whale?.resolvedBetsCount ?? null;
   const walletAvgEv = whale?.avgEv ?? null;
@@ -500,6 +504,10 @@ export function evaluateWalletCredibilityPreGate(
     tradeId: trade.tradeId,
     walletAddress: trade.walletAddress,
     resolvedBetCount,
+    stakeNotional: trade.stakeNotional,
+    calculatedEvDecimal: options?.calculatedEvDecimal,
+    whaleNotInRegistry: options?.whaleNotInRegistry,
+    whale,
   });
   if (!resolvedBetsFloor.passed) {
     return {
@@ -511,9 +519,13 @@ export function evaluateWalletCredibilityPreGate(
 
   const credibilityGate = evaluatePostQueueCredibilityGate({
     tradeId: trade.tradeId,
+    walletAddress: trade.walletAddress,
     stakeNotional: trade.stakeNotional,
     walletAvgEv,
     resolvedBetCount,
+    calculatedEvDecimal: options?.calculatedEvDecimal,
+    whaleNotInRegistry: options?.whaleNotInRegistry,
+    whale,
   });
   if (!credibilityGate.passed) {
     return {
