@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import {
+  collectPolymarketFeedCandidates,
   enrichPolymarketFeedTradesWithIdentity,
-  filterQualifiedPolymarketFeedTrades,
   filterTranslatablePolymarketFeedTrades,
 } from "@/lib/feedQualificationServer";
 import { fetchWhaleBackfill } from "@/lib/polymarket";
@@ -13,8 +13,8 @@ export const revalidate = 0;
 export async function GET() {
   try {
     const trades = await fetchWhaleBackfill();
-    const qualified = await filterQualifiedPolymarketFeedTrades(trades);
-    const translatable = filterTranslatablePolymarketFeedTrades(qualified);
+    const candidates = await collectPolymarketFeedCandidates(trades);
+    const translatable = filterTranslatablePolymarketFeedTrades(candidates);
     const enriched = await enrichPolymarketFeedTradesWithIdentity(translatable);
     return NextResponse.json({ trades: enriched });
   } catch (error) {

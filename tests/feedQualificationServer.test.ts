@@ -3,10 +3,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/feedTradeEvServer", () => ({
   resolveFeedTradeEvPercents: vi.fn(),
+  resolveCachedFeedTradeEvPercents: vi.fn(),
 }));
 
-import { filterQualifiedPolymarketFeedTrades } from "@/lib/feedQualificationServer";
-import { resolveFeedTradeEvPercents } from "@/lib/feedTradeEvServer";
+import {
+  collectPolymarketFeedCandidates,
+  filterQualifiedPolymarketFeedTrades,
+} from "@/lib/feedQualificationServer";
+import {
+  resolveCachedFeedTradeEvPercents,
+  resolveFeedTradeEvPercents,
+} from "@/lib/feedTradeEvServer";
 
 const baseTrade = {
   id: "t1",
@@ -54,5 +61,57 @@ describe("filterQualifiedPolymarketFeedTrades", () => {
     const trades = await filterQualifiedPolymarketFeedTrades([baseTrade]);
 
     expect(trades).toHaveLength(0);
+  });
+});
+
+describe("collectPolymarketFeedCandidates", () => {
+  beforeEach(() => {
+    vi.mocked(resolveCachedFeedTradeEvPercents).mockReset();
+  });
+
+  it("keeps stake-qualified trades with uncached EV so the client can hydrate them", async () => {
+    vi.mocked(resolveCachedFeedTradeEvPercents).mockResolvedValue(
+      new Map([[baseTrade.id, null]])
+    );
+
+    const candidates = await collectPolymarketFeedCandidates([baseTrade]);
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]!.netEvPercent).toBeNull();
+    expect(candidates[0]!.averageEv).toBeNull();
+  });
+
+  it("attaches cached EV when the pipeline has already scored the asset", async () => {
+    vi.mocked(resolveCachedFeedTradeEvPercents).mockResolvedValue(
+      new Map([[baseTrade.id, 4.2]])
+    );
+
+    const candidates = await collectPolymarketFeedCandidates([baseTrade]);
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]!.netEvPercent).toBe(4.2);
+    expect(candidates[0]!.averageEv).toBe(4.2);
+  });
+
+  it("drops trades already known to be below the +3% threshold", async () => {
+    vi.mocked(resolveCachedFeedTradeEvPercents).mockResolvedValue(
+      new Map([[baseTrade.id, 1.5]])
+    );
+
+    const candidates = await collectPolymarketFeedCandidates([baseTrade]);
+
+    expect(candidates).toHaveLength(0);
+  });
+
+  it("drops trades below the tiered stake floor", async () => {
+    vi.mocked(resolveCachedFeedTradeEvPercents).mockResolvedValue(
+      new Map([[baseTrade.id, 9]])
+    );
+
+    const candidates = await collectPolymarketFeedCandidates([
+      { ...baseTrade, size: 20 },
+    ]);
+
+    expect(candidates).toHaveLength(0);
   });
 });

@@ -37,6 +37,36 @@ import {
 const FEED_V1_EXCLUDE_KALSHI = true;
 const KALSHI_WHALE_FEED_TRADES: WhaleTrade[] = FEED_V1_EXCLUDE_KALSHI ? [] : [];
 
+const BACKFILL_TIMEOUT_MS = 15_000;
+const BACKFILL_ATTEMPTS = 3;
+const BACKFILL_RETRY_DELAY_MS = 1_500;
+
+type BackfillApiTrade = TradeSummary & {
+  whaleIdentity?: ResolvedWhaleIdentity;
+  marketTranslation?: WhaleTrade["marketTranslation"];
+  netEvPercent?: number | null;
+  averageEv?: number | null;
+};
+
+async function fetchBackfillTrades(
+  signal: AbortSignal
+): Promise<BackfillApiTrade[]> {
+  const timeout = new AbortController();
+  const onAbort = () => timeout.abort();
+  signal.addEventListener("abort", onAbort);
+  const timer = setTimeout(() => timeout.abort(), BACKFILL_TIMEOUT_MS);
+
+  try {
+    const res = await fetch("/api/feed", { signal: timeout.signal });
+    if (!res.ok) throw new Error(`Feed backfill HTTP ${res.status}`);
+    const data: { trades?: BackfillApiTrade[] } = await res.json();
+    return data.trades ?? [];
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", onAbort);
+  }
+}
+
 function byDetectedDesc(a: WhaleTrade, b: WhaleTrade): number {
   return b.detectedAt - a.detectedAt;
 }
@@ -157,58 +187,65 @@ export function useWhaleFeed() {
   const [newWhale, setNewWhale] = useState<WhaleTrade | null>(null);
 
   useEffect(() => {
-    const load = async () => {
-      try {
-        const res = await fetch("/api/feed");
-        const data: {
-          trades?: Array<
-            TradeSummary & {
-              whaleIdentity?: ResolvedWhaleIdentity;
-              marketTranslation?: WhaleTrade["marketTranslation"];
-              netEvPercent?: number | null;
-              averageEv?: number | null;
-            }
-          >;
-        } = await res.json();
-        const whales = (data.trades ?? []).map((t) => ({
-          ...tradeToWhale(t, {
-            detectedAt: t.timestamp * 1000,
-            isLive: false,
-            usdNotional: resolvePolymarketTradeNotionalUsd(t),
-            source: "polymarket",
-          }),
-          whaleIdentity: t.whaleIdentity,
-          marketTranslation: t.marketTranslation,
-          netEvPercent: t.netEvPercent ?? null,
-          averageEv: t.averageEv ?? t.netEvPercent ?? null,
-        }));
-        setBackfill(whales);
-        for (const w of whales) {
-          if (w.transactionHash) seenHashes.current.add(w.transactionHash);
-          if (w.transactionHash && w.proxyWallet) {
-            cacheWhaleTrade({
-              id: w.id,
-              title: w.title,
-              side: w.side,
-              outcome: w.outcome,
-              price: w.price,
-              size: w.size,
-              timestamp: w.timestamp,
-              transactionHash: w.transactionHash,
-              proxyWallet: w.proxyWallet,
-              eventSlug: w.eventSlug,
-              slug: w.slug,
-              conditionId: w.conditionId,
-            });
-          }
+    const abort = new AbortController();
+
+    const applyTrades = (trades: BackfillApiTrade[]) => {
+      const whales = trades.map((t) => ({
+        ...tradeToWhale(t, {
+          detectedAt: t.timestamp * 1000,
+          isLive: false,
+          usdNotional: resolvePolymarketTradeNotionalUsd(t),
+          source: "polymarket",
+        }),
+        whaleIdentity: t.whaleIdentity,
+        marketTranslation: t.marketTranslation,
+        netEvPercent: t.netEvPercent ?? null,
+        averageEv: t.averageEv ?? t.netEvPercent ?? null,
+      }));
+      setBackfill(whales);
+      for (const w of whales) {
+        if (w.transactionHash) seenHashes.current.add(w.transactionHash);
+        if (w.transactionHash && w.proxyWallet) {
+          cacheWhaleTrade({
+            id: w.id,
+            title: w.title,
+            side: w.side,
+            outcome: w.outcome,
+            price: w.price,
+            size: w.size,
+            timestamp: w.timestamp,
+            transactionHash: w.transactionHash,
+            proxyWallet: w.proxyWallet,
+            eventSlug: w.eventSlug,
+            slug: w.slug,
+            conditionId: w.conditionId,
+          });
         }
-      } catch {
-        // Backfill is optional
-      } finally {
-        setBackfillLoaded(true);
       }
     };
+
+    const load = async () => {
+      for (let attempt = 1; attempt <= BACKFILL_ATTEMPTS; attempt += 1) {
+        if (abort.signal.aborted) return;
+        try {
+          const trades = await fetchBackfillTrades(abort.signal);
+          if (abort.signal.aborted) return;
+          applyTrades(trades);
+          break;
+        } catch {
+          if (abort.signal.aborted) return;
+          if (attempt === BACKFILL_ATTEMPTS) break;
+          await new Promise((resolve) =>
+            setTimeout(resolve, BACKFILL_RETRY_DELAY_MS * attempt)
+          );
+        }
+      }
+
+      if (!abort.signal.aborted) setBackfillLoaded(true);
+    };
+
     void load();
+    return () => abort.abort();
   }, []);
 
   const liveWhales = useMemo(() => {

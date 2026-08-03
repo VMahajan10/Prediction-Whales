@@ -163,20 +163,19 @@ function dedupeRequestItems(
   return Array.from(unique.values());
 }
 
-/** Shared POST /api/ev/trades batch fetch — returns map keyed by API `key` field. */
-export async function fetchPipelineEvBatch(
+/** Assets resolved per request — small chunks let the feed render progressively. */
+const EV_BATCH_CHUNK_SIZE = 8;
+
+async function fetchPipelineEvChunk(
   items: PipelineEvRequestItem[]
 ): Promise<Map<string, PipelineTradeEv>> {
-  const deduped = dedupeRequestItems(items);
-  if (deduped.length === 0) return new Map();
-
   const fullUrl = resolveAppApiUrl("/api/ev/trades");
 
   try {
     const res = await fetch(fullUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items: deduped }),
+      body: JSON.stringify({ items }),
     });
 
     if (!res.ok) return new Map();
@@ -208,6 +207,35 @@ export async function fetchPipelineEvBatch(
   }
 }
 
+export interface FetchPipelineEvBatchOptions {
+  /** Called after each chunk resolves with everything accumulated so far. */
+  onPartial?: (index: Map<string, PipelineTradeEv>) => void;
+}
+
+/** Shared POST /api/ev/trades batch fetch — returns map keyed by API `key` field. */
+export async function fetchPipelineEvBatch(
+  items: PipelineEvRequestItem[],
+  options?: FetchPipelineEvBatchOptions
+): Promise<Map<string, PipelineTradeEv>> {
+  const deduped = dedupeRequestItems(items);
+  if (deduped.length === 0) return new Map();
+
+  const accumulated = new Map<string, PipelineTradeEv>();
+
+  for (let i = 0; i < deduped.length; i += EV_BATCH_CHUNK_SIZE) {
+    const chunk = deduped.slice(i, i + EV_BATCH_CHUNK_SIZE);
+    const resolved = await fetchPipelineEvChunk(chunk);
+    if (resolved.size === 0) continue;
+
+    Array.from(resolved.entries()).forEach(([key, value]) => {
+      accumulated.set(key, value);
+    });
+    options?.onPartial?.(new Map(accumulated));
+  }
+
+  return accumulated;
+}
+
 async function fetchPipelineEv(
   itemsKey: string,
   items: PipelineEvRequestItem[]
@@ -223,12 +251,21 @@ async function fetchPipelineEv(
         return;
       }
 
-      const fetched = await fetchPipelineEvBatch(deduped);
-      const merged = new Map(index);
-      Array.from(fetched.entries()).forEach(([key, value]) => {
-        merged.set(key, value);
+      const mergeIntoIndex = (fetched: Map<string, PipelineTradeEv>) => {
+        const merged = new Map(index);
+        Array.from(fetched.entries()).forEach(([key, value]) => {
+          merged.set(key, value);
+        });
+        index = merged;
+      };
+
+      const fetched = await fetchPipelineEvBatch(deduped, {
+        onPartial: (partial) => {
+          mergeIntoIndex(partial);
+          notify();
+        },
       });
-      index = merged;
+      mergeIntoIndex(fetched);
       lastItemsKey = itemsKey;
     } catch {
       // Optional enrichment — card falls back to em dash

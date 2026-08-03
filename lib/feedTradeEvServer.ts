@@ -14,13 +14,14 @@ export interface FeedTradeEvLookupInput {
   assetId?: string | null;
 }
 
-/** Batch-resolve trade-level EV % for Polymarket feed qualification. */
-export async function resolveFeedTradeEvPercents(
-  trades: FeedTradeEvLookupInput[]
+async function resolveFeedTradeEvPercentsWith(
+  trades: FeedTradeEvLookupInput[],
+  concurrency: number,
+  options?: { cacheOnly?: boolean }
 ): Promise<Map<string, number | null>> {
   const results = new Map<string, number | null>();
 
-  await mapWithConcurrency(trades, 6, async (trade) => {
+  await mapWithConcurrency(trades, concurrency, async (trade) => {
     const assetId = trade.assetId?.trim();
     if (!assetId) {
       results.set(trade.id, null);
@@ -29,11 +30,16 @@ export async function resolveFeedTradeEvPercents(
 
     const lookupKey = normalizePipelineLookupKey(`pm:${assetId}`, "polymarket");
     try {
-      const pipeline = await ensureFullyComputedTradeEv(lookupKey, {
-        source: "polymarket",
-        tokenId: assetId,
-        tradePrice: trade.price,
-      });
+      const pipeline = await ensureFullyComputedTradeEv(
+        lookupKey,
+        {
+          source: "polymarket",
+          tokenId: assetId,
+          tradePrice: trade.price,
+        },
+        null,
+        options
+      );
       results.set(
         trade.id,
         resolveFeedTradeEvPercent({ price: trade.price }, pipeline)
@@ -44,4 +50,21 @@ export async function resolveFeedTradeEvPercents(
   });
 
   return results;
+}
+
+/** Batch-resolve trade-level EV % for Polymarket feed qualification. */
+export async function resolveFeedTradeEvPercents(
+  trades: FeedTradeEvLookupInput[]
+): Promise<Map<string, number | null>> {
+  return resolveFeedTradeEvPercentsWith(trades, 6);
+}
+
+/**
+ * Cached-only trade EV % for the page-load feed. Returns null for assets whose
+ * EV has not been computed yet — the client hydrates those via /api/ev/trades.
+ */
+export async function resolveCachedFeedTradeEvPercents(
+  trades: FeedTradeEvLookupInput[]
+): Promise<Map<string, number | null>> {
+  return resolveFeedTradeEvPercentsWith(trades, 12, { cacheOnly: true });
 }

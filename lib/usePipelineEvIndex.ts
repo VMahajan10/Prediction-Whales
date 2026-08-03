@@ -128,18 +128,23 @@ export function usePipelineEvForWhales(whales: WhaleTrade[]) {
     let cancelled = false;
     setLoading(true);
 
+    const mergeFetched = (fetched: Map<string, PipelineTradeEv>) => {
+      if (cancelled) return;
+      setIndex((prev) => {
+        const merged = new Map(prev);
+        Array.from(fetched.entries()).forEach(([key, value]) => {
+          merged.set(key, value);
+        });
+        return merged;
+      });
+    };
+
     const load = async () => {
       try {
-        const fetched = await fetchPipelineEvBatch(items);
-        if (!cancelled) {
-          setIndex((prev) => {
-            const merged = new Map(prev);
-            Array.from(fetched.entries()).forEach(([key, value]) => {
-              merged.set(key, value);
-            });
-            return merged;
-          });
-        }
+        const fetched = await fetchPipelineEvBatch(items, {
+          onPartial: mergeFetched,
+        });
+        mergeFetched(fetched);
       } catch {
         // Keep prior index entries on refresh failure.
       } finally {

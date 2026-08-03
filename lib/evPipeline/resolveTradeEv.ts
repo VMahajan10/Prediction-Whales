@@ -21,6 +21,7 @@ import {
 import {
   pickAuthoritativeEnsemblePTrue,
   resolveEnsemblePTrue,
+  resolveEnsemblePTrueLookup,
 } from "@/lib/evPipeline/ensemblePTrue";
 import {
   fetchKalshiMarketOrderBookMid,
@@ -543,17 +544,68 @@ function finalizeApiTradeEv(
 }
 
 /**
+ * Trade EV from the persisted `true_probabilities` ensemble row — no LLM, one
+ * indexed read. Survives the 90s Redis p_true TTL, so cache-only callers can
+ * still price assets the pipeline has already scored.
+ */
+async function buildPersistedEnsembleTradeEv(
+  lookupKey: string,
+  item: PipelineTradeEvInput
+): Promise<PipelineTradeEv | null> {
+  const tokenId = normalizePmTokenId(item.tokenId);
+  if (!tokenId) return null;
+
+  const executionPrice = normalizeIncomingTradePrice(item.tradePrice);
+  if (executionPrice == null) return null;
+
+  const lookup = await resolveEnsemblePTrueLookup(tokenId);
+  if (!lookup) return null;
+
+  return {
+    key: lookupKey,
+    status: "ok",
+    tokenId,
+    kalshiTicker: normalizeKalshiTicker(item.kalshiTicker),
+    mappingPairKey: null,
+    netEvPercent: null,
+    netEv: 0,
+    grossEv: 0,
+    grossEvPercent: null,
+    averageEv: null,
+    pTrue: lookup.pTrue,
+    pMarket: executionPrice,
+    pmMid: null,
+    kalshiMid: null,
+    pTrueSource: "cached_ensemble",
+    pTrueConfidence: lookup.sourceScore,
+    pTrueLowConfidence: false,
+  };
+}
+
+export interface EnsureTradeEvOptions {
+  /**
+   * Read cached EV only. Skips mapping lookups, sync pricing and p_true
+   * computation so request paths that cannot afford LLM latency stay fast.
+   */
+  cacheOnly?: boolean;
+}
+
+/**
  * Resolve trade EV for API responses — always returns numeric EV for mapped markets.
  * Reads precomputed pipeline cache first; sync-computes before responding on cache miss.
  */
 export async function ensureFullyComputedTradeEv(
   lookupKey: string,
   item: PipelineTradeEvInput,
-  mapping?: CachedMapping | null
+  mapping?: CachedMapping | null,
+  options?: EnsureTradeEvOptions
 ): Promise<PipelineTradeEv> {
+  const cacheOnly = options?.cacheOnly === true;
   const resolvedMapping =
     mapping ??
-    (await loadMappingForTradeEv(item.tokenId, item.kalshiTicker));
+    (cacheOnly
+      ? null
+      : await loadMappingForTradeEv(item.tokenId, item.kalshiTicker));
 
   const executionPrice = resolvedExecutionPrice(item.tradePrice);
   const finalizeContext: IsFullyComputedTradeEvContext = { executionPrice };
@@ -582,6 +634,7 @@ export async function ensureFullyComputedTradeEv(
 
   const storeHit = tryAcceptCacheHit(await getTradeEvLookup(lookupKey));
   if (storeHit) {
+    if (cacheOnly) return storeHit;
     await cacheTradeEvLookup(lookupKey, storeHit);
     return storeHit;
   }
@@ -594,6 +647,17 @@ export async function ensureFullyComputedTradeEv(
       await cacheTradeEvLookup(lookupKey, fromMapping);
       return fromMapping;
     }
+  }
+
+  if (cacheOnly) {
+    const persisted = tryFinalize(
+      await buildPersistedEnsembleTradeEv(lookupKey, item)
+    );
+    if (persisted) {
+      await cacheTradeEvLookup(lookupKey, persisted);
+      return persisted;
+    }
+    return createUnmappedPipelineTradeEv(lookupKey, item);
   }
 
   const syncPriced = tryFinalize(
