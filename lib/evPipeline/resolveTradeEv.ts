@@ -18,7 +18,14 @@ import {
   canResolvePTrueAsset,
   resolvePTrue,
 } from "@/lib/evPipeline/pTrueEnsembleResolver";
-import { resolveEnsemblePTrue } from "@/lib/evPipeline/ensemblePTrue";
+import {
+  pickAuthoritativeEnsemblePTrue,
+  resolveEnsemblePTrue,
+} from "@/lib/evPipeline/ensemblePTrue";
+import {
+  fetchKalshiMarketOrderBookMid,
+  fetchPolymarketClobOrderBookMid,
+} from "@/lib/evPipeline/orderBookIngest";
 import { lookupExchangeConsensusBaseline } from "@/lib/evPipeline/exchangeConsensusArb";
 import {
   cacheTradeEvLookup,
@@ -121,10 +128,7 @@ export async function createLowConfidencePipelineTradeEv(
     kalshiMid: books.kalshiMid,
     exchangeMid,
     executionPrice: item.tradePrice,
-    ensemblePTrue:
-      mapping?.pTrue != null && Number.isFinite(mapping.pTrue)
-        ? mapping.pTrue
-        : null,
+    ensemblePTrue: authoritativeMappingEnsemblePTrue(mapping),
     fetchEnsemble: true,
     fetchExchangeConsensus: platform === "polymarket" && exchangeMid == null,
     computeEnsembleIfMissing: true,
@@ -257,7 +261,9 @@ export function buildTradeEvFromCachedMapping(
   const netEvPercent =
     mapping.netEvPercent ?? mapping.grossEvPercent ?? mapping.averageEv;
   if (netEvPercent == null || !Number.isFinite(netEvPercent)) return null;
-  if (mapping.pTrue == null || !Number.isFinite(mapping.pTrue)) return null;
+
+  const pTrue = pickAuthoritativeEnsemblePTrue(mapping.pTrue);
+  if (pTrue == null) return null;
 
   const tokenId = normalizePmTokenId(item.tokenId ?? mapping.polymarketTokenId);
   const kalshiTicker = normalizeKalshiTicker(
@@ -360,15 +366,21 @@ export async function loadMappingForTradeEv(
   return null;
 }
 
+function authoritativeMappingEnsemblePTrue(
+  mapping?: CachedMapping | null
+): number | null {
+  if (mapping?.pTrue == null || !Number.isFinite(mapping.pTrue)) return null;
+  return pickAuthoritativeEnsemblePTrue(mapping.pTrue);
+}
+
 async function loadEnsemblePricingContext(
   tokenId: string | null,
   books: OrderBookContext,
   mapping?: CachedMapping | null
 ): Promise<{ ensemblePTrue: number | null; marketPrior: number }> {
+  const mappingEnsemble = authoritativeMappingEnsemblePTrue(mapping);
   const ensemblePTrue =
-    mapping?.pTrue != null && Number.isFinite(mapping.pTrue)
-      ? mapping.pTrue
-      : await resolveEnsemblePTrue(tokenId);
+    mappingEnsemble ?? (tokenId ? await resolveEnsemblePTrue(tokenId) : null);
   const marketPrior = resolveMarketPrior(
     books.pmMid,
     books.kalshiMid,
@@ -671,16 +683,33 @@ type OrderBookContext = {
 
 async function loadOrderBookContext(
   tokenId: string | null,
-  kalshiTicker: string | null
+  kalshiTicker: string | null,
+  options?: { liveFallback?: boolean }
 ): Promise<OrderBookContext> {
-  const [pmOb, kalshiOb] = await Promise.all([
-    tokenId
-      ? getOrderBookMid(evRedisKeys.orderBookPm(tokenId.toLowerCase()))
+  const liveFallback = options?.liveFallback ?? true;
+  const pmKey = tokenId?.toLowerCase();
+  const kalshiKey = kalshiTicker?.toUpperCase();
+
+  const [pmObCached, kalshiObCached] = await Promise.all([
+    pmKey
+      ? getOrderBookMid(evRedisKeys.orderBookPm(pmKey))
       : Promise.resolve(null),
-    kalshiTicker
-      ? getOrderBookMid(evRedisKeys.orderBookKalshi(kalshiTicker.toUpperCase()))
+    kalshiKey
+      ? getOrderBookMid(evRedisKeys.orderBookKalshi(kalshiKey))
       : Promise.resolve(null),
   ]);
+
+  let pmOb = pmObCached;
+  let kalshiOb = kalshiObCached;
+
+  if (liveFallback) {
+    if (!pmOb && pmKey) {
+      pmOb = await fetchPolymarketClobOrderBookMid(pmKey);
+    }
+    if (!kalshiOb && kalshiKey) {
+      kalshiOb = await fetchKalshiMarketOrderBookMid(kalshiKey);
+    }
+  }
 
   return {
     pmOb,
@@ -741,10 +770,7 @@ async function resolveTradeEvViaEnsemblePricing(
     pmMid: books.pmMid,
     kalshiMid: books.kalshiMid,
     executionPrice: enriched.tradePrice,
-    ensemblePTrue:
-      mapping?.pTrue != null && Number.isFinite(mapping.pTrue)
-        ? mapping.pTrue
-        : null,
+    ensemblePTrue: authoritativeMappingEnsemblePTrue(mapping),
     fetchEnsemble: true,
     fetchExchangeConsensus: platform === "polymarket",
     computeEnsembleIfMissing: true,
@@ -827,8 +853,14 @@ async function applyPricingToResolvedTrade(
     executionPrice: input.tradePrice,
     tokenId,
     kalshiTicker,
-    ensemblePTrue: ensemblePTrue ?? record.pTrue ?? null,
-    baselinePTrue: ensemblePTrue ?? record.pTrue ?? null,
+    ensemblePTrue:
+      ensemblePTrue ??
+      pickAuthoritativeEnsemblePTrue(record.pTrue) ??
+      null,
+    baselinePTrue:
+      ensemblePTrue ??
+      pickAuthoritativeEnsemblePTrue(record.pTrue) ??
+      null,
     marketPrior,
   });
 }

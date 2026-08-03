@@ -1,6 +1,9 @@
 import { lookupExchangeConsensusBaseline } from "@/lib/evPipeline/exchangeConsensusArb";
 import { resolveEnsemblePTrueWithLlmFallback } from "@/lib/evPipeline/ensemblePricingFallback";
-import { resolveEnsemblePTrue } from "@/lib/evPipeline/ensemblePTrue";
+import {
+  pickAuthoritativeEnsemblePTrue,
+  resolveEnsemblePTrue,
+} from "@/lib/evPipeline/ensemblePTrue";
 import {
   liquidityWeightedCrossMid,
   resolveMarketPrior,
@@ -40,6 +43,13 @@ function resolveEnsembleInline(input: PTrueResolveSyncInput): number | null {
   if (isFiniteProb(input.ensemblePTrue)) return input.ensemblePTrue;
   if (isFiniteProb(input.baselinePTrue)) return input.baselinePTrue;
   return null;
+}
+
+/** Ensemble fair value when present — never a synthetic 50/50 placeholder. */
+function authoritativeEnsemblePTrue(
+  input: PTrueResolveSyncInput
+): number | null {
+  return pickAuthoritativeEnsemblePTrue(resolveEnsembleInline(input));
 }
 
 function platformRestingMid(
@@ -101,7 +111,7 @@ export function resolvePTrueSync(input: PTrueResolveSyncInput): PTrueResult {
     restingMidFromOrderBook(input.pmOb) ?? input.pmMid ?? null;
   const kalshiResting =
     restingMidFromOrderBook(input.kalshiOb) ?? input.kalshiMid ?? null;
-  const ensemble = resolveEnsembleInline(input);
+  const ensemble = authoritativeEnsemblePTrue(input);
   const executionPrice =
     normalizeIncomingTradePrice(input.executionPrice) ?? null;
   const marketPrior = resolveMarketPrior(
@@ -315,6 +325,11 @@ export async function resolvePTrue(
 
   if (input.fetchEnsemble && ensemblePTrue == null && input.tokenId) {
     ensemblePTrue = await resolveEnsemblePTrue(input.tokenId);
+  }
+
+  ensemblePTrue = pickAuthoritativeEnsemblePTrue(ensemblePTrue);
+  if (ensemblePTrue == null && isFiniteProb(input.baselinePTrue)) {
+    ensemblePTrue = pickAuthoritativeEnsemblePTrue(input.baselinePTrue);
   }
 
   if (

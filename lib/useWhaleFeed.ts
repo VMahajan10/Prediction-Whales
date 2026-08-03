@@ -145,7 +145,9 @@ export function useWhaleFeed() {
   const [backfillLoaded, setBackfillLoaded] = useState(false);
   const seenHashes = useRef<Set<string>>(new Set());
   const liveDetectedAt = useRef<Map<string, number>>(new Map());
-  const metricsReported = useRef<Set<string>>(new Set());
+  const metricsDetected = useRef<Set<string>>(new Set());
+  const metricsPassed = useRef<Set<string>>(new Set());
+  const metricsFinalized = useRef<Set<string>>(new Set());
   const qualifiedNotified = useRef<Set<string>>(new Set());
   const loggedFilterRejects = useRef<Set<string>>(new Set());
   const [newWhale, setNewWhale] = useState<WhaleTrade | null>(null);
@@ -255,20 +257,33 @@ export function useWhaleFeed() {
   useEffect(() => {
     if (!backfillLoaded) return;
 
-    let detected = 0;
-    let passed = 0;
+    let newDetected = 0;
+    let newPassed = 0;
     const passedWallets: string[] = [];
 
     for (const whale of liveWhales) {
       const key = whale.transactionHash || whale.id;
-      if (!key || metricsReported.current.has(key)) continue;
+      if (!key || metricsFinalized.current.has(key)) continue;
+
+      const category = resolveFeedFilterCategoryLabel(whale);
+      const pipelineKey = pipelineEvKeyForWhale(whale);
+      const pipeline = pipelineKey ? pipelineEvIndex.get(pipelineKey) : undefined;
+      const tradeEvPercent = resolveFeedTradeEvPercent(
+        {
+          price: whale.price,
+          netEvPercent: whale.netEvPercent,
+          grossEvPercent: whale.grossEvPercent,
+        },
+        pipeline
+      );
+
       if (
         !meetsFeedTieredStakeThreshold({
           stakeUsd: whale.usdNotional,
           title: whale.title,
           slug: whale.slug,
           eventSlug: whale.eventSlug,
-          category: resolveFeedFilterCategoryLabel(whale),
+          category,
         })
       ) {
         evaluateLiveFeedTradeGate(
@@ -277,34 +292,45 @@ export function useWhaleFeed() {
             title: whale.title,
             slug: whale.slug,
             eventSlug: whale.eventSlug,
-            category: resolveFeedFilterCategoryLabel(whale),
+            category,
             tradeEvPercent: null,
           },
           { id: whale.id, source: "client" }
         );
-        metricsReported.current.add(key);
+        metricsFinalized.current.add(key);
         continue;
       }
 
-      metricsReported.current.add(key);
-      detected += 1;
+      if (!metricsDetected.current.has(key)) {
+        metricsDetected.current.add(key);
+        newDetected += 1;
+      }
 
-      if (
-        isPolymarketTradeQualifiedForFeed(
-          whale,
-          pipelineEvIndex,
-          loggedFilterRejects.current
-        )
-      ) {
-        passed += 1;
-        const wallet = whale.proxyWallet?.trim().toLowerCase();
-        if (wallet) passedWallets.push(wallet);
+      const qualified = isPolymarketTradeQualifiedForFeed(
+        whale,
+        pipelineEvIndex,
+        loggedFilterRejects.current
+      );
+
+      if (qualified) {
+        if (!metricsPassed.current.has(key)) {
+          metricsPassed.current.add(key);
+          newPassed += 1;
+          const wallet = whale.proxyWallet?.trim().toLowerCase();
+          if (wallet) passedWallets.push(wallet);
+        }
+        metricsFinalized.current.add(key);
+        continue;
+      }
+
+      if (tradeEvPercent != null && Number.isFinite(tradeEvPercent)) {
+        metricsFinalized.current.add(key);
       }
     }
 
     reportFeedMetrics({
-      tradesDetected: detected,
-      gatePassedTrades: passed,
+      tradesDetected: newDetected,
+      gatePassedTrades: newPassed,
       whaleWallets: passedWallets,
     });
   }, [liveWhales, pipelineEvIndex, backfillLoaded]);

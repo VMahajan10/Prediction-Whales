@@ -18,6 +18,19 @@ export function toEvDisplayPercent(probabilityUnits: number): number {
 /** Default market mid when order book data is unavailable. */
 export const DEFAULT_P_MARKET_FALLBACK = 0.5;
 
+/** Prefer persisted market mid over the 50/50 synthetic default. */
+export function resolveTradeMarketReference(
+  pMarket: number | null | undefined,
+  pmMid: number | null | undefined,
+  kalshiMid: number | null | undefined
+): number {
+  if (pMarket != null && Number.isFinite(pMarket)) return pMarket;
+  if (pmMid != null && kalshiMid != null) return (pmMid + kalshiMid) / 2;
+  if (pmMid != null) return pmMid;
+  if (kalshiMid != null) return kalshiMid;
+  return DEFAULT_P_MARKET_FALLBACK;
+}
+
 /** Minor net drag applied to on-the-fly baseline payloads (gas/fees). */
 export const DYNAMIC_BASELINE_NET_EV_DRAG = -0.0005;
 
@@ -279,8 +292,11 @@ export function strictApiTradeEvPayload(
 
   const platform: EvPlatform =
     item.kalshiTicker && !item.tokenId ? "kalshi" : "polymarket";
-  const pMarket =
-    readOptionalNumber(item.pMarket) ?? DEFAULT_P_MARKET_FALLBACK;
+  const pMarket = resolveTradeMarketReference(
+    readOptionalNumber(item.pMarket),
+    readOptionalNumber(item.pmMid),
+    readOptionalNumber(item.kalshiMid)
+  );
   const evDisplay = computeTradeEvDisplay({
     pTrue,
     executionPrice: pMarket,
@@ -387,7 +403,7 @@ export function normalizePipelineTradeEv(
   }
 
   if (pTrue != null) {
-    const resolvedPMarket = pMarket ?? DEFAULT_P_MARKET_FALLBACK;
+    const resolvedPMarket = resolveTradeMarketReference(pMarket, pmMid, kalshiMid);
     const platform: EvPlatform =
       kalshiTicker && !tokenId ? "kalshi" : "polymarket";
     const evDisplay = computeTradeEvDisplay({

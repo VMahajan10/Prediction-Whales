@@ -250,6 +250,17 @@ test("resolvePTrueSync tier 3 — ensemble when OB dry", () => {
   approx(result.pTrue, 0.62, 1e-6);
 });
 
+test("resolvePTrueSync ignores placeholder ensemble 0.5 when standalone OB exists", () => {
+  const result = resolvePTrueSync({
+    mappingPairKey: null,
+    platform: "polymarket",
+    pmOb: { bid: 0.998, ask: 0.999, mid: 0.9985, ts: Date.now() },
+    ensemblePTrue: 0.5,
+  });
+  assert.equal(result.source, "standalone_ob");
+  approx(result.pTrue, 0.9985, 1e-4);
+});
+
 test("resolvePTrueSync tier 2 — sportsbook consensus on standalone PM", () => {
   const result = resolvePTrueSync({
     mappingPairKey: null,
