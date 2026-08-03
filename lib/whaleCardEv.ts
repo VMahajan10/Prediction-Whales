@@ -5,6 +5,7 @@ import {
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import { formatEvPercent } from "@/lib/crossMarketEvDisplay";
 import { pipelineEvTone } from "@/lib/evPipeline/tradeEvRecord";
+import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import type { WhaleTrade } from "@/lib/whaleTrades";
 
 export interface WhaleCardAvgEvDisplay {
@@ -13,33 +14,35 @@ export interface WhaleCardAvgEvDisplay {
   lowConfidence: boolean;
 }
 
-/** Merge pipeline EV fields onto a whale row for immediate card display. */
+/**
+ * Merge pipeline EV fields onto a whale row for card display.
+ *
+ * Delegates to `resolveFeedTradeEvPercent` so the rendered number is the exact
+ * value the feed gate admitted the trade on — non-authoritative p_true is
+ * withheld here for the same reason it is withheld from the gate.
+ */
 export function mergePipelineEvOntoWhale(
   trade: WhaleTrade,
   pipeline: PipelineTradeEv | null | undefined
 ): WhaleTrade {
-  if (!pipeline) return trade;
+  const existing = coalesceDisplayEvPercent({
+    netEvPercent: trade.netEvPercent ?? null,
+    grossEvPercent: trade.grossEvPercent ?? null,
+    averageEv: trade.averageEv ?? null,
+  });
+  if (existing != null) return trade;
 
-  const netEvPercent =
-    trade.netEvPercent ?? pipeline.netEvPercent ?? pipeline.grossEvPercent ?? null;
-  const averageEv =
-    trade.averageEv ?? pipeline.averageEv ?? pipeline.netEvPercent ?? null;
+  const tradeEvPercent = resolveFeedTradeEvPercent(
+    {
+      price: trade.price,
+      netEvPercent: trade.netEvPercent,
+      grossEvPercent: trade.grossEvPercent,
+    },
+    pipeline
+  );
+  if (tradeEvPercent == null) return trade;
 
-  if (
-    netEvPercent === trade.netEvPercent &&
-    averageEv === trade.averageEv &&
-    trade.grossEvPercent == null &&
-    pipeline.grossEvPercent == null
-  ) {
-    return trade;
-  }
-
-  return {
-    ...trade,
-    netEvPercent,
-    grossEvPercent: trade.grossEvPercent ?? pipeline.grossEvPercent ?? null,
-    averageEv,
-  };
+  return { ...trade, netEvPercent: tradeEvPercent, averageEv: tradeEvPercent };
 }
 
 function formatEvPercentDisplay(

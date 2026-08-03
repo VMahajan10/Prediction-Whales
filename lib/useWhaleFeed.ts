@@ -14,6 +14,7 @@ import { resolveFeedFilterCategoryLabel } from "@/lib/feedFilterDiagnostics";
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import { translateWhaleTradeMarket } from "@/lib/marketTranslator";
 import { pipelineEvKeyForWhale } from "@/lib/pipelineEvClient";
+import { mergePipelineEvOntoWhale } from "@/lib/whaleCardEv";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import {
   useQualifiedWalletFilter,
@@ -244,14 +245,19 @@ export function useWhaleFeed() {
           loggedFilterRejects.current
         )
       )
-      .map((trade) =>
-        attachWhaleIdentity(
+      .map((trade) => {
+        const pipelineKey = pipelineEvKeyForWhale(trade);
+        const withIdentity = attachWhaleIdentity(
           trade,
           trade.proxyWallet
             ? walletQualifications.get(trade.proxyWallet.trim().toLowerCase())
             : undefined
-        )
-      );
+        );
+        return mergePipelineEvOntoWhale(
+          withIdentity,
+          pipelineKey ? pipelineEvIndex.get(pipelineKey) : undefined
+        );
+      });
   }, [polymarketWhales, walletQualifications, pipelineEvIndex]);
 
   useEffect(() => {

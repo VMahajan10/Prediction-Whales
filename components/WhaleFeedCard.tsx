@@ -8,10 +8,14 @@ import {
 import { formatFeedRecency } from "@/lib/whaleFeedCategories";
 import { formatPriceCents, formatStakeCompact } from "@/lib/whaleDetails";
 import {
-  formatWhaleSignedPercent,
   formatWhaleWinRatePercent,
   sanitizeWhaleDisplayName,
 } from "@/lib/whaleIdentityResolver";
+import { formatEvPercent } from "@/lib/crossMarketEvDisplay";
+import {
+  coalesceDisplayEvPercent,
+  pipelineEvTone,
+} from "@/lib/evPipeline/tradeEvRecord";
 import type { WhaleTrade } from "@/lib/whaleTrades";
 
 export interface WhaleFeedCardProps {
@@ -34,7 +38,6 @@ function resolveFeedWhaleIdentity(trade: WhaleTrade) {
     pseudonym,
     initials: identity?.initials ?? pseudonym.slice(0, 2).toUpperCase(),
     winRate: identity?.winRate ?? null,
-    avgEv: identity?.avgEv ?? trade.averageEv ?? null,
   };
 }
 
@@ -81,13 +84,24 @@ export default function WhaleFeedCard({
   const recency = formatFeedRecency(trade.detectedAt, now);
 
   const winRateLabel = formatWhaleWinRatePercent(whale.winRate);
-  const avgEvLabel = formatWhaleSignedPercent(whale.avgEv);
-  const avgEvClass =
-    whale.avgEv != null && whale.avgEv >= 0
-      ? "text-pulse-yes"
-      : whale.avgEv != null
-        ? "text-pulse-no"
-        : "text-pulse-label";
+
+  // Percent units (3 = +3%), unlike the decimal wallet-level whaleIdentity.avgEv.
+  const tradeEvPercent = coalesceDisplayEvPercent({
+    netEvPercent: trade.netEvPercent ?? null,
+    grossEvPercent: trade.grossEvPercent ?? null,
+    averageEv: trade.averageEv ?? null,
+  });
+  const tradeEvLabel =
+    tradeEvPercent != null ? formatEvPercent(tradeEvPercent) : "N/A";
+  const tradeEvTone =
+    tradeEvPercent != null
+      ? pipelineEvTone(tradeEvPercent)
+      : { positive: false, negative: false };
+  const tradeEvClass = tradeEvTone.positive
+    ? "text-pulse-yes"
+    : tradeEvTone.negative
+      ? "text-pulse-no"
+      : "text-pulse-label";
 
   const priceMovedAgainst =
     isBuy ? nowPrice < entryPrice - 0.005 : nowPrice > entryPrice + 0.005;
@@ -173,10 +187,10 @@ export default function WhaleFeedCard({
           value={formatStakeCompact(trade.usdNotional)}
         />
         <StatCell
-          label="Avg. EV"
-          value={avgEvLabel}
+          label="Trade EV"
+          value={tradeEvLabel}
           sublabel="VS. MARKET AT ENTRY"
-          valueClass={avgEvClass}
+          valueClass={tradeEvClass}
         />
       </div>
     </>
