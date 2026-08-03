@@ -21,33 +21,63 @@ async function resolveFeedTradeEvPercentsWith(
 ): Promise<Map<string, number | null>> {
   const results = new Map<string, number | null>();
 
-  await mapWithConcurrency(trades, concurrency, async (trade) => {
+  /** One EV lookup per PM asset — fan results out to every trade row. */
+  const byAsset = new Map<
+    string,
+    { lookupKey: string; assetId: string; tradeIds: string[]; price: number }
+  >();
+
+  for (const trade of trades) {
     const assetId = trade.assetId?.trim();
     if (!assetId) {
       results.set(trade.id, null);
-      return;
+      continue;
     }
 
+    const key = assetId.toLowerCase();
     const lookupKey = normalizePipelineLookupKey(`pm:${assetId}`, "polymarket");
-    try {
-      const pipeline = await ensureFullyComputedTradeEv(
-        lookupKey,
-        {
-          source: "polymarket",
-          tokenId: assetId,
-          tradePrice: trade.price,
-        },
-        null,
-        options
-      );
-      results.set(
-        trade.id,
-        resolveFeedTradeEvPercent({ price: trade.price }, pipeline)
-      );
-    } catch {
-      results.set(trade.id, null);
+    const bucket = byAsset.get(key);
+    if (bucket) {
+      bucket.tradeIds.push(trade.id);
+      continue;
     }
-  });
+    byAsset.set(key, {
+      lookupKey,
+      assetId: key,
+      tradeIds: [trade.id],
+      price: trade.price,
+    });
+  }
+
+  await mapWithConcurrency(
+    Array.from(byAsset.values()),
+    concurrency,
+    async (bucket) => {
+      try {
+        const pipeline = await ensureFullyComputedTradeEv(
+          bucket.lookupKey,
+          {
+            source: "polymarket",
+            tokenId: bucket.assetId,
+            tradePrice: bucket.price,
+          },
+          null,
+          options
+        );
+        const evPercent = resolveFeedTradeEvPercent(
+          { price: bucket.price },
+          pipeline
+        );
+        for (const tradeId of bucket.tradeIds) {
+          results.set(tradeId, evPercent);
+        }
+      } catch {
+        for (const tradeId of bucket.tradeIds) {
+          results.set(tradeId, null);
+        }
+      }
+    }
+  );
 
   return results;
 }

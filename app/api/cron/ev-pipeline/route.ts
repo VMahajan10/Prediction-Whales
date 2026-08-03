@@ -21,6 +21,7 @@ export const maxDuration = 300;
  * 2.5 refreshConsensusIndex — rebuild sportsbook consensus + prop alias keys
  * 2.75 ingestRagContext    — warm similar-market index + odds history for RAG
  * 3. computePTrue      — insert true_probabilities + cache p_true
+ * 3.5 warmWhaleFeedEv  — precompute trade EV for recent whale-feed assets
  * 4. computeTraderEv   — upsert trader_ev_analytics + cache wallet rollups
  */
 export async function GET(request: NextRequest) {

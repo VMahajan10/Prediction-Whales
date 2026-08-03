@@ -1,4 +1,5 @@
 import { computeRagPTrue } from "@/lib/ai/rag/ragPTrueProvider";
+import { withOpenAiLimiter } from "@/lib/ai/openaiLimiter";
 import { resolveEnsemblePTrue } from "@/lib/evPipeline/ensemblePTrue";
 import { resolveMarketPrior } from "@/lib/evPipeline/pricing";
 import { evRedisKeys, getOrderBookMid } from "@/lib/evPipeline/redisCache";
@@ -86,16 +87,18 @@ export async function resolveEnsemblePTrueWithLlmFallback(
   );
 
   try {
-    const computed = await computeRagPTrue({
-      tokenId,
-      kalshiTicker,
-      title: title ?? tokenId ?? slug ?? "Unknown market",
-      slug,
-      pmMid,
-      kalshiMid: params.kalshiMid ?? null,
-      exchangeMid: params.exchangeMid ?? null,
-      marketPrior,
-    });
+    const computed = await withOpenAiLimiter(() =>
+      computeRagPTrue({
+        tokenId,
+        kalshiTicker,
+        title: title ?? tokenId ?? slug ?? "Unknown market",
+        slug,
+        pmMid,
+        kalshiMid: params.kalshiMid ?? null,
+        exchangeMid: params.exchangeMid ?? null,
+        marketPrior,
+      })
+    );
 
     console.log(`${logPrefix} OpenAI ensemble p_true`, {
       tokenId,

@@ -1,4 +1,5 @@
 import { generateObject } from "ai";
+import { withOpenAiLimiter } from "@/lib/ai/openaiLimiter";
 import { openai } from "@ai-sdk/openai";
 import { z } from "zod";
 
@@ -299,12 +300,14 @@ Instructions:
 - Do NOT output a final probability — only directional impact and reliability.`;
 
   try {
-    const { object } = await generateObject({
-      model: resolveLanguageModel(),
-      schema: SentimentSchema,
-      prompt,
-      temperature: 0.2,
-    });
+    const { object } = await withOpenAiLimiter(() =>
+      generateObject({
+        model: resolveLanguageModel(),
+        schema: SentimentSchema,
+        prompt,
+        temperature: 0.2,
+      })
+    );
 
     return {
       impactScore: clampSigned(object.impactScore),

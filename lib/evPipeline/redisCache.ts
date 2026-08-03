@@ -141,8 +141,17 @@ export const PIPELINE_LOCK_TTL_SEC = 300;
 export const EV_REDIS_TTL = {
   /** Order book snapshot — refresh every cron tick (~5–15s). */
   orderBookSec: 10,
-  /** Latest p_true per token — recomputed each pipeline run. */
-  pTrueSec: 90,
+  /**
+   * Latest p_true + trade EV lookup — keep ≥ 3× cron interval (cron every 10m).
+   */
+  pTrueSec: 1800,
+  /** Trade-level EV lookup (pm:/kalshi: keys) — same freshness as p_true. */
+  tradeEvLookupSec: 1800,
+  /**
+   * Stale backup for trade EV — served when fresh key expired but cron has not
+   * refreshed yet (stale-while-revalidate).
+   */
+  tradeEvLookupStaleSec: 7200,
   /** Bilateral mapping lookup — stable unless markets change. */
   mappingSec: 300,
   /** Per-wallet live EV rollup for profile / copy signal. */
@@ -215,6 +224,9 @@ export const evRedisKeys = {
   pipelineMeta: () => `${EV_REDIS_PREFIX}:pipeline:last_run`,
   /** Batch lookup cache — key suffix is pm:{tokenId} or kalshi:{ticker}. */
   tradeEvLookup: (lookupKey: string) => `${EV_REDIS_PREFIX}:lookup:${lookupKey}`,
+  /** Longer-TTL stale backup for stale-while-revalidate reads. */
+  tradeEvLookupStale: (lookupKey: string) =>
+    `${EV_REDIS_PREFIX}:lookup:stale:${lookupKey}`,
   /** Time-series implied prob snapshots for RAG context. */
   oddsHistory: (polymarketTokenId: string) =>
     `${EV_REDIS_PREFIX}:rag:odds:${polymarketTokenId.toLowerCase()}`,
@@ -472,7 +484,12 @@ export class EvPipelineRedisWriteBatch {
       commands.push({
         key: evRedisKeys.tradeEvLookup(row.lookupKey),
         value: row.value,
-        ex: EV_REDIS_TTL.pTrueSec,
+        ex: EV_REDIS_TTL.tradeEvLookupSec,
+      });
+      commands.push({
+        key: evRedisKeys.tradeEvLookupStale(row.lookupKey),
+        value: row.value,
+        ex: EV_REDIS_TTL.tradeEvLookupStaleSec,
       });
     }
 
@@ -670,7 +687,10 @@ export async function safeCacheTradeEvLookupRedis(
 
   try {
     await client.set(evRedisKeys.tradeEvLookup(lookupKey), normalized, {
-      ex: EV_REDIS_TTL.pTrueSec,
+      ex: EV_REDIS_TTL.tradeEvLookupSec,
+    });
+    await client.set(evRedisKeys.tradeEvLookupStale(lookupKey), normalized, {
+      ex: EV_REDIS_TTL.tradeEvLookupStaleSec,
     });
   } catch (err) {
     if (isRedisQuotaOrLimitError(err)) {
@@ -725,14 +745,7 @@ export async function getTradeEvLookup(
     return readLocalTradeEvLookup(lookupKey);
   }
 
-  try {
-    const raw = await client.get<PipelineTradeEv>(
-      evRedisKeys.tradeEvLookup(lookupKey)
-    );
-    if (!raw) {
-      return readLocalTradeEvLookup(lookupKey);
-    }
-
+  const hydrateLocal = (raw: PipelineTradeEv): PipelineTradeEv | null => {
     const normalized = normalizePipelineTradeEv(
       { ...raw, key: raw.key ?? lookupKey },
       lookupKey
@@ -741,6 +754,20 @@ export async function getTradeEvLookup(
       getLocalEvCache().set(lookupKey, normalized);
     }
     return normalized;
+  };
+
+  try {
+    const fresh = await client.get<PipelineTradeEv>(
+      evRedisKeys.tradeEvLookup(lookupKey)
+    );
+    if (fresh) return hydrateLocal(fresh);
+
+    const stale = await client.get<PipelineTradeEv>(
+      evRedisKeys.tradeEvLookupStale(lookupKey)
+    );
+    if (stale) return hydrateLocal(stale);
+
+    return readLocalTradeEvLookup(lookupKey);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (isRedisQuotaOrLimitError(err)) {

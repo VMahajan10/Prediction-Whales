@@ -13,6 +13,7 @@ import {
   DEFAULT_PM_LIMIT,
 } from "@/lib/evPipeline/marketFetch";
 import { processMappedPTrue, ensureMappedTradeEvLookups } from "@/lib/evPipeline/computeMappedEv";
+import { warmWhaleFeedTradeEv } from "@/lib/evPipeline/warmWhaleFeedEv";
 import type { MatchedPair } from "@/lib/evPipeline/types";
 import {
   formatPreflightErrors,
@@ -51,6 +52,7 @@ export interface EvPipelineResult {
     refreshConsensusIndex: PipelineStageResult;
     ingestRagContext: PipelineStageResult;
     computePTrue: PipelineStageResult;
+    warmWhaleFeedEv: PipelineStageResult;
     computeTraderEv: PipelineStageResult;
   };
 }
@@ -305,6 +307,31 @@ export async function computePTrue(): Promise<PipelineStageResult> {
 }
 
 /**
+ * Stage 3.5 — Precompute trade EV for recent whale-feed PM assets (deduped).
+ */
+export async function warmWhaleFeedEvStage(): Promise<PipelineStageResult> {
+  const start = Date.now();
+  try {
+    const result = await warmWhaleFeedTradeEv();
+    console.info(
+      `[ev-pipeline] warmWhaleFeedEv candidates=${result.candidates} warmed=${result.warmed} skipped=${result.skippedCached} errors=${result.errors}`
+    );
+    return {
+      ok: result.errors === 0 || result.warmed > 0 || result.skippedCached > 0,
+      count: result.warmed,
+      ms: elapsed(start),
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error:
+        err instanceof Error ? err.message : "warmWhaleFeedEv failed",
+      ms: elapsed(start),
+    };
+  }
+}
+
+/**
  * Stage 4 — Per-wallet average_ev + total_portfolio_ev from closed + open positions.
  */
 export async function computeTraderEv(): Promise<PipelineStageResult> {
@@ -345,6 +372,7 @@ export async function runEvPipeline(runId: string): Promise<EvPipelineResult> {
   const refreshConsensusIndexResult = await refreshConsensusIndexStage();
   const ingestRagContextResult = await ingestRagContextStage();
   const computePTrueResult = await computePTrue();
+  const warmWhaleFeedEvResult = await warmWhaleFeedEvStage();
   const computeTraderEvResult = await computeTraderEv();
 
   const stages = {
@@ -353,6 +381,7 @@ export async function runEvPipeline(runId: string): Promise<EvPipelineResult> {
     refreshConsensusIndex: refreshConsensusIndexResult,
     ingestRagContext: ingestRagContextResult,
     computePTrue: computePTrueResult,
+    warmWhaleFeedEv: warmWhaleFeedEvResult,
     computeTraderEv: computeTraderEvResult,
   };
 

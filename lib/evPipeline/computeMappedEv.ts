@@ -68,6 +68,9 @@ function marketContextFromPrefetch(prefetch: MappingRedisPrefetch): {
   return { pmMid, kalshiMid, marketPrior };
 }
 
+/** Max mappings scored per cron tick when no in-run matches are available. */
+const INCREMENTAL_PTRUE_DB_LIMIT = 250;
+
 function emptyMappingPrefetch(): MappingRedisPrefetch {
   return { pmOb: null, kalshiOb: null, pTrue: null };
 }
@@ -622,7 +625,8 @@ export async function processMappedPTrue(
   const mappings = await loadMappingsForPTrue(
     db,
     recentMatches,
-    options?.dbLimit ?? 2000
+    options?.dbLimit ??
+      (recentMatches.length > 0 ? 2000 : INCREMENTAL_PTRUE_DB_LIMIT)
   );
   if (mappings.length === 0) return 0;
 
@@ -632,10 +636,14 @@ export async function processMappedPTrue(
     includePTrue: false,
   });
   const redisBatch = new EvPipelineRedisWriteBatch();
+  const processedTokenIds = new Set<string>();
   let processed = 0;
 
   for (const mapping of ordered) {
     const tokenId = mapping.polymarketTokenId.toLowerCase();
+    if (processedTokenIds.has(tokenId)) continue;
+    processedTokenIds.add(tokenId);
+
     const kalshiTicker = mapping.kalshiTicker.toUpperCase();
     const prefetch =
       redisPrefetch.get(mappingRedisPairKey(tokenId, kalshiTicker)) ??
