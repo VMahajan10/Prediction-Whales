@@ -98,7 +98,8 @@ describe("resolveFeedTradeEvPercent", () => {
 });
 
 describe("passesFeedSocketStakeGate", () => {
-  it("enforces tiered stake floors on socket trades", () => {
+  it("enforces the flat $500 product feed floor regardless of category", () => {
+    // Sports below $500 no longer qualifies — tiered floors are post-queue only.
     expect(
       passesFeedSocketStakeGate(
         socketTrade({
@@ -106,7 +107,7 @@ describe("passesFeedSocketStakeGate", () => {
           title: "Will the Lakers win the NBA Finals?",
         })
       )
-    ).toBe(true);
+    ).toBe(false);
 
     expect(
       passesFeedSocketStakeGate(
@@ -120,7 +121,17 @@ describe("passesFeedSocketStakeGate", () => {
     expect(
       passesFeedSocketStakeGate(
         socketTrade({
-          usdNotional: 1000,
+          usdNotional: 500,
+          title: "Will the Lakers win the NBA Finals?",
+        })
+      )
+    ).toBe(true);
+
+    // Macro no longer needs $1k for the product feed.
+    expect(
+      passesFeedSocketStakeGate(
+        socketTrade({
+          usdNotional: 500,
           title: "Will Trump win the 2028 presidential election?",
         })
       )

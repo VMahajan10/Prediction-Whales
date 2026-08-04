@@ -26,7 +26,23 @@ export interface WhaleFeedCardProps {
   currentPrice?: number;
 }
 
+/**
+ * Kalshi exposes no persistent trader identity and profiling members is
+ * prohibited, so Kalshi rows show a generic anonymous badge in the same slot
+ * (docs/Kalshi Whale Attribution Audit.md). Never a pseudonym or win rate.
+ */
+const KALSHI_ANONYMOUS_LABEL = "Anonymous Trader";
+
 function resolveFeedWhaleIdentity(trade: WhaleTrade) {
+  if (trade.source === "kalshi") {
+    return {
+      pseudonym: KALSHI_ANONYMOUS_LABEL,
+      initials: null,
+      winRate: null,
+      anonymous: true as const,
+    };
+  }
+
   const wallet = trade.proxyWallet ?? "unknown";
   const identity = trade.whaleIdentity;
   const pseudonym = sanitizeWhaleDisplayName(
@@ -38,7 +54,27 @@ function resolveFeedWhaleIdentity(trade: WhaleTrade) {
     pseudonym,
     initials: identity?.initials ?? pseudonym.slice(0, 2).toUpperCase(),
     winRate: identity?.winRate ?? null,
+    anonymous: false as const,
   };
+}
+
+/** Default avatar for rows with no attributable trader. */
+function AnonymousTraderIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-4 w-4"
+      aria-hidden
+    >
+      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+      <circle cx="12" cy="7" r="4" />
+    </svg>
+  );
 }
 
 function StatCell({
@@ -146,10 +182,20 @@ export default function WhaleFeedCard({
       </h3>
 
       <div className="mt-3 flex items-center gap-3">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-pulse-accent/20 text-xs font-bold text-pulse-accent">
-          {whale.initials}
+        <div
+          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+            whale.anonymous
+              ? "bg-pulse-surface text-pulse-label"
+              : "bg-pulse-accent/20 text-pulse-accent"
+          }`}
+        >
+          {whale.anonymous ? <AnonymousTraderIcon /> : whale.initials}
         </div>
-        <p className="min-w-0 flex-1 truncate text-sm font-semibold text-white">
+        <p
+          className={`min-w-0 flex-1 truncate text-sm font-semibold ${
+            whale.anonymous ? "text-pulse-muted" : "text-white"
+          }`}
+        >
           {whale.pseudonym}
         </p>
         {winRateLabel !== "—" ? (

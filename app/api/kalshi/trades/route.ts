@@ -1,5 +1,5 @@
 import { fetchKalshiTrades } from "@/lib/kalshiTrades";
-import { meetsFeedStakeThreshold } from "@/lib/feedQualification";
+import { meetsProductFeedStakeThreshold } from "@/lib/feedQualification";
 import { recordKalshiFeedMetrics } from "@/lib/feedQualificationServer";
 import { NextResponse } from "next/server";
 
@@ -37,12 +37,17 @@ export async function GET(request: Request) {
     );
 
     const detected = trades.filter((trade) =>
-      meetsFeedStakeThreshold(trade.usdNotional)
+      meetsProductFeedStakeThreshold(trade.usdNotional)
     );
     recordKalshiFeedMetrics(detected.length);
 
-    // Kalshi trades have no wallet attribution — excluded from credibility-qualified feed.
-    const data = { trades: [] as typeof trades, ok: true as const };
+    /**
+     * Anonymous market flow — no wallet attribution, so these are gated on
+     * stake + trade EV only and rendered without trader identity. Never
+     * persisted: Kalshi Developer Agreement §3.1 prohibits storing raw API
+     * data, so the client relies on this live poll plus in-memory retention.
+     */
+    const data = { trades: detected, ok: true as const };
     cache = { minTs, data, timestamp: now };
     return NextResponse.json(data);
   } catch (err) {

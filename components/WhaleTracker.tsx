@@ -137,11 +137,15 @@ export default function WhaleTracker({
       {sortedWhales.length === 0 ? (
         <div className="pulse-card rounded-2xl px-4 py-8 text-center">
           <p className="text-sm text-pulse-muted">
-            {!backfillLoaded
+            {!backfillLoaded && platformFilter !== "kalshi"
               ? "Loading recent whale trades…"
-              : connected || kalshiOk
-                ? `Watching for qualified whale trades (+${MIN_FEED_TRADE_EV_PCT}% trade EV · ${formatProductFeedStakeLabel()})…`
-                : "Connecting to live feed…"}
+              : platformFilter === "kalshi"
+                ? kalshiOk
+                  ? `Watching for qualified Kalshi flow (+${MIN_FEED_TRADE_EV_PCT}% trade EV · ${formatProductFeedStakeLabel()}). Kalshi is anonymous market flow — live only, no history.`
+                  : "Kalshi feed unavailable — retrying…"
+                : connected || kalshiOk
+                  ? `Watching for qualified whale trades (+${MIN_FEED_TRADE_EV_PCT}% trade EV · ${formatProductFeedStakeLabel()})…`
+                  : "Connecting to live feed…"}
           </p>
         </div>
       ) : (

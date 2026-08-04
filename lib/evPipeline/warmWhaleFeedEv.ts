@@ -1,12 +1,12 @@
-import "server-only";
-
+/**
+ * Cron / shadow-worker prewarm — imported by `runEvPipeline`, not client UI.
+ * Do not add `server-only` here: that package throws in plain Node workers
+ * (Render `start:worker`), not only in client bundles.
+ */
 import { mapWithConcurrency } from "@/lib/clvPriceHistory";
 import { ensureFullyComputedTradeEv } from "@/lib/evPipeline/resolveTradeEv";
 import { getTradeEvLookup, initGlobalLocalEvCache } from "@/lib/evPipeline/redisCache";
-import {
-  collectUniqueWhaleAssetEvTargets,
-  type WhaleAssetEvTarget,
-} from "@/lib/evPipeline/whaleFeedEvTargets";
+import { collectUniqueWhaleAssetEvTargets } from "@/lib/evPipeline/whaleFeedEvTargets";
 import { fetchWhaleBackfill } from "@/lib/polymarket";
 
 initGlobalLocalEvCache();
@@ -14,9 +14,6 @@ initGlobalLocalEvCache();
 /** Concurrent EV resolutions during whale prewarm. */
 const WHALE_EV_WARM_CONCURRENCY = 2;
 const WHALE_EV_WARM_INTER_BATCH_MS = 500;
-
-export type { WhaleAssetEvTarget };
-export { collectUniqueWhaleAssetEvTargets };
 
 async function shouldSkipWhaleEvWarm(lookupKey: string): Promise<boolean> {
   const cached = await getTradeEvLookup(lookupKey);

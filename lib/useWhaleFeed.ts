@@ -14,10 +14,17 @@ import {
   resolvePolymarketTradeNotionalUsd,
 } from "@/lib/feedQualification";
 import { retainLastNonEmpty } from "@/lib/feed/feedRetention";
+import {
+  isKalshiTradeEligibleForFeed,
+  kalshiFeedTradeToWhale,
+} from "@/lib/feed/kalshiFeedTrades";
 import { resolveFeedFilterCategoryLabel } from "@/lib/feedFilterDiagnostics";
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import { translateWhaleTradeMarket } from "@/lib/marketTranslator";
-import { pipelineEvKeyForWhale } from "@/lib/pipelineEvClient";
+import {
+  pipelineEvKeyForWhale,
+  resolvePipelineEvForWhale,
+} from "@/lib/pipelineEvClient";
 import { mergePipelineEvOntoWhale } from "@/lib/whaleCardEv";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import {
@@ -34,9 +41,12 @@ import {
   type WhaleTrade,
 } from "@/lib/whaleTrades";
 
-/** Feed v1 — qualified whale feed is Polymarket-only (OQ-2 / Kalshi spike). */
-const FEED_V1_EXCLUDE_KALSHI = true;
-const KALSHI_WHALE_FEED_TRADES: WhaleTrade[] = FEED_V1_EXCLUDE_KALSHI ? [] : [];
+/**
+ * Kalshi appears as anonymous market flow — same card, no trader identity.
+ * Gated on stake + trade EV only; wallet credibility is Polymarket-only because
+ * Kalshi exposes no persistent trader id (docs/Kalshi Whale Attribution Audit.md).
+ */
+const KALSHI_FEED_ENABLED = true;
 
 const BACKFILL_TIMEOUT_MS = 15_000;
 const BACKFILL_ATTEMPTS = 3;
@@ -174,7 +184,7 @@ function isPolymarketTradeEligibleForFeed(
 export function useWhaleFeed() {
   const { whaleTrades: liveSocketTrades, connected } =
     usePolymarketSocketContext();
-  const { ok: kalshiOk } = useKalshiTrades();
+  const { trades: kalshiFeedTrades, ok: kalshiOk } = useKalshiTrades();
   useWalletEnrichment();
   const [backfill, setBackfill] = useState<WhaleTrade[]>([]);
   const [backfillLoaded, setBackfillLoaded] = useState(false);
@@ -186,6 +196,9 @@ export function useWhaleFeed() {
   const qualifiedNotified = useRef<Set<string>>(new Set());
   const loggedFilterRejects = useRef<Set<string>>(new Set());
   const [retainedWhales, setRetainedWhales] = useState<WhaleTrade[]>([]);
+  const [retainedKalshiWhales, setRetainedKalshiWhales] = useState<WhaleTrade[]>(
+    []
+  );
   const [newWhale, setNewWhale] = useState<WhaleTrade | null>(null);
 
   useEffect(() => {
@@ -272,6 +285,17 @@ export function useWhaleFeed() {
     [liveWhales, backfill]
   );
 
+  const kalshiWhales = useMemo(() => {
+    if (!KALSHI_FEED_ENABLED) return [];
+    return kalshiFeedTrades.map((trade) => kalshiFeedTradeToWhale(trade));
+  }, [kalshiFeedTrades]);
+
+  /** Both platforms share one EV batch so Kalshi tickers hydrate too. */
+  const evTargetWhales = useMemo(
+    () => [...polymarketWhales, ...kalshiWhales],
+    [polymarketWhales, kalshiWhales]
+  );
+
   const polymarketWalletAddresses = useMemo(
     () =>
       polymarketWhales
@@ -280,7 +304,7 @@ export function useWhaleFeed() {
     [polymarketWhales]
   );
   const walletQualifications = useQualifiedWalletFilter(polymarketWalletAddresses);
-  const { index: pipelineEvIndex } = usePipelineEvForWhales(polymarketWhales);
+  const { index: pipelineEvIndex } = usePipelineEvForWhales(evTargetWhales);
 
   const qualifiedPolymarketWhales = useMemo(() => {
     return polymarketWhales
@@ -306,15 +330,39 @@ export function useWhaleFeed() {
       });
   }, [polymarketWhales, walletQualifications, pipelineEvIndex]);
 
+  const qualifiedKalshiWhales = useMemo(
+    () =>
+      kalshiWhales
+        .filter((trade) => isKalshiTradeEligibleForFeed(trade, pipelineEvIndex))
+        .map((trade) =>
+          mergePipelineEvOntoWhale(
+            trade,
+            resolvePipelineEvForWhale(pipelineEvIndex, trade) ?? undefined
+          )
+        ),
+    [kalshiWhales, pipelineEvIndex]
+  );
+
   useEffect(() => {
     if (qualifiedPolymarketWhales.length > 0) {
       setRetainedWhales(qualifiedPolymarketWhales);
     }
   }, [qualifiedPolymarketWhales]);
 
+  useEffect(() => {
+    if (qualifiedKalshiWhales.length > 0) {
+      setRetainedKalshiWhales(qualifiedKalshiWhales);
+    }
+  }, [qualifiedKalshiWhales]);
+
   const displayWhales = retainLastNonEmpty(
     qualifiedPolymarketWhales,
     retainedWhales
+  );
+
+  const displayKalshiWhales = retainLastNonEmpty(
+    qualifiedKalshiWhales,
+    retainedKalshiWhales
   );
 
   useEffect(() => {
@@ -453,11 +501,11 @@ export function useWhaleFeed() {
     () =>
       buildPlatformFeed(
         displayWhales,
-        KALSHI_WHALE_FEED_TRADES,
+        displayKalshiWhales,
         "all",
         byDetectedDesc
       ),
-    [displayWhales]
+    [displayWhales, displayKalshiWhales]
   );
 
   const dismissNewWhale = useCallback(() => setNewWhale(null), []);
