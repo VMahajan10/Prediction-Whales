@@ -7,11 +7,13 @@ import {
   meetsFeedStakeThreshold,
   meetsFeedTieredStakeThreshold,
   meetsFeedTradeEvThreshold,
+  meetsProductFeedStakeThreshold,
   meetsWalletAvgEvThreshold,
   MIN_AVG_EV_THRESHOLD,
   MIN_FEED_RESOLVED_BETS,
   MIN_FEED_TRADE_EV_DECIMAL,
   MIN_FEED_TRADE_EV_PCT,
+  MIN_PRODUCT_FEED_STAKE_USD,
   MIN_STAKE_THRESHOLD,
   resolvePolymarketTradeNotionalUsd,
 } from "@/lib/feedQualification";
@@ -31,7 +33,19 @@ describe("feedQualification", () => {
     expect(meetsFeedStakeThreshold(MIN_STAKE_THRESHOLD - 1)).toBe(false);
   });
 
-  it("enforces tiered stake floors by market category", () => {
+  it("enforces the flat product feed stake floor ($500)", () => {
+    expect(meetsProductFeedStakeThreshold(MIN_PRODUCT_FEED_STAKE_USD)).toBe(
+      true
+    );
+    expect(
+      meetsProductFeedStakeThreshold(MIN_PRODUCT_FEED_STAKE_USD - 1)
+    ).toBe(false);
+    expect(
+      meetsProductFeedStakeThreshold(250)
+    ).toBe(false);
+  });
+
+  it("enforces tiered stake floors for post-queue style checks", () => {
     expect(
       meetsFeedTieredStakeThreshold({
         stakeUsd: 250,
@@ -110,7 +124,7 @@ describe("feedQualification", () => {
     expect(meetsWalletAvgEvThreshold(-0.001)).toBe(false);
   });
 
-  it("live feed gate requires only tiered stake and trade EV", () => {
+  it("product feed gate requires flat $500 stake and trade EV", () => {
     expect(
       isQualifiedLiveFeedTrade({
         stakeUsd: 500,

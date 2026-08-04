@@ -16,8 +16,10 @@ import {
   stashTradeForNavigation,
   whaleTradeToKalshiFeedTrade,
 } from "@/lib/tradeNavigationStore";
-import { MIN_FEED_TRADE_EV_PCT } from "@/lib/feedQualification";
-import { formatStakeFloorSummaryLabel } from "@/lib/x-agent/stakeFloor";
+import {
+  formatProductFeedStakeLabel,
+  MIN_FEED_TRADE_EV_PCT,
+} from "@/lib/feedQualification";
 import type { WhaleTrade } from "@/lib/whaleTrades";
 
 const TOP_WHALE_COUNT = 20;
@@ -138,7 +140,7 @@ export default function WhaleTracker({
             {!backfillLoaded
               ? "Loading recent whale trades…"
               : connected || kalshiOk
-                ? `Watching for qualified whale trades (+${MIN_FEED_TRADE_EV_PCT}% trade EV · ${formatStakeFloorSummaryLabel()})…`
+                ? `Watching for qualified whale trades (+${MIN_FEED_TRADE_EV_PCT}% trade EV · ${formatProductFeedStakeLabel()})…`
                 : "Connecting to live feed…"}
           </p>
         </div>

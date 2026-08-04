@@ -14,6 +14,9 @@ export const CREDIBILITY_CONFIG = {
   MIN_AVG_EV: 0.01,
 } as const;
 
+/** Flat minimum stake for the product feed UI — not the X post queue tiered floors. */
+export const MIN_PRODUCT_FEED_STAKE_USD = 500;
+
 /** Minimum trade-level EV for qualified feed display (+3.0%). */
 export const MIN_FEED_TRADE_EV_PCT = 3;
 
@@ -36,6 +39,21 @@ export function meetsFeedStakeThreshold(stakeUsd: number): boolean {
   return Number.isFinite(stakeUsd) && stakeUsd >= CREDIBILITY_CONFIG.MIN_STAKE_USD;
 }
 
+/** Product feed gate — flat $500 notional minimum (all categories). */
+export function meetsProductFeedStakeThreshold(stakeUsd: number): boolean {
+  return (
+    Number.isFinite(stakeUsd) && stakeUsd >= MIN_PRODUCT_FEED_STAKE_USD
+  );
+}
+
+export function formatProductFeedStakeLabel(): string {
+  return `$${MIN_PRODUCT_FEED_STAKE_USD.toLocaleString("en-US")} min stake`;
+}
+
+/**
+ * Category-tiered stake floors — used by the X post queue and legacy credentialed
+ * helpers only. The product feed uses {@link meetsProductFeedStakeThreshold}.
+ */
 export function meetsFeedTieredStakeThreshold(input: {
   stakeUsd: number;
   title?: string | null;
@@ -121,41 +139,32 @@ export function resolvePolymarketTradeNotionalUsd(trade: {
   return size;
 }
 
+/** Product feed stake floor — flat $500 regardless of market category. */
 export function resolveLiveFeedStakeFloorUsd(
-  trade: Pick<
+  _trade?: Pick<
     LiveFeedQualificationTrade,
     "title" | "slug" | "eventSlug" | "category"
   >
 ): number {
-  return resolveStakeFloorUsd(
-    trade.title ?? "",
-    trade.slug,
-    trade.eventSlug,
-    trade.category
-  ).floorUsd;
+  return MIN_PRODUCT_FEED_STAKE_USD;
 }
 
 /**
- * Web live feed gate — trade EV >= +3.0% and tiered stake floor only.
- * Does NOT apply X-agent wallet credibility (resolved bets / bettor avg EV).
+ * Product feed gate — flat $500 stake + trade EV >= +3.0%.
+ * Does NOT apply X post queue tiered floors or wallet credibility checks.
  */
 export function isQualifiedLiveFeedTrade(
   trade: LiveFeedQualificationTrade
 ): boolean {
   return (
-    meetsFeedTieredStakeThreshold({
-      stakeUsd: trade.stakeUsd,
-      title: trade.title,
-      slug: trade.slug,
-      eventSlug: trade.eventSlug,
-      category: trade.category,
-    }) && meetsFeedTradeEvThreshold(trade.tradeEvPercent)
+    meetsProductFeedStakeThreshold(trade.stakeUsd) &&
+    meetsFeedTradeEvThreshold(trade.tradeEvPercent)
   );
 }
 
 /**
- * X-agent / credentialed feed gate — live feed rules plus wallet credibility.
- * @deprecated For web live feed use {@link isQualifiedLiveFeedTrade}.
+ * Legacy credentialed gate — tiered stake (X post queue style) plus wallet history.
+ * @deprecated For the product feed use {@link isQualifiedLiveFeedTrade}.
  */
 export function isQualifiedCredentialedFeedTrade(
   trade: FeedQualificationTrade
@@ -163,7 +172,14 @@ export function isQualifiedCredentialedFeedTrade(
   const resolvedBetCount = trade.resolvedBetCount ?? trade.resolvedBetsCount;
 
   return (
-    isQualifiedLiveFeedTrade(trade) &&
+    meetsFeedTieredStakeThreshold({
+      stakeUsd: trade.stakeUsd,
+      title: trade.title,
+      slug: trade.slug,
+      eventSlug: trade.eventSlug,
+      category: trade.category,
+    }) &&
+    meetsFeedTradeEvThreshold(trade.tradeEvPercent) &&
     meetsWalletAvgEvThreshold(trade.walletAvgEv) &&
     meetsFeedResolvedBetsThreshold(resolvedBetCount)
   );

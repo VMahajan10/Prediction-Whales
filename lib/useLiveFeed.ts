@@ -4,10 +4,9 @@ import { useMemo } from "react";
 import type { LiveFeedPlatform } from "@/lib/liveFeedPlatform";
 import { buildPlatformFeed } from "@/lib/liveFeedMerge";
 import {
-  meetsFeedTieredStakeThreshold,
+  meetsProductFeedStakeThreshold,
   meetsFeedTradeEvThreshold,
 } from "@/lib/feedQualification";
-import { resolveFeedFilterCategoryLabel } from "@/lib/feedFilterDiagnostics";
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import type { FeedTrade } from "@/lib/kalshiTrades";
 import { pipelineEvKeyForTrade } from "@/lib/pipelineEvClient";
@@ -54,12 +53,7 @@ function passesLiveFeedTradeGate(
   pipelineEvIndex: Map<string, PipelineTradeEv>
 ): boolean {
   if (
-    !meetsFeedTieredStakeThreshold({
-      stakeUsd: trade.usdNotional,
-      title: trade.title,
-      slug: trade.slug,
-      category: resolveFeedFilterCategoryLabel(trade),
-    })
+    !meetsProductFeedStakeThreshold(trade.usdNotional)
   ) {
     return false;
   }

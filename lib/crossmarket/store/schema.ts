@@ -534,6 +534,8 @@ export const xPostQueue = pgTable(
     xMediaId: text("x_media_id"),
     /** Optional hosted receipt preview URL (nullable). */
     receiptMediaUrl: text("receipt_media_url"),
+    /** Public channel message id from PUBLIC_TELEGRAM_BOT on publish. */
+    publicTelegramMessageId: text("public_telegram_message_id"),
     /** Cofounder email/name who accepted or rejected the draft. */
     decidedBy: text("decided_by"),
     decidedAt: timestamp("decided_at", {
@@ -626,6 +628,39 @@ export const xPostLog = pgTable(
   ],
 );
 
+/**
+ * Product-feed history — backs the non-empty-feed fallback for /api/feed only.
+ * Not read by the X post queue or approval pipeline.
+ *
+ * `averageEv` is percent units (3 = +3%), matching MIN_FEED_TRADE_EV_PCT.
+ */
+export const feedTrades = pgTable(
+  "feed_trades",
+  {
+    tradeId: text("trade_id").primaryKey(),
+    transactionHash: text("transaction_hash"),
+    proxyWallet: text("proxy_wallet"),
+    title: text("title").notNull(),
+    stakeAmount: doublePrecision("stake_amount").notNull(),
+    averageEv: doublePrecision("average_ev").notNull(),
+    tradedAt: timestamp("traded_at", { withTimezone: true, mode: "date" }).notNull(),
+    payload: jsonb("payload").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("feed_trades_fallback_idx").on(
+      table.stakeAmount,
+      table.averageEv,
+      table.tradedAt.desc(),
+    ),
+  ],
+);
+
 export type WhaleRegistry = typeof whaleRegistry.$inferSelect;
 export type WhaleRegistryInsert = typeof whaleRegistry.$inferInsert;
 
@@ -637,3 +672,6 @@ export type XPostLogInsert = typeof xPostLog.$inferInsert;
 
 export type KalshiShadowTrade = typeof kalshiShadowTrades.$inferSelect;
 export type KalshiShadowTradeInsert = typeof kalshiShadowTrades.$inferInsert;
+
+export type FeedTrade = typeof feedTrades.$inferSelect;
+export type FeedTradeInsert = typeof feedTrades.$inferInsert;

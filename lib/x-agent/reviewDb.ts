@@ -98,6 +98,7 @@ export async function updateQueueById(
     xTweetId?: string | null;
     xMediaId?: string | null;
     receiptMediaUrl?: string | null;
+    publicTelegramMessageId?: string | null;
     decidedBy?: string | null;
     decidedAt?: Date | null;
   }
@@ -128,6 +129,7 @@ export async function updateQueueByReviewToken(
     xTweetId?: string | null;
     xMediaId?: string | null;
     receiptMediaUrl?: string | null;
+    publicTelegramMessageId?: string | null;
     decidedBy?: string | null;
     decidedAt?: Date | null;
   }

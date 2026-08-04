@@ -1,5 +1,5 @@
 import { listScheduledPostsReadyToPublish } from "@/lib/x-agent/reviewDb";
-import { publishXPostQueueItem } from "@/lib/x-agent/publishQueuePost";
+import { publishScheduledQueueItem } from "@/lib/x-agent/publishQueuePost";
 import {
   formatDailyLimitLogMessage,
   getDailyPostLimitStatus,
@@ -92,12 +92,12 @@ export async function runCronPublisher(): Promise<CronPublisherResult> {
     );
 
     try {
-      const publish = await publishXPostQueueItem(item);
+      const publish = await publishScheduledQueueItem(item);
 
       if (publish.ok) {
         result.published += 1;
         console.log(
-          `${LOG_PREFIX} ✅ Published id=${item.id} status=PUBLISHED xTweetId=${publish.tweetId ?? "n/a"} xMediaId=${publish.mediaId ?? "n/a"}`
+          `${LOG_PREFIX} ✅ Published id=${item.id} status=PUBLISHED xTweetId=${publish.tweetId ?? "n/a"} xMediaId=${publish.mediaId ?? "n/a"} telegramMessageId=${publish.telegramMessageId ?? "n/a"}`
         );
         continue;
       }

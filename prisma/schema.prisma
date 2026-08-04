@@ -190,6 +190,7 @@ model XPostQueue {
   xTweetId       String?   @map("x_tweet_id")
   xMediaId       String?   @map("x_media_id")
   receiptMediaUrl String?  @map("receipt_media_url")
+  publicTelegramMessageId String? @map("public_telegram_message_id")
   decidedBy      String?   @map("decided_by")
   decidedAt      DateTime? @map("decided_at")
   dispatchedAt   DateTime? @map("dispatched_at")
@@ -210,4 +211,21 @@ model XPostLog {
   @@index([tradeId, createdAt(sort: Desc)], map: "x_post_log_trade_id_created_idx")
   @@index([gatePassed, createdAt(sort: Desc)], map: "x_post_log_gate_passed_created_idx")
   @@map("x_post_log")
+}
+
+/// Product-feed history for /api/feed empty-state fallback only.
+model FeedTrade {
+  tradeId          String   @id @map("trade_id")
+  transactionHash  String?  @map("transaction_hash")
+  proxyWallet      String?  @map("proxy_wallet")
+  title            String
+  stakeAmount      Float    @map("stake_amount")
+  averageEv        Float    @map("average_ev")
+  tradedAt         DateTime @map("traded_at") @db.Timestamptz(6)
+  payload          Json
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([stakeAmount, averageEv, tradedAt(sort: Desc)], map: "feed_trades_fallback_idx")
+  @@map("feed_trades")
 }

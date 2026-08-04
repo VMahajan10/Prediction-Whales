@@ -5,7 +5,7 @@ import { evaluateLiveFeedTradeGate } from "@/lib/feedGate";
 import { resolveFeedFilterCategoryLabel } from "@/lib/feedFilterDiagnostics";
 import {
   isQualifiedWalletForFeed,
-  meetsFeedTieredStakeThreshold,
+  meetsProductFeedStakeThreshold,
   meetsFeedTradeEvThreshold,
   resolvePolymarketTradeNotionalUsd,
   type WalletFeedQualificationInput,
@@ -173,13 +173,7 @@ export async function collectPolymarketFeedCandidates<
     const tradeEvPercent = tradeEvPercents.get(trade.id) ?? null;
 
     if (
-      !meetsFeedTieredStakeThreshold({
-        stakeUsd: notionalUsd,
-        title: trade.title,
-        slug: trade.slug,
-        eventSlug: trade.eventSlug,
-        category,
-      })
+      !meetsProductFeedStakeThreshold(notionalUsd)
     ) {
       evaluateLiveFeedTradeGate(
         {

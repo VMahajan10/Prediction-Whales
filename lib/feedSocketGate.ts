@@ -1,6 +1,6 @@
 import { evaluateLiveFeedTradeGate } from "@/lib/feedGate";
 import { resolveFeedFilterCategoryLabel } from "@/lib/feedFilterDiagnostics";
-import { meetsFeedTieredStakeThreshold } from "@/lib/feedQualification";
+import { meetsProductFeedStakeThreshold } from "@/lib/feedQualification";
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import {
   fetchPipelineEvBatch,
@@ -83,15 +83,9 @@ function logMissingAssetReject(trade: SocketTrade): void {
   );
 }
 
-/** Synchronous tiered stake floor — sports/culture $250, default $500, macro/politics $1k. */
+/** Product feed stake gate — flat $500 minimum. */
 export function passesFeedSocketStakeGate(trade: SocketTrade): boolean {
-  return meetsFeedTieredStakeThreshold({
-    stakeUsd: trade.usdNotional,
-    title: trade.title,
-    slug: trade.slug,
-    eventSlug: trade.eventSlug,
-    category: resolveFeedFilterCategoryLabel(trade),
-  });
+  return meetsProductFeedStakeThreshold(trade.usdNotional);
 }
 
 /** Async trade EV gate (+3.0% min on trade-level EV, rejects negative EV). */
@@ -110,7 +104,7 @@ export async function passesFeedSocketTradeEvGate(
   }).passed;
 }
 
-/** Full websocket broadcast gate: tiered stake/notional + calculatedEv >= +3.0%. */
+/** Full websocket broadcast gate: $500 stake + calculatedEv >= +3.0%. */
 export async function shouldBroadcastQualifiedSocketTrade(
   trade: SocketTrade
 ): Promise<boolean> {

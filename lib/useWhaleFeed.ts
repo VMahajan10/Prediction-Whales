@@ -10,9 +10,10 @@ import {
   passesLiveFeedTradeGate,
 } from "@/lib/feedGate";
 import {
-  meetsFeedTieredStakeThreshold,
+  meetsProductFeedStakeThreshold,
   resolvePolymarketTradeNotionalUsd,
 } from "@/lib/feedQualification";
+import { retainLastNonEmpty } from "@/lib/feed/feedRetention";
 import { resolveFeedFilterCategoryLabel } from "@/lib/feedFilterDiagnostics";
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import { translateWhaleTradeMarket } from "@/lib/marketTranslator";
@@ -184,6 +185,7 @@ export function useWhaleFeed() {
   const metricsFinalized = useRef<Set<string>>(new Set());
   const qualifiedNotified = useRef<Set<string>>(new Set());
   const loggedFilterRejects = useRef<Set<string>>(new Set());
+  const [retainedWhales, setRetainedWhales] = useState<WhaleTrade[]>([]);
   const [newWhale, setNewWhale] = useState<WhaleTrade | null>(null);
 
   useEffect(() => {
@@ -202,7 +204,7 @@ export function useWhaleFeed() {
         netEvPercent: t.netEvPercent ?? null,
         averageEv: t.averageEv ?? t.netEvPercent ?? null,
       }));
-      setBackfill(whales);
+      setBackfill((prev) => retainLastNonEmpty(whales, prev));
       for (const w of whales) {
         if (w.transactionHash) seenHashes.current.add(w.transactionHash);
         if (w.transactionHash && w.proxyWallet) {
@@ -231,7 +233,7 @@ export function useWhaleFeed() {
           const trades = await fetchBackfillTrades(abort.signal);
           if (abort.signal.aborted) return;
           applyTrades(trades);
-          break;
+          if (trades.length > 0) break;
         } catch {
           if (abort.signal.aborted) return;
           if (attempt === BACKFILL_ATTEMPTS) break;
@@ -305,6 +307,17 @@ export function useWhaleFeed() {
   }, [polymarketWhales, walletQualifications, pipelineEvIndex]);
 
   useEffect(() => {
+    if (qualifiedPolymarketWhales.length > 0) {
+      setRetainedWhales(qualifiedPolymarketWhales);
+    }
+  }, [qualifiedPolymarketWhales]);
+
+  const displayWhales = retainLastNonEmpty(
+    qualifiedPolymarketWhales,
+    retainedWhales
+  );
+
+  useEffect(() => {
     if (!backfillLoaded) return;
 
     let newDetected = 0;
@@ -328,13 +341,7 @@ export function useWhaleFeed() {
       );
 
       if (
-        !meetsFeedTieredStakeThreshold({
-          stakeUsd: whale.usdNotional,
-          title: whale.title,
-          slug: whale.slug,
-          eventSlug: whale.eventSlug,
-          category,
-        })
+        !meetsProductFeedStakeThreshold(whale.usdNotional)
       ) {
         evaluateLiveFeedTradeGate(
           {
@@ -445,12 +452,12 @@ export function useWhaleFeed() {
   const whales = useMemo(
     () =>
       buildPlatformFeed(
-        qualifiedPolymarketWhales,
+        displayWhales,
         KALSHI_WHALE_FEED_TRADES,
         "all",
         byDetectedDesc
       ),
-    [qualifiedPolymarketWhales]
+    [displayWhales]
   );
 
   const dismissNewWhale = useCallback(() => setNewWhale(null), []);

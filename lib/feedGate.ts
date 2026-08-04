@@ -2,8 +2,8 @@ import {
   isQualifiedLiveFeedTrade,
   MIN_FEED_TRADE_EV_DECIMAL,
   MIN_FEED_TRADE_EV_PCT,
-  meetsFeedTieredStakeThreshold,
   meetsFeedTradeEvThreshold,
+  meetsProductFeedStakeThreshold,
   resolveLiveFeedStakeFloorUsd,
   type LiveFeedQualificationTrade,
 } from "@/lib/feedQualification";
@@ -55,7 +55,7 @@ function formatStakeForLog(stakeUsd: number): string {
 function rejectionReasonLabel(reason: FeedGateRejectReason): string {
   switch (reason) {
     case "stake_floor":
-      return "stake/notional below tier floor";
+      return "stake/notional below product feed minimum";
     case "missing_trade_ev":
       return "missing calculated trade EV";
     case "trade_ev":
@@ -85,20 +85,13 @@ export function diagnoseLiveFeedTradeGate(
 ): LiveFeedGateResult {
   const category =
     trade.category ?? resolveFeedGateCategoryLabel(trade);
-  const stakeInput = {
-    stakeUsd: trade.stakeUsd,
-    title: trade.title,
-    slug: trade.slug,
-    eventSlug: trade.eventSlug,
-    category,
-  };
   const requiredStakeFloorUsd = resolveLiveFeedStakeFloorUsd({
     ...trade,
     category,
   });
   const calculatedEvPercent = trade.tradeEvPercent ?? null;
 
-  if (!meetsFeedTieredStakeThreshold(stakeInput)) {
+  if (!meetsProductFeedStakeThreshold(trade.stakeUsd)) {
     return {
       passed: false,
       reason: "stake_floor",

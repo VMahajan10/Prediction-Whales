@@ -4,6 +4,11 @@ import {
   enrichPolymarketFeedTradesWithIdentity,
   filterTranslatablePolymarketFeedTrades,
 } from "@/lib/feedQualificationServer";
+import { resolvePolymarketTradeNotionalUsd } from "@/lib/feedQualification";
+import {
+  fetchFallbackFeedTrades,
+  recordFeedTradeHistory,
+} from "@/lib/feed/feedTradeHistory";
 import { fetchWhaleBackfill } from "@/lib/polymarket";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +21,35 @@ export async function GET() {
     const candidates = await collectPolymarketFeedCandidates(trades);
     const translatable = filterTranslatablePolymarketFeedTrades(candidates);
     const enriched = await enrichPolymarketFeedTradesWithIdentity(translatable);
-    return NextResponse.json({ trades: enriched });
+
+    const renderable = enriched.filter(
+      (trade) =>
+        trade.netEvPercent != null && Number.isFinite(trade.netEvPercent)
+    );
+
+    await recordFeedTradeHistory(
+      renderable.map((trade) => ({
+        id: trade.id,
+        transactionHash: trade.transactionHash,
+        proxyWallet: trade.proxyWallet,
+        title: trade.title,
+        timestamp: trade.timestamp,
+        stakeAmountUsd: resolvePolymarketTradeNotionalUsd(trade),
+        averageEvPercent: trade.averageEv ?? trade.netEvPercent!,
+        payload: trade,
+      }))
+    );
+
+    if (renderable.length > 0) {
+      return NextResponse.json({ trades: enriched, source: "live" });
+    }
+
+    const fallback = await fetchFallbackFeedTrades<(typeof enriched)[number]>();
+    if (fallback.length > 0) {
+      return NextResponse.json({ trades: fallback, source: "history" });
+    }
+
+    return NextResponse.json({ trades: enriched, source: "live" });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Failed to fetch product feed";
