@@ -284,7 +284,7 @@ export function useWhaleFeed() {
           const payload = await fetchBackfillTrades(abort.signal);
           if (abort.signal.aborted) return;
           applyBackfill(payload);
-          if (payload.polymarket.length > 0) break;
+          if (payload.polymarket.length > 0 || payload.kalshi.length > 0) break;
         } catch {
           if (abort.signal.aborted) return;
           if (attempt === BACKFILL_ATTEMPTS) break;
@@ -299,6 +299,37 @@ export function useWhaleFeed() {
 
     void load();
     return () => abort.abort();
+  }, []);
+
+  /** Belt-and-suspenders Kalshi seed — /api/feed may return history without Kalshi. */
+  useEffect(() => {
+    if (!KALSHI_FEED_ENABLED) return;
+
+    let cancelled = false;
+
+    const seedKalshiFromApi = async () => {
+      try {
+        const res = await fetch("/api/kalshi/trades");
+        if (!res.ok || cancelled) return;
+        const data: { trades?: KalshiFeedTradeInput[] } = await res.json();
+        const incoming = (data.trades ?? []).map(kalshiFeedTradeFromApi);
+        if (incoming.length === 0 || cancelled) return;
+
+        setKalshiBackfill((prev) => {
+          const merged = new Map<string, KalshiFeedTradeInput>();
+          for (const trade of prev) merged.set(trade.id, trade);
+          for (const trade of incoming) merged.set(trade.id, trade);
+          return Array.from(merged.values());
+        });
+      } catch {
+        // Live poll via useKalshiTrades continues retrying.
+      }
+    };
+
+    void seedKalshiFromApi();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const liveWhales = useMemo(() => {

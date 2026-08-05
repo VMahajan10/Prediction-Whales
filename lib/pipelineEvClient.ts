@@ -89,14 +89,15 @@ function feedTradeToRequestItem(
 export function whaleTradeToRequestItem(
   trade: WhaleTrade
 ): PipelineEvRequestItem | null {
-  if (trade.source === "polymarket" && trade.assetId) {
+  const platform = (trade.platform ?? trade.source ?? "").toLowerCase();
+  if (platform === "polymarket" && trade.assetId) {
     return {
       source: "polymarket",
       tokenId: trade.assetId,
       tradePrice: trade.price,
     };
   }
-  if (trade.source === "kalshi" && trade.ticker) {
+  if (platform === "kalshi" && trade.ticker) {
     return {
       source: "kalshi",
       kalshiTicker: trade.ticker,
@@ -117,10 +118,11 @@ export function pipelineEvKeyForTrade(trade: FeedTrade): string | null {
 }
 
 export function pipelineEvKeyForWhale(trade: WhaleTrade): string | null {
-  if (trade.source === "polymarket" && trade.assetId) {
+  const platform = (trade.platform ?? trade.source ?? "").toLowerCase();
+  if (platform === "polymarket" && trade.assetId) {
     return pipelineEvLookupKeyPm(trade.assetId);
   }
-  if (trade.source === "kalshi" && trade.ticker) {
+  if (platform === "kalshi" && trade.ticker) {
     return pipelineEvLookupKeyKalshi(trade.ticker);
   }
   return null;
@@ -137,8 +139,9 @@ export function resolvePipelineEvForWhale(
   const direct = index.get(key);
   if (direct) return direct;
 
-  const tokenId = trade.source === "polymarket" ? trade.assetId : undefined;
-  const kalshiTicker = trade.source === "kalshi" ? trade.ticker : undefined;
+  const platform = (trade.platform ?? trade.source ?? "").toLowerCase();
+  const tokenId = platform === "polymarket" ? trade.assetId : undefined;
+  const kalshiTicker = platform === "kalshi" ? trade.ticker : undefined;
 
   for (const alias of pipelineEvLookupAliases({
     key,

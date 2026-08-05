@@ -2,6 +2,7 @@ import {
   meetsFeedTradeEvThreshold,
   meetsProductFeedStakeThreshold,
 } from "@/lib/feedQualification";
+import { normalizeFeedPlatform } from "@/lib/liveFeedMerge";
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import { resolvePipelineEvForWhale } from "@/lib/pipelineEvClient";
@@ -30,7 +31,7 @@ export interface KalshiFeedTradeInput {
 export function kalshiFeedTradeToWhale(
   trade: KalshiFeedTradeInput
 ): WhaleTrade {
-  return tradeToWhale(
+  const whale = tradeToWhale(
     {
       id: trade.id,
       title: trade.title,
@@ -49,6 +50,19 @@ export function kalshiFeedTradeToWhale(
       ticker: trade.ticker,
     }
   );
+
+  return {
+    ...whale,
+    platform: "KALSHI",
+    averageEv: null,
+    netEvPercent: null,
+    grossEvPercent: null,
+  };
+}
+
+function isKalshiRow(trade: WhaleTrade): boolean {
+  if (trade.source === "polymarket") return false;
+  return normalizeFeedPlatform(trade) === "kalshi";
 }
 
 /**
@@ -56,7 +70,7 @@ export function kalshiFeedTradeToWhale(
  */
 export function isKalshiTradeStakeCandidate(trade: WhaleTrade): boolean {
   return (
-    trade.source === "kalshi" &&
+    isKalshiRow(trade) &&
     meetsProductFeedStakeThreshold(trade.usdNotional)
   );
 }

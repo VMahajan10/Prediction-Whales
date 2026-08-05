@@ -62,12 +62,21 @@ export function buildPlatformFeed<T>(
   return mergeWithReservedSlots(pm, kalshi, sortFn, maxItems);
 }
 
-/** Client-side platform filter for merged whale rows with a `source` field. */
+/** Normalize platform tab value from `source` or uppercase `platform` tags. */
+export function normalizeFeedPlatform(
+  row: { source?: string; platform?: string }
+): LiveFeedPlatform | null {
+  const raw = (row.platform ?? row.source ?? "").toLowerCase();
+  if (raw === "polymarket" || raw === "kalshi") return raw;
+  return null;
+}
+
+/** Client-side platform filter — matches `source` and uppercase `platform` tags. */
 export function filterFeedByPlatform<
-  T extends { source?: "polymarket" | "kalshi" },
+  T extends { source?: "polymarket" | "kalshi"; platform?: string },
 >(rows: T[], platform: LiveFeedPlatform): T[] {
   if (platform === "all") return rows;
-  return rows.filter((row) => row.source === platform);
+  return rows.filter((row) => normalizeFeedPlatform(row) === platform);
 }
 
 export function liveFeedPlatformLabel(platform: LiveFeedPlatform): string {

@@ -37,6 +37,7 @@ describe("kalshiFeedTradeToWhale", () => {
     const whale = kalshiFeedTradeToWhale(baseTrade);
 
     expect(whale.source).toBe("kalshi");
+    expect(whale.platform).toBe("KALSHI");
     expect(whale.ticker).toBe("CPI-24-A3");
     expect(whale.usdNotional).toBe(900);
     expect(whale.detectedAt).toBe(1_700_000_000_000);

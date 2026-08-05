@@ -15,8 +15,22 @@ import { fetchWhaleBackfill } from "@/lib/polymarket";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-/** Credibility-qualified product feed — Polymarket whales only (feed v1 / OQ-2). */
+async function loadKalshiFeedCandidates() {
+  try {
+    return await collectKalshiFeedCandidates();
+  } catch (kalshiErr) {
+    console.warn(
+      "[api/feed] Kalshi candidate fetch failed:",
+      kalshiErr instanceof Error ? kalshiErr.message : kalshiErr
+    );
+    return [];
+  }
+}
+
+/** Credibility-qualified product feed — Polymarket whales + transient Kalshi candidates. */
 export async function GET() {
+  const kalshiTrades = await loadKalshiFeedCandidates();
+
   try {
     const trades = await fetchWhaleBackfill();
     const candidates = await collectPolymarketFeedCandidates(trades);
@@ -42,16 +56,6 @@ export async function GET() {
     );
 
     if (renderable.length > 0) {
-      let kalshiTrades: Awaited<ReturnType<typeof collectKalshiFeedCandidates>> =
-        [];
-      try {
-        kalshiTrades = await collectKalshiFeedCandidates();
-      } catch (kalshiErr) {
-        console.warn(
-          "[api/feed] Kalshi candidate fetch failed:",
-          kalshiErr instanceof Error ? kalshiErr.message : kalshiErr
-        );
-      }
       return NextResponse.json({
         trades: enriched,
         kalshiTrades,
@@ -61,18 +65,11 @@ export async function GET() {
 
     const fallback = await fetchFallbackFeedTrades<(typeof enriched)[number]>();
     if (fallback.length > 0) {
-      return NextResponse.json({ trades: fallback, source: "history" });
-    }
-
-    let kalshiTrades: Awaited<ReturnType<typeof collectKalshiFeedCandidates>> =
-      [];
-    try {
-      kalshiTrades = await collectKalshiFeedCandidates();
-    } catch (kalshiErr) {
-      console.warn(
-        "[api/feed] Kalshi candidate fetch failed:",
-        kalshiErr instanceof Error ? kalshiErr.message : kalshiErr
-      );
+      return NextResponse.json({
+        trades: fallback,
+        kalshiTrades,
+        source: "history",
+      });
     }
 
     return NextResponse.json({
@@ -84,6 +81,9 @@ export async function GET() {
     const message =
       error instanceof Error ? error.message : "Failed to fetch product feed";
     console.error("[api/feed]", message);
-    return NextResponse.json({ trades: [], error: message }, { status: 500 });
+    return NextResponse.json(
+      { trades: [], kalshiTrades, error: message },
+      { status: 500 }
+    );
   }
 }

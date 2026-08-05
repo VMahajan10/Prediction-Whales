@@ -8,6 +8,8 @@ export const WHALE_WINDOW_MS = 90_000;
 
 export interface WhaleTrade extends TradeSummary {
   source: "polymarket" | "kalshi";
+  /** Uppercase platform tag for UI filters / API payloads (alongside `source`). */
+  platform?: "KALSHI" | "POLYMARKET";
   /** USD notional (size × price for WS trades) */
   usdNotional: number;
   /** When MarketPulse first detected this trade */
