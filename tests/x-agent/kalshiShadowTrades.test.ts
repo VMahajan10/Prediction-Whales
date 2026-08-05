@@ -58,6 +58,21 @@ describe("kalshi shadow trade row", () => {
     });
   });
 
+  it("coerces string numerics from the Kalshi API", () => {
+    const row = buildKalshiShadowTradeRow({
+      tradeId: "trade-str",
+      ticker: "KXTEST",
+      size: "120.5",
+      timestamp: 1_700_000_000,
+      entryPrice: "0.42",
+      usdNotional: "50.4",
+    });
+
+    expect(row.size).toBe(120.5);
+    expect(row.entryPrice).toBe(0.42);
+    expect(row.usdNotional).toBe(50.4);
+  });
+
   it("rejects non-finite floats", () => {
     expect(() => toShadowFloat(Number.NaN)).toThrow(/Invalid shadow trade float/);
     expect(() => toShadowFloat(Number.POSITIVE_INFINITY)).toThrow(

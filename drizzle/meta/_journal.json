@@ -99,6 +99,13 @@
       "when": 1785459000000,
       "tag": "0016_x_post_log_rejection_reason",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1785460000000,
+      "tag": "0017_kalshi_shadow_trades_trade_id_unique",
+      "breakpoints": true
     }
   ]
 }

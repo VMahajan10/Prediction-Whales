@@ -6,26 +6,28 @@ import type { WhaleTrade } from "@/lib/whaleTrades";
 export interface KalshiShadowTradeInput {
   tradeId: string;
   ticker: string;
-  size: number;
+  size: number | string;
   /** Unix epoch seconds. */
   timestamp: number;
-  entryPrice: number;
+  entryPrice: number | string;
   takerSide?: string | null;
   takerOutcomeSide?: string | null;
   takerBookSide?: string | null;
   isBlockTrade?: boolean;
-  usdNotional?: number | null;
+  usdNotional?: number | string | null;
   rawPayload?: Record<string, unknown> | null;
 }
 
 const SHADOW_FLOAT_DECIMALS = 6;
 
-/** Coerce to a finite Postgres float (double precision) without IEEE noise. */
-export function toShadowFloat(value: number): number {
-  if (!Number.isFinite(value)) {
+/** Coerce API strings / floats to a finite Postgres double precision value. */
+export function toShadowFloat(value: number | string): number {
+  const numeric =
+    typeof value === "string" ? Number.parseFloat(value.trim()) : value;
+  if (!Number.isFinite(numeric)) {
     throw new Error(`Invalid shadow trade float: ${value}`);
   }
-  return Number.parseFloat(value.toFixed(SHADOW_FLOAT_DECIMALS));
+  return Number.parseFloat(numeric.toFixed(SHADOW_FLOAT_DECIMALS));
 }
 
 /** Strip non-JSON values and produce a driver-safe jsonb object. */
@@ -78,7 +80,16 @@ type PgErrorShape = {
   code?: string;
   detail?: string;
   constraint?: string;
+  cause?: unknown;
 };
+
+function readErrorCauseMessage(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const cause = (error as Error & PgErrorShape).cause;
+  if (cause instanceof Error) return cause.message;
+  if (typeof cause === "string") return cause;
+  return undefined;
+}
 
 export function formatShadowInsertError(error: unknown): Record<string, unknown> {
   if (!(error instanceof Error)) {
@@ -86,11 +97,13 @@ export function formatShadowInsertError(error: unknown): Record<string, unknown>
   }
 
   const pg = error as Error & PgErrorShape;
+  const causeMessage = readErrorCauseMessage(error);
   const details: Record<string, unknown> = {
     message: pg.message,
     stack: pg.stack,
   };
 
+  if (causeMessage) details.cause = causeMessage;
   if (pg.code) details.code = pg.code;
   if (pg.detail) details.detail = pg.detail;
   if (pg.constraint) details.constraint = pg.constraint;
@@ -128,10 +141,11 @@ export async function persistKalshiShadowTrade(
       .values(shadowInsertValues(row))
       .onConflictDoNothing({ target: kalshiShadowTrades.tradeId });
   } catch (error) {
+    const details = formatShadowInsertError(error);
+    const causeMessage = readErrorCauseMessage(error);
     console.warn(
-      "[kalshi/shadow] insert failed (non-fatal)",
-      formatShadowInsertError(error),
-      { tradeId: row.tradeId, ticker: row.ticker }
+      `[kalshi/shadow] insert failed (non-fatal) tradeId=${row.tradeId} ticker=${row.ticker}: ${details.message ?? "unknown"}${causeMessage ? ` | cause: ${causeMessage}` : ""}`,
+      details
     );
   }
 }
