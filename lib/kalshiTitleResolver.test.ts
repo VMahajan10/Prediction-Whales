@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import {
+  dedupeComboLegTitles,
   formatComboLegTitle,
   formatKalshiMarketDisplayTitle,
   humanizeKalshiTicker,
   isInternalKalshiTitle,
+  resolveKalshiMarketTitleParts,
 } from "./kalshiTitleResolver";
 
 const MVE_TICKER =
@@ -41,17 +43,45 @@ assert.equal(
 );
 
 assert.equal(
-  formatKalshiMarketDisplayTitle(
-    {
-      ticker: MVE_TICKER,
-      title: "yes Houston,no Over 7.5 runs scored,no Over 6.5 runs scored",
-      yes_sub_title:
-        "yes Houston,no Over 7.5 runs scored,no Over 6.5 runs scored",
-      mve_selected_legs: [{}],
-    },
-    { title: "Combo", sub_title: "MVE" }
+  dedupeComboLegTitles(
+    "yes Over 7.5 runs scored, yes Over 6.5 runs scored"
   ),
-  "yes Houston, no Over 7.5 runs scored, no Over 6.5 runs scored"
+  "Over 7.5 runs scored · Over 6.5 runs scored"
+);
+
+const tennisParts = resolveKalshiMarketTitleParts(
+  {
+    ticker: "KXITFMATCH-EXAMPLE",
+    title: "Stefanos Tsitsipas",
+    yes_sub_title: "STEFANOS TSITSIPAS",
+  },
+  { title: "Stefanos Tsitsipas vs Joao Fonseca" }
+);
+assert.equal(
+  tennisParts.eventTitle,
+  "Stefanos Tsitsipas vs Joao Fonseca",
+  "event title should be parent matchup"
+);
+assert.equal(
+  tennisParts.contractLabel,
+  "Stefanos Tsitsipas",
+  "contract label should be player selection"
+);
+
+const comboParts = resolveKalshiMarketTitleParts(
+  {
+    ticker: MVE_TICKER,
+    title: "yes Houston,no Over 7.5 runs scored,no Over 6.5 runs scored",
+    yes_sub_title:
+      "yes Houston,no Over 7.5 runs scored,no Over 6.5 runs scored",
+    mve_selected_legs: [{}],
+  },
+  { title: "Combo", sub_title: "MVE" }
+);
+assert.equal(comboParts.eventTitle, "Sports Combo");
+assert.equal(
+  comboParts.contractLabel,
+  "Houston · Over 7.5 runs scored · Over 6.5 runs scored"
 );
 
 assert.equal(
@@ -61,9 +91,9 @@ assert.equal(
       title: "Dallas wins by over 4.5 points",
       yes_sub_title: "Dallas wins by over 4.5 points",
     },
-    null
+    { title: "Dallas at Portland" }
   ),
-  "Dallas wins by over 4.5 points"
+  "Dallas at Portland"
 );
 
 assert.equal(

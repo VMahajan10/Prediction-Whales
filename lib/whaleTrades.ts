@@ -25,6 +25,8 @@ export interface WhaleTrade extends TradeSummary {
   whaleIdentity?: ResolvedWhaleIdentity;
   /** Plain-language market position copy for feed cards. */
   marketTranslation?: MarketPositionTranslation;
+  /** Kalshi contract selection label (player, line, prop). */
+  selectionLabel?: string;
 }
 
 export function isWhaleNotional(usd: number): boolean {

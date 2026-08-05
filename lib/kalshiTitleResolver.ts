@@ -78,8 +78,25 @@ export interface KalshiEventTitleInput {
   sub_title?: string | null;
 }
 
+export interface KalshiMarketTitleParts {
+  /** Parent event headline for feed cards (matchup, game, macro event). */
+  eventTitle: string;
+  /** Specific contract / selection (player, line, prop). */
+  contractLabel: string | null;
+  /** Legacy single-string title fallback. */
+  displayTitle: string;
+}
+
+export interface KalshiResolvedMarket {
+  eventTitle: string;
+  selectionLabel: string | null;
+}
+
+const MARKET_KEY_PREFIX = "kalshi:market:";
+
 let redis: Redis | null = null;
-const memoryCache = new Map<string, string>();
+const memoryCache = new Map<string, KalshiResolvedMarket>();
+const legacyTitleCache = new Map<string, string>();
 
 function getRedis(): Redis | null {
   const url = process.env.UPSTASH_REDIS_REST_URL;
@@ -140,6 +157,148 @@ export function formatComboLegTitle(raw: string): string {
     .trim();
 }
 
+function stripComboLegPrefix(raw: string): string {
+  return raw.trim().replace(/^(yes|no)\s+/i, "").trim();
+}
+
+/** Collapse duplicate combo legs and strip redundant yes/no prefixes. */
+export function dedupeComboLegTitles(raw: string): string {
+  const legs = formatComboLegTitle(raw)
+    .split(/,\s*/)
+    .map((leg) => stripComboLegPrefix(leg))
+    .filter(Boolean);
+
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const leg of legs) {
+    const key = leg.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(leg);
+  }
+
+  return unique.join(" · ");
+}
+
+function polishContractLabel(raw: string, combo: boolean): string {
+  const polished = cleanKalshiTitle(
+    combo ? formatComboLegTitle(raw) : raw.trim()
+  );
+  if (
+    polished.length > 0 &&
+    polished === polished.toUpperCase() &&
+    /[A-Z].*[A-Z]/.test(polished)
+  ) {
+    return polished
+      .split(/\s+/)
+      .map((word) =>
+        word.length <= 3
+          ? word.toUpperCase()
+          : word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+      )
+      .join(" ");
+  }
+  return polished;
+}
+
+function resolveEventTitle(event?: KalshiEventTitleInput | null): string | null {
+  const eventTitle = event?.title?.trim() ?? "";
+  const eventSub = event?.sub_title?.trim() ?? "";
+
+  if (eventTitle && !isGenericEventTitle(eventTitle)) {
+    return cleanKalshiTitle(eventTitle);
+  }
+  if (eventSub && !isGenericEventTitle(eventSub)) {
+    return cleanKalshiTitle(eventSub);
+  }
+  return null;
+}
+
+function resolveContractLabel(
+  market: KalshiMarketTitleInput,
+  options?: { takerOutcomeSide?: "yes" | "no" }
+): string | null {
+  const ticker = market.ticker ?? "";
+  const yesSub = market.yes_sub_title?.trim() ?? "";
+  const noSub = market.no_sub_title?.trim() ?? "";
+  const marketTitle = market.title?.trim() ?? "";
+  const combo = isComboMarket(market);
+  const preferNo = options?.takerOutcomeSide === "no";
+
+  const candidates = preferNo
+    ? [noSub, yesSub, marketTitle]
+    : [yesSub, noSub, marketTitle];
+
+  for (const raw of candidates) {
+    if (!raw || isInternalKalshiTitle(raw, ticker)) continue;
+    const label = polishContractLabel(raw, combo);
+    return combo ? dedupeComboLegTitles(label) : label;
+  }
+
+  return null;
+}
+
+/**
+ * Split Kalshi API fields into parent event title vs contract selection.
+ */
+export function resolveKalshiMarketTitleParts(
+  market: KalshiMarketTitleInput,
+  event?: KalshiEventTitleInput | null,
+  options?: { takerOutcomeSide?: "yes" | "no" }
+): KalshiMarketTitleParts {
+  const ticker = market.ticker ?? "";
+  const combo = isComboMarket(market);
+  const contractLabel = resolveContractLabel(market, options);
+  const eventTitle = resolveEventTitle(event);
+
+  if (eventTitle && contractLabel) {
+    if (contractLabel.toLowerCase() === eventTitle.toLowerCase()) {
+      return {
+        eventTitle,
+        contractLabel: null,
+        displayTitle: eventTitle,
+      };
+    }
+    return {
+      eventTitle,
+      contractLabel,
+      displayTitle: eventTitle,
+    };
+  }
+
+  if (eventTitle) {
+    return {
+      eventTitle,
+      contractLabel: null,
+      displayTitle: eventTitle,
+    };
+  }
+
+  if (contractLabel) {
+    if (combo) {
+      const comboEvent =
+        labelSeries(ticker.split("-")[0] ?? "") || "Sports Combo";
+      return {
+        eventTitle: comboEvent,
+        contractLabel,
+        displayTitle: comboEvent,
+      };
+    }
+    return {
+      eventTitle: contractLabel,
+      contractLabel: null,
+      displayTitle: contractLabel,
+    };
+  }
+
+  const fallback = humanizeKalshiTicker(ticker);
+  return {
+    eventTitle: fallback,
+    contractLabel: null,
+    displayTitle: fallback,
+  };
+}
+
 function isComboMarket(market: KalshiMarketTitleInput): boolean {
   const ticker = market.ticker ?? "";
   return (
@@ -151,47 +310,17 @@ function isComboMarket(market: KalshiMarketTitleInput): boolean {
 }
 
 /**
- * Prefer market subtitles over generic event titles (e.g. MVE "Combo").
- * Returns null when no human-readable label is available.
+ * Legacy combined title — returns parent event title when available.
  */
 export function formatKalshiMarketDisplayTitle(
   market: KalshiMarketTitleInput,
   event?: KalshiEventTitleInput | null
 ): string | null {
-  const ticker = market.ticker ?? "";
-  const yesSub = market.yes_sub_title?.trim() ?? "";
-  const marketTitle = market.title?.trim() ?? "";
-  const noSub = market.no_sub_title?.trim() ?? "";
-  const combo = isComboMarket(market);
-
-  const polish = (raw: string) =>
-    cleanKalshiTitle(combo ? formatComboLegTitle(raw) : raw);
-
-  for (const raw of [yesSub, marketTitle, noSub]) {
-    if (!raw || isInternalKalshiTitle(raw, ticker)) continue;
-    return polish(raw);
+  const parts = resolveKalshiMarketTitleParts(market, event);
+  if (isInternalKalshiTitle(parts.displayTitle, market.ticker ?? "")) {
+    return null;
   }
-
-  const eventTitle = event?.title?.trim() ?? "";
-  const eventSub = event?.sub_title?.trim() ?? "";
-  const subtitle = yesSub || marketTitle || noSub;
-
-  const eventLabel =
-    eventTitle && !isGenericEventTitle(eventTitle)
-      ? eventTitle
-      : eventSub && !isGenericEventTitle(eventSub)
-        ? eventSub
-        : "";
-
-  if (eventLabel && subtitle && !isInternalKalshiTitle(subtitle, ticker)) {
-    return polish(`${eventLabel}: ${subtitle}`);
-  }
-
-  if (eventLabel && !subtitle) {
-    return cleanKalshiTitle(eventLabel);
-  }
-
-  return null;
+  return parts.displayTitle;
 }
 
 function labelSeries(raw: string): string {
@@ -289,28 +418,73 @@ export function humanizeKalshiTicker(ticker: string): string {
   return label || ticker;
 }
 
-function rememberTitle(ticker: string, title: string): void {
-  if (!ticker || !title) return;
-  memoryCache.set(ticker, title);
+function rememberMarket(ticker: string, market: KalshiResolvedMarket): void {
+  if (!ticker || !market.eventTitle) return;
+  memoryCache.set(ticker, market);
+  legacyTitleCache.set(ticker, market.eventTitle);
+}
+
+export async function getCachedKalshiMarket(
+  ticker: string
+): Promise<KalshiResolvedMarket | null> {
+  const mem = memoryCache.get(ticker);
+  if (mem && !isInternalKalshiTitle(mem.eventTitle, ticker)) return mem;
+
+  const client = getRedis();
+  if (!client) return null;
+  try {
+    const cached = await client.get<string | KalshiResolvedMarket>(
+      `${MARKET_KEY_PREFIX}${ticker}`
+    );
+    if (!cached) return null;
+
+    const parsed: KalshiResolvedMarket =
+      typeof cached === "string"
+        ? (() => {
+            try {
+              return JSON.parse(cached) as KalshiResolvedMarket;
+            } catch {
+              return { eventTitle: cached, selectionLabel: null };
+            }
+          })()
+        : cached;
+
+    if (isInternalKalshiTitle(parsed.eventTitle, ticker)) return null;
+    rememberMarket(ticker, parsed);
+    return parsed;
+  } catch {
+    return null;
+  }
 }
 
 export async function getCachedKalshiTitle(
   ticker: string
 ): Promise<string | null> {
-  const mem = memoryCache.get(ticker);
-  if (mem && !isInternalKalshiTitle(mem, ticker)) return mem;
+  const legacy = legacyTitleCache.get(ticker);
+  if (legacy && !isInternalKalshiTitle(legacy, ticker)) return legacy;
+
+  const market = await getCachedKalshiMarket(ticker);
+  return market?.eventTitle ?? null;
+}
+
+export async function cacheKalshiMarket(
+  ticker: string,
+  market: KalshiResolvedMarket
+): Promise<void> {
+  if (!ticker || !market.eventTitle || isInternalKalshiTitle(market.eventTitle, ticker)) {
+    return;
+  }
+  rememberMarket(ticker, market);
+  await cacheKalshiTitle(ticker, market.eventTitle);
 
   const client = getRedis();
-  if (!client) return null;
+  if (!client) return;
   try {
-    const cached = await client.get<string>(`${TITLE_KEY_PREFIX}${ticker}`);
-    if (cached && !isInternalKalshiTitle(cached, ticker)) {
-      rememberTitle(ticker, cached);
-      return cached;
-    }
-    return null;
+    await client.set(`${MARKET_KEY_PREFIX}${ticker}`, JSON.stringify(market), {
+      ex: TITLE_TTL_SEC,
+    });
   } catch {
-    return null;
+    // no-op
   }
 }
 
@@ -319,7 +493,7 @@ export async function cacheKalshiTitle(
   title: string
 ): Promise<void> {
   if (!ticker || !title || isInternalKalshiTitle(title, ticker)) return;
-  rememberTitle(ticker, title);
+  legacyTitleCache.set(ticker, title);
   const client = getRedis();
   if (!client) return;
   try {
@@ -382,7 +556,10 @@ function marketRecordFromApi(
   };
 }
 
-async function fetchKalshiMarketTitle(ticker: string): Promise<string | null> {
+async function fetchKalshiMarketResolved(
+  ticker: string,
+  options?: { takerOutcomeSide?: "yes" | "no" }
+): Promise<KalshiResolvedMarket | null> {
   try {
     const res = await kalshiFetch(`/markets/${encodeURIComponent(ticker)}`, {
       next: { revalidate: 3600 },
@@ -397,21 +574,29 @@ async function fetchKalshiMarketTitle(ticker: string): Promise<string | null> {
     if (!market) return null;
 
     const input = marketRecordFromApi(market, ticker);
-    let title = formatKalshiMarketDisplayTitle(input, null);
-    if (title) return title;
+    let event: KalshiEventTitleInput | null = null;
 
     const eventTicker =
       typeof market.event_ticker === "string" ? market.event_ticker : "";
     if (eventTicker) {
-      const event = await fetchKalshiEvent(eventTicker);
-      title = formatKalshiMarketDisplayTitle(input, event);
-      if (title) return title;
+      event = await fetchKalshiEvent(eventTicker);
     }
 
-    return null;
+    const parts = resolveKalshiMarketTitleParts(input, event, options);
+    if (isInternalKalshiTitle(parts.eventTitle, ticker)) return null;
+
+    return {
+      eventTitle: parts.eventTitle,
+      selectionLabel: parts.contractLabel,
+    };
   } catch {
     return null;
   }
+}
+
+async function fetchKalshiMarketTitle(ticker: string): Promise<string | null> {
+  const resolved = await fetchKalshiMarketResolved(ticker);
+  return resolved?.eventTitle ?? null;
 }
 
 const pendingLookups = new Set<string>();
@@ -429,30 +614,41 @@ export function scheduleKalshiTitleLookup(ticker: string): void {
   })();
 }
 
-export async function resolveKalshiTitle(ticker: string): Promise<string> {
-  const cached = await getCachedKalshiTitle(ticker);
+export async function resolveKalshiMarket(
+  ticker: string,
+  options?: { takerOutcomeSide?: "yes" | "no" }
+): Promise<KalshiResolvedMarket> {
+  const cached = await getCachedKalshiMarket(ticker);
   if (cached) return cached;
 
-  const fetched = await fetchKalshiMarketTitle(ticker);
+  const fetched = await fetchKalshiMarketResolved(ticker, options);
   if (fetched) {
-    await cacheKalshiTitle(ticker, fetched);
+    await cacheKalshiMarket(ticker, fetched);
     return fetched;
   }
 
-  return humanizeKalshiTicker(ticker);
+  return {
+    eventTitle: humanizeKalshiTicker(ticker),
+    selectionLabel: null,
+  };
 }
 
-/** Resolve many tickers in parallel (deduped), preferring API subtitles over ticker fallbacks. */
-export async function resolveKalshiTitles(
+export async function resolveKalshiTitle(ticker: string): Promise<string> {
+  const resolved = await resolveKalshiMarket(ticker);
+  return resolved.eventTitle;
+}
+
+/** Resolve many tickers in parallel (deduped), preferring API event + contract labels. */
+export async function resolveKalshiMarkets(
   tickers: string[],
   concurrency = 5
-): Promise<Map<string, string>> {
+): Promise<Map<string, KalshiResolvedMarket>> {
   const unique = Array.from(new Set(tickers.filter(Boolean)));
-  const result = new Map<string, string>();
+  const result = new Map<string, KalshiResolvedMarket>();
   const toFetch: string[] = [];
 
   for (const ticker of unique) {
-    const cached = await getCachedKalshiTitle(ticker);
+    const cached = await getCachedKalshiMarket(ticker);
     if (cached) {
       result.set(ticker, cached);
       continue;
@@ -464,10 +660,13 @@ export async function resolveKalshiTitles(
   async function worker(): Promise<void> {
     while (index < toFetch.length) {
       const ticker = toFetch[index++];
-      const fetched = await fetchKalshiMarketTitle(ticker);
-      const title = fetched ?? humanizeKalshiTicker(ticker);
-      result.set(ticker, title);
-      if (fetched) await cacheKalshiTitle(ticker, fetched);
+      const fetched = await fetchKalshiMarketResolved(ticker);
+      const resolved = fetched ?? {
+        eventTitle: humanizeKalshiTicker(ticker),
+        selectionLabel: null,
+      };
+      result.set(ticker, resolved);
+      if (fetched) await cacheKalshiMarket(ticker, fetched);
       if (index < toFetch.length) {
         await sleep(KALSHI_BATCH_DELAY_MS);
       }
@@ -481,4 +680,17 @@ export async function resolveKalshiTitles(
   await Promise.all(workers);
 
   return result;
+}
+
+/** @deprecated Prefer {@link resolveKalshiMarkets} for event + selection labels. */
+export async function resolveKalshiTitles(
+  tickers: string[],
+  concurrency = 5
+): Promise<Map<string, string>> {
+  const markets = await resolveKalshiMarkets(tickers, concurrency);
+  const titles = new Map<string, string>();
+  for (const [ticker, market] of markets) {
+    titles.set(ticker, market.eventTitle);
+  }
+  return titles;
 }

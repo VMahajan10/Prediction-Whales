@@ -80,6 +80,7 @@ function kalshiFeedTradeFromApi(trade: KalshiFeedTradeInput): KalshiFeedTradeInp
     usdNotional: trade.usdNotional,
     timestamp: trade.timestamp,
     ticker: trade.ticker,
+    selectionLabel: trade.selectionLabel,
   };
 }
 
@@ -370,6 +371,7 @@ export function useWhaleFeed() {
           usdNotional: trade.usdNotional,
           timestamp: trade.timestamp,
           ticker: trade.ticker,
+          selectionLabel: trade.selectionLabel,
         });
       }
     }

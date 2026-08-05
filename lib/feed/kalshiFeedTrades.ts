@@ -25,6 +25,7 @@ export interface KalshiFeedTradeInput {
   usdNotional: number;
   timestamp: number;
   ticker?: string;
+  selectionLabel?: string;
 }
 
 /**
@@ -58,6 +59,7 @@ export function kalshiFeedTradeToWhale(
   return {
     ...whale,
     platform: "KALSHI",
+    selectionLabel: trade.selectionLabel,
     averageEv: null,
     netEvPercent: null,
     grossEvPercent: null,

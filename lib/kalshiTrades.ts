@@ -1,4 +1,4 @@
-import { resolveKalshiTitles } from "@/lib/kalshiTitleResolver";
+import { resolveKalshiMarkets } from "@/lib/kalshiTitleResolver";
 import { kalshiFetch } from "@/lib/kalshi/http";
 import { persistKalshiShadowTrade } from "@/lib/x-agent/kalshiShadowTrades";
 
@@ -16,6 +16,8 @@ export interface FeedTrade {
   transactionHash?: string;
   ticker?: string;
   slug?: string;
+  /** Kalshi contract selection (player, line, prop) — not Yes/No side. */
+  selectionLabel?: string;
   /** Polymarket CLOB token id (YES leg) for pipeline EV lookup. */
   assetId?: string;
   isBlockTrade?: boolean;
@@ -68,7 +70,7 @@ function parseTimestamp(createdTime: string, nowEpochSeconds: number): number {
 
 function normalizeKalshiTrade(
   raw: KalshiRawTrade,
-  title: string,
+  market: { eventTitle: string; selectionLabel?: string | null },
   nowEpochSeconds: number
 ): FeedTrade | null {
   const price =
@@ -90,7 +92,7 @@ function normalizeKalshiTrade(
   return {
     id: raw.trade_id,
     source: "kalshi",
-    title,
+    title: market.eventTitle,
     outcome,
     side: raw.taker_book_side === "ask" ? "SELL" : "BUY",
     price,
@@ -99,6 +101,7 @@ function normalizeKalshiTrade(
     timestamp: parseTimestamp(raw.created_time, nowEpochSeconds),
     traceable: true,
     ticker: raw.ticker,
+    selectionLabel: market.selectionLabel ?? undefined,
     isBlockTrade: raw.is_block_trade === true,
   };
 }
@@ -128,16 +131,19 @@ export async function fetchKalshiTrades(
 
   const raws = (data as { trades: KalshiRawTrade[] }).trades;
   const tickers = raws.map((raw) => raw.ticker).filter(Boolean);
-  const titleCache = await resolveKalshiTitles(tickers);
+  const marketCache = await resolveKalshiMarkets(tickers);
   const trades: FeedTrade[] = [];
 
   for (const raw of raws) {
     if (!raw?.trade_id || !raw?.ticker) continue;
 
-    const title =
-      titleCache.get(raw.ticker) ?? raw.ticker;
+    const cached = marketCache.get(raw.ticker);
+    const market = cached ?? {
+      eventTitle: raw.ticker,
+      selectionLabel: null,
+    };
 
-    const normalized = normalizeKalshiTrade(raw, title, nowEpochSeconds);
+    const normalized = normalizeKalshiTrade(raw, market, nowEpochSeconds);
     if (!normalized) continue;
 
     void persistKalshiShadowTrade(shadowInputFromRaw(raw, normalized));

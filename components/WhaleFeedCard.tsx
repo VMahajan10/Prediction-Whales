@@ -142,6 +142,10 @@ export default function WhaleFeedCard({
     trade.marketTranslation?.backingLabel ??
     (isBuy ? `Backing ${trade.outcome}` : "Exiting position");
   const exitLabel = trade.marketTranslation?.exitByLabel;
+  const positionLabel =
+    isKalshi && trade.selectionLabel
+      ? trade.selectionLabel
+      : (exitLabel ?? backingLabel);
   const directionClass = isBuy
     ? "bg-pulse-yes/15 text-pulse-yes"
     : "bg-pulse-no/15 text-pulse-no";
@@ -205,7 +209,7 @@ export default function WhaleFeedCard({
           <span
             className={`inline-block max-w-full truncate rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${directionClass}`}
           >
-            {exitLabel ?? backingLabel}
+            {positionLabel}
           </span>
         </div>
         <span
