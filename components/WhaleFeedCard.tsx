@@ -7,15 +7,11 @@ import {
 } from "@/lib/marketCategory";
 import { formatFeedRecency } from "@/lib/whaleFeedCategories";
 import { formatPriceCents, formatStakeCompact } from "@/lib/whaleDetails";
+import { resolveFeedTradeEvDisplay } from "@/lib/feedTradeEv";
 import {
   formatWhaleWinRatePercent,
   sanitizeWhaleDisplayName,
 } from "@/lib/whaleIdentityResolver";
-import { formatEvPercent } from "@/lib/crossMarketEvDisplay";
-import {
-  coalesceDisplayEvPercent,
-  pipelineEvTone,
-} from "@/lib/evPipeline/tradeEvRecord";
 import type { WhaleTrade } from "@/lib/whaleTrades";
 
 export interface WhaleFeedCardProps {
@@ -121,21 +117,17 @@ export default function WhaleFeedCard({
 
   const winRateLabel = formatWhaleWinRatePercent(whale.winRate);
 
-  // Percent units (3 = +3%), unlike the decimal wallet-level whaleIdentity.avgEv.
-  const tradeEvPercent = coalesceDisplayEvPercent({
+  const tradeEvDisplay = resolveFeedTradeEvDisplay({
+    price: trade.price,
+    source: trade.source,
     netEvPercent: trade.netEvPercent ?? null,
     grossEvPercent: trade.grossEvPercent ?? null,
     averageEv: trade.averageEv ?? null,
   });
-  const tradeEvLabel =
-    tradeEvPercent != null ? formatEvPercent(tradeEvPercent) : "N/A";
-  const tradeEvTone =
-    tradeEvPercent != null
-      ? pipelineEvTone(tradeEvPercent)
-      : { positive: false, negative: false };
-  const tradeEvClass = tradeEvTone.positive
+  const tradeEvLabel = tradeEvDisplay.value;
+  const tradeEvClass = tradeEvDisplay.positive
     ? "text-pulse-yes"
-    : tradeEvTone.negative
+    : tradeEvDisplay.negative
       ? "text-pulse-no"
       : "text-pulse-label";
 
@@ -235,7 +227,7 @@ export default function WhaleFeedCard({
         <StatCell
           label="Trade EV"
           value={tradeEvLabel}
-          sublabel="VS. MARKET AT ENTRY"
+          sublabel={tradeEvDisplay.sublabel ?? "VS. MARKET AT ENTRY"}
           valueClass={tradeEvClass}
         />
       </div>

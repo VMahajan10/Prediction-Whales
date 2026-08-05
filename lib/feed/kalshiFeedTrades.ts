@@ -1,7 +1,11 @@
 import {
   meetsFeedTradeEvThreshold,
-  meetsProductFeedStakeThreshold,
 } from "@/lib/feedQualification";
+import {
+  classifyStakeFloorTier,
+  STAKE_FLOOR_DEFAULT_USD,
+  STAKE_FLOOR_SPORTS_ENTERTAINMENT_USD,
+} from "@/lib/x-agent/stakeFloor";
 import { normalizeFeedPlatform } from "@/lib/liveFeedMerge";
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
@@ -66,13 +70,25 @@ function isKalshiRow(trade: WhaleTrade): boolean {
 }
 
 /**
- * Kalshi product-feed stake gate — flat $500 minimum, no wallet checks.
+ * Kalshi feed stake gate — $250 sports/culture, $500 default (not macro $1k).
+ */
+export function meetsKalshiFeedStakeThreshold(trade: WhaleTrade): boolean {
+  if (!isKalshiRow(trade) || !Number.isFinite(trade.usdNotional)) return false;
+
+  const tier = classifyStakeFloorTier(trade.title, trade.slug, trade.eventSlug);
+  const floorUsd =
+    tier === "sports_entertainment"
+      ? STAKE_FLOOR_SPORTS_ENTERTAINMENT_USD
+      : STAKE_FLOOR_DEFAULT_USD;
+
+  return trade.usdNotional >= floorUsd;
+}
+
+/**
+ * Kalshi product-feed stake gate — tiered floors, no wallet checks.
  */
 export function isKalshiTradeStakeCandidate(trade: WhaleTrade): boolean {
-  return (
-    isKalshiRow(trade) &&
-    meetsProductFeedStakeThreshold(trade.usdNotional)
-  );
+  return isKalshiRow(trade) && meetsKalshiFeedStakeThreshold(trade);
 }
 
 /**

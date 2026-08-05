@@ -42,10 +42,12 @@ import {
 } from "@/lib/evPipeline/redisCache";
 import { computeEvForMappedPair } from "@/lib/evPipeline/computeMappedEv";
 import {
+  deriveEvPercentFromPTrue,
   coalesceDisplayEvPercent,
   DEFAULT_P_MARKET_FALLBACK,
   normalizeIncomingTradePrice,
   normalizePipelineTradeEv,
+  pipelineEvTone,
   strictApiTradeEvPayload,
 } from "@/lib/evPipeline/tradeEvRecord";
 import type {
@@ -737,6 +739,19 @@ export async function ensureFullyComputedTradeEv(
     return lowConfidence;
   }
 
+  if (item.source === "kalshi") {
+    const kalshiFallback = await buildKalshiTradeEvFallback(
+      lookupKey,
+      item,
+      resolvedMapping
+    );
+    const finalizedKalshi = tryFinalize(kalshiFallback);
+    if (finalizedKalshi) {
+      await cacheTradeEvLookup(lookupKey, finalizedKalshi);
+      return finalizedKalshi;
+    }
+  }
+
   return createUnmappedPipelineTradeEv(lookupKey, item);
 }
 
@@ -761,6 +776,100 @@ async function resolvePmTokenForKalshi(
   } catch {
     return null;
   }
+}
+
+/**
+ * Kalshi-only EV fallback when ensemble / sportsbook paths abstain:
+ * 1) cross-venue — PM mid as fair value vs Kalshi execution price
+ * 2) standalone — Kalshi mid as fair value (0% EV at market)
+ */
+async function buildKalshiTradeEvFallback(
+  lookupKey: string,
+  item: PipelineTradeEvInput,
+  mapping?: CachedMapping | null
+): Promise<PipelineTradeEv | null> {
+  if (item.source !== "kalshi") return null;
+
+  const kalshiTicker = normalizeKalshiTicker(item.kalshiTicker);
+  if (!kalshiTicker) return null;
+
+  const tokenId = normalizePmTokenId(
+    item.tokenId ??
+      mapping?.polymarketTokenId ??
+      (await resolvePmTokenForKalshi(kalshiTicker))
+  );
+  const books = await loadOrderBookContext(tokenId, kalshiTicker);
+  const executionPrice = normalizeIncomingTradePrice(item.tradePrice);
+  const mappingPairKey =
+    tokenId && kalshiTicker
+      ? pipelineMappingPairKey(tokenId, kalshiTicker)
+      : null;
+
+  if (
+    tokenId &&
+    books.pmMid != null &&
+    Number.isFinite(books.pmMid) &&
+    executionPrice != null
+  ) {
+    const pTrue = books.pmMid;
+    const pMarket = executionPrice;
+    const netEvPercent = deriveEvPercentFromPTrue(pTrue, executionPrice, pMarket);
+    if (netEvPercent != null && Number.isFinite(netEvPercent)) {
+      return attachAverageEvField({
+        key: lookupKey,
+        status: "ok",
+        tokenId,
+        kalshiTicker,
+        mappingPairKey,
+        pTrue,
+        pMarket,
+        pmMid: books.pmMid,
+        kalshiMid: books.kalshiMid,
+        netEvPercent,
+        grossEvPercent: netEvPercent,
+        averageEv: netEvPercent,
+        netEv: 0,
+        grossEv: 0,
+        pTrueSource: "cross_venue_ob",
+        pTrueConfidence: 0.55,
+        pTrueLowConfidence: false,
+        evFormulaVersion: "kalshi_cross_venue_pm",
+      });
+    }
+  }
+
+  if (
+    books.kalshiMid != null &&
+    Number.isFinite(books.kalshiMid) &&
+    executionPrice != null
+  ) {
+    const pTrue = books.kalshiMid;
+    const netEvPercent =
+      deriveEvPercentFromPTrue(pTrue, executionPrice, books.kalshiMid) ?? 0;
+
+    return attachAverageEvField({
+      key: lookupKey,
+      status: "ok",
+      tokenId,
+      kalshiTicker,
+      mappingPairKey,
+      pTrue,
+      pMarket: executionPrice,
+      pmMid: books.pmMid,
+      kalshiMid: books.kalshiMid,
+      netEvPercent,
+      grossEvPercent: netEvPercent,
+      averageEv: netEvPercent,
+      netEv: 0,
+      grossEv: 0,
+      pTrueSource: "standalone_ob",
+      pTrueConfidence: 0.4,
+      pTrueLowConfidence: false,
+      evFormulaVersion: "kalshi_standalone_ob",
+    });
+  }
+
+  return null;
 }
 
 type OrderBookContext = {
