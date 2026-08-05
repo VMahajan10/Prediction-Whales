@@ -387,7 +387,7 @@ async function persistMappingPTrue(
         },
       });
   } catch (error) {
-    console.error(
+    console.warn(
       "[true_probabilities] upsert failed:",
       error instanceof Error ? error.message : error
     );
@@ -706,6 +706,55 @@ export async function processMappedPTrue(
       kalshiTicker,
     });
 
+    const recoverAfterPersistFailure = async (reason: string): Promise<boolean> => {
+      console.warn(
+        `[ev-pipeline] ${reason} for ${tokenId}; attempting derivative/baseline fallback`
+      );
+
+      if (spec) {
+        const derived = deriveDerivativePTrue(spec, anchorStore, marketPrior);
+        if (derived) {
+          const persisted = await persistMappingPTrue(
+            db,
+            mapping,
+            derived.pTrue,
+            {
+              pmMid,
+              kalshiMid,
+              marketPrior,
+              pmOb: prefetch.pmOb,
+              kalshiOb: prefetch.kalshiOb,
+              sourceType: derived.method,
+              modelVersion: "derivative_pricing_v2",
+              logSuffix: `(fallback ${derived.marketClass} ${derived.detail})`,
+            },
+            redisBatch
+          );
+          if (persisted != null) return true;
+        }
+      }
+
+      try {
+        await seedBaselineEvForMapping(
+          tokenId,
+          kalshiTicker,
+          pmMid,
+          kalshiMid,
+          marketPrior,
+          redisBatch,
+          prefetch.pmOb,
+          prefetch.kalshiOb
+        );
+        return true;
+      } catch (fallbackErr) {
+        console.warn(
+          "[ev-pipeline] baseline EV seed failed:",
+          fallbackErr instanceof Error ? fallbackErr.message : fallbackErr
+        );
+        return false;
+      }
+    };
+
     if (spec && !spec.isPrimary) {
       const derived = deriveDerivativePTrue(spec, anchorStore, marketPrior);
       if (derived) {
@@ -761,50 +810,14 @@ export async function processMappedPTrue(
 
       if (persisted != null) {
         processed += 1;
-      } else {
-        throw new Error(`true_probabilities upsert failed for ${tokenId}`);
+      } else if (await recoverAfterPersistFailure("true_probabilities upsert failed")) {
+        processed += 1;
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      console.error("Batch EV Fetch Error:", message);
-
-      if (spec) {
-        const derived = deriveDerivativePTrue(spec, anchorStore, marketPrior);
-        if (derived) {
-          const persisted = await persistMappingPTrue(db, mapping, derived.pTrue, {
-              pmMid,
-              kalshiMid,
-              marketPrior,
-              pmOb: prefetch.pmOb,
-              kalshiOb: prefetch.kalshiOb,
-              sourceType: derived.method,
-              modelVersion: "derivative_pricing_v2",
-              logSuffix: `(fallback ${derived.marketClass} ${derived.detail})`,
-            }, redisBatch);
-          if (persisted != null) {
-            processed += 1;
-            continue;
-          }
-        }
-      }
-
-      try {
-        await seedBaselineEvForMapping(
-          tokenId,
-          kalshiTicker,
-          pmMid,
-          kalshiMid,
-          marketPrior,
-          redisBatch,
-          prefetch.pmOb,
-          prefetch.kalshiOb
-        );
+      console.warn("Batch EV Fetch Error:", message);
+      if (await recoverAfterPersistFailure("ensemble scoring failed")) {
         processed += 1;
-      } catch (fallbackErr) {
-        console.error(
-          "[ev-pipeline] baseline EV seed failed:",
-          fallbackErr instanceof Error ? fallbackErr.message : fallbackErr
-        );
       }
     }
   }
