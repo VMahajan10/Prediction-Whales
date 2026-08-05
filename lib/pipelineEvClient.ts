@@ -5,8 +5,6 @@ import type { FeedTrade } from "@/lib/kalshiTrades";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import {
   pipelineEvLookupKey,
-  pipelineEvLookupKeyKalshi,
-  pipelineEvLookupKeyPm,
 } from "@/lib/evPipeline/types";
 import { normalizePipelineTradeEv } from "@/lib/evPipeline/tradeEvRecord";
 import {
@@ -14,8 +12,16 @@ import {
   indexPipelineTradeEvAliases,
   pipelineEvLookupAliases,
 } from "@/lib/evPipeline/crossAssetLookup";
+import {
+  pipelineEvKeyForTrade,
+  pipelineEvKeyForWhale,
+} from "@/lib/pipelineEvLookupHelpers";
+import type { PipelineEvRequestItem } from "@/lib/types/ev";
 import type { MarketSummary } from "@/lib/polymarket";
 import type { WhaleTrade } from "@/lib/whaleTrades";
+
+export type { PipelineEvRequestItem } from "@/lib/types/ev";
+export { pipelineEvKeyForTrade, pipelineEvKeyForWhale } from "@/lib/pipelineEvLookupHelpers";
 
 const REFRESH_MS = 45_000;
 
@@ -40,13 +46,6 @@ export function normalizePipelineEvEntry(
   if (!entry) return null;
   const enriched = enrichPipelineTradeEvCrossIds(entry, lookupKey ?? entry.key);
   return normalizePipelineTradeEv(enriched, lookupKey ?? enriched.key) ?? enriched;
-}
-
-export interface PipelineEvRequestItem {
-  source: "polymarket" | "kalshi";
-  tokenId?: string;
-  kalshiTicker?: string;
-  tradePrice?: number;
 }
 
 type Listener = (index: Map<string, PipelineTradeEv>, loading: boolean) => void;
@@ -107,27 +106,6 @@ export function whaleTradeToRequestItem(
   return null;
 }
 
-export function pipelineEvKeyForTrade(trade: FeedTrade): string | null {
-  if (trade.source === "polymarket" && trade.assetId) {
-    return pipelineEvLookupKeyPm(trade.assetId);
-  }
-  if (trade.source === "kalshi" && trade.ticker) {
-    return pipelineEvLookupKeyKalshi(trade.ticker);
-  }
-  return null;
-}
-
-export function pipelineEvKeyForWhale(trade: WhaleTrade): string | null {
-  const platform = (trade.platform ?? trade.source ?? "").toLowerCase();
-  if (platform === "polymarket" && trade.assetId) {
-    return pipelineEvLookupKeyPm(trade.assetId);
-  }
-  if (platform === "kalshi" && trade.ticker) {
-    return pipelineEvLookupKeyKalshi(trade.ticker);
-  }
-  return null;
-}
-
 /** Resolve pipeline EV from batch index using pm:/kalshi:/pair: aliases. */
 export function resolvePipelineEvForWhale(
   index: Map<string, PipelineTradeEv>,
@@ -171,35 +149,10 @@ const EV_BATCH_CHUNK_SIZE = 8;
 /** Browser / remote EV HTTP — long enough for cold ensemble hydration. */
 const EV_HTTP_TIMEOUT_MS = 60_000;
 
-function isServerRuntime(): boolean {
-  const browserWindow = (globalThis as typeof globalThis & { window?: unknown })
-    .window;
-  return browserWindow === undefined;
-}
-
 async function fetchPipelineEvHttp(
   url: string,
   init: RequestInit
 ): Promise<Response> {
-  if (isServerRuntime()) {
-    try {
-      const { postPipelineEvTrades, getPipelineEvTrade } = await import(
-        "@/lib/pipelineEvRemoteFetch"
-      );
-      if (init.method === "POST") {
-        const items = JSON.parse(String(init.body ?? "[]")) as PipelineEvRequestItem[];
-        return postPipelineEvTrades(items, { timeoutMs: EV_HTTP_TIMEOUT_MS });
-      }
-      const params = new URL(url).searchParams;
-      return getPipelineEvTrade(params, { timeoutMs: EV_HTTP_TIMEOUT_MS });
-    } catch (err) {
-      console.warn(
-        "[pipelineEvClient] Remote fetch helper failed — falling back to fetch",
-        err instanceof Error ? err.message : err
-      );
-    }
-  }
-
   return fetch(url, {
     ...init,
     signal: AbortSignal.timeout(EV_HTTP_TIMEOUT_MS),

@@ -6,7 +6,6 @@ import {
   ensureFullyComputedTradeEv,
   isFullyComputedTradeEv,
   loadMappingForTradeEv,
-  type PipelineTradeEvInput,
 } from "@/lib/evPipeline/resolveTradeEv";
 import { ENSEMBLE_LLM_TIMEOUT_MS } from "@/lib/evPipeline/ensemblePricingFallback";
 import {
@@ -20,8 +19,9 @@ import {
   initGlobalLocalEvCache,
   seedPipelineLocalEvCache,
 } from "@/lib/evPipeline/redisCache";
-import type { PipelineTradeEv } from "@/lib/evPipeline/types";
+import type { PipelineTradeEv, PipelineTradeEvInput } from "@/lib/evPipeline/types";
 import { pipelineEvLookupKey } from "@/lib/evPipeline/types";
+import type { PipelineEvRequestItem } from "@/lib/types/ev";
 import {
   normalizeIncomingTradePrice,
   normalizePipelineTradeEv,
@@ -31,17 +31,10 @@ import { sleep } from "@/lib/kalshi/http";
 
 initGlobalLocalEvCache();
 
-export interface PipelineEvServerRequestItem {
-  source: "polymarket" | "kalshi";
-  tokenId?: string;
-  kalshiTicker?: string;
-  tradePrice?: number;
-}
-
 const BATCH_CONCURRENCY = 3;
 const BATCH_DELAY_MS = 250;
 
-function toPipelineInput(item: PipelineEvServerRequestItem): PipelineTradeEvInput {
+function toPipelineInput(item: PipelineEvRequestItem): PipelineTradeEvInput {
   return {
     source: item.source,
     tokenId: item.tokenId,
@@ -69,7 +62,7 @@ function indexEntry(
 }
 
 async function resolveOneServer(
-  item: PipelineEvServerRequestItem,
+  item: PipelineEvRequestItem,
   options?: { cacheOnly?: boolean }
 ): Promise<PipelineTradeEv> {
   const lookupKey = pipelineEvLookupKey(toPipelineInput(item));
@@ -108,9 +101,9 @@ async function resolveOneServer(
 
 /** Direct in-process EV batch — Render worker path (no loopback HTTP to Vercel). */
 export async function resolvePipelineEvBatchServer(
-  items: PipelineEvServerRequestItem[]
+  items: PipelineEvRequestItem[]
 ): Promise<Map<string, PipelineTradeEv>> {
-  const deduped = new Map<string, PipelineEvServerRequestItem>();
+  const deduped = new Map<string, PipelineEvRequestItem>();
   for (const item of items) {
     const key = pipelineEvLookupKey(toPipelineInput(item));
     if (key) deduped.set(key, item);
@@ -124,7 +117,7 @@ export async function resolvePipelineEvBatchServer(
   );
 
   const result = new Map<string, PipelineTradeEv>();
-  const needsHydration: PipelineEvServerRequestItem[] = [];
+  const needsHydration: PipelineEvRequestItem[] = [];
 
   for (const payload of phase1) {
     const item = deduped.get(payload.key);
@@ -153,7 +146,7 @@ export async function resolvePipelineEvBatchServer(
 
 /** Direct in-process single trade EV — Render worker path. */
 export async function resolvePipelineTradeEvServer(
-  item: PipelineEvServerRequestItem
+  item: PipelineEvRequestItem
 ): Promise<PipelineTradeEv | null> {
   const lookupKey = pipelineEvLookupKey(toPipelineInput(item));
   if (!lookupKey) return null;

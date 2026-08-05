@@ -19,7 +19,7 @@ let evHttpAgent: unknown | null = null;
 
 async function loadUndici(): Promise<UndiciModule | null> {
   try {
-    return (await import("undici")) as UndiciModule;
+    return (await import("undici")) as unknown as UndiciModule;
   } catch {
     return null;
   }

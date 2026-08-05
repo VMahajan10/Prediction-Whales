@@ -1,21 +1,8 @@
 import { fetchTokenRegistry, type TokenMarketMeta } from "@/lib/polymarket";
-import { shouldBroadcastQualifiedSocketTrade } from "@/lib/feedSocketGate";
+import { shouldBroadcastQualifiedSocketTrade } from "@/lib/feedSocketGateServer";
+import type { SocketTrade } from "@/lib/socketTrade";
 
-export interface SocketTrade {
-  id: string;
-  title: string;
-  side: "BUY" | "SELL";
-  outcome: string;
-  price: number;
-  size: number;
-  usdNotional: number;
-  timestamp: number;
-  transactionHash: string;
-  assetId?: string;
-  eventSlug?: string;
-  slug?: string;
-  conditionId?: string;
-}
+export type { SocketTrade } from "@/lib/socketTrade";
 
 const WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market";
 
