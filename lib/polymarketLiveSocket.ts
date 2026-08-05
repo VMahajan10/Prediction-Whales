@@ -1,5 +1,5 @@
 import { fetchTokenRegistry, type TokenMarketMeta } from "@/lib/polymarket";
-import { shouldBroadcastQualifiedSocketTrade } from "@/lib/feedSocketGateWorker";
+import { MIN_RAW_INGESTION_STAKE_USD } from "@/lib/feedQualification";
 import type { SocketTrade } from "@/lib/types/socket";
 
 export type { SocketTrade } from "@/lib/types/socket";
@@ -24,7 +24,7 @@ interface LastTradePriceEvent {
 
 export interface PolymarketLiveSocketOptions {
   onTrade: (trade: SocketTrade) => void | Promise<void>;
-  /** @deprecated Tiered stake floors are enforced in feedSocketGateWorker. */
+  /** Raw ingestion floor — defaults to {@link MIN_RAW_INGESTION_STAKE_USD}. */
   minUsdNotional?: number;
 }
 
@@ -50,6 +50,14 @@ export class PolymarketLiveSocket {
   private stopped = false;
 
   constructor(private readonly options: PolymarketLiveSocketOptions) {}
+
+  private get ingestionMinUsd(): number {
+    const configured = this.options.minUsdNotional;
+    if (configured != null && Number.isFinite(configured) && configured >= 0) {
+      return configured;
+    }
+    return MIN_RAW_INGESTION_STAKE_USD;
+  }
 
   get connected(): boolean {
     return this.ws?.readyState === WebSocket.OPEN;
@@ -188,8 +196,7 @@ export class PolymarketLiveSocket {
       conditionId: meta?.conditionId ?? raw.market,
     };
 
-    const qualified = await shouldBroadcastQualifiedSocketTrade(trade);
-    if (!qualified) return;
+    if (usdNotional < this.ingestionMinUsd) return;
 
     await this.options.onTrade(trade);
   }

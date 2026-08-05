@@ -14,7 +14,9 @@ import {
   MIN_FEED_TRADE_EV_DECIMAL,
   MIN_FEED_TRADE_EV_PCT,
   MIN_PRODUCT_FEED_STAKE_USD,
+  MIN_RAW_INGESTION_STAKE_USD,
   MIN_STAKE_THRESHOLD,
+  meetsRawIngestionStakeThreshold,
   resolvePolymarketTradeNotionalUsd,
 } from "@/lib/feedQualification";
 import {
@@ -31,6 +33,15 @@ describe("feedQualification", () => {
   it("enforces the minimum stake threshold", () => {
     expect(meetsFeedStakeThreshold(MIN_STAKE_THRESHOLD)).toBe(true);
     expect(meetsFeedStakeThreshold(MIN_STAKE_THRESHOLD - 1)).toBe(false);
+  });
+
+  it("enforces the raw ingestion stake floor ($10)", () => {
+    expect(meetsRawIngestionStakeThreshold(MIN_RAW_INGESTION_STAKE_USD)).toBe(
+      true
+    );
+    expect(
+      meetsRawIngestionStakeThreshold(MIN_RAW_INGESTION_STAKE_USD - 0.01)
+    ).toBe(false);
   });
 
   it("enforces the flat product feed stake floor ($500)", () => {

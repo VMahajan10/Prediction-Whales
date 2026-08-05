@@ -85,6 +85,13 @@
       "when": 1785457000000,
       "tag": "0012_kalshi_shadow_taker_book_side",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1785458000000,
+      "tag": "0013_x_post_queue_public_telegram",
+      "breakpoints": true
     }
   ]
 }

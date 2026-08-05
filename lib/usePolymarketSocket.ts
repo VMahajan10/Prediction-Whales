@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { shouldBroadcastQualifiedSocketTrade } from "@/lib/feedSocketGateClient";
+import { passesRawIngestionSocketStakeGate } from "@/lib/feedSocketGateClient";
 import type { SocketTrade } from "@/lib/types/socket";
 import type { TokenMarketMeta } from "@/lib/polymarket";
 
@@ -86,10 +86,8 @@ export function usePolymarketSocket(maxTrades = 50) {
 
       setTrades((prev) => [trade, ...prev].slice(0, maxTrades));
 
-      void shouldBroadcastQualifiedSocketTrade(trade).then((qualified) => {
-        if (!qualified || !isMounted.current) return;
-        setWhaleTrades((prev) => [trade, ...prev].slice(0, 50));
-      });
+      if (!passesRawIngestionSocketStakeGate(trade)) return;
+      setWhaleTrades((prev) => [trade, ...prev].slice(0, 50));
     };
 
     const connect = () => {

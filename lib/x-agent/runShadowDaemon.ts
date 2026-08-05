@@ -9,7 +9,8 @@ import {
   writePipelineMeta,
 } from "@/lib/evPipeline/redisCache";
 import { resolveWalletForTrade } from "@/lib/resolveWhaleWallet";
-import { MIN_WHALE_USD, tradeToWhale } from "@/lib/whaleTrades";
+import { MIN_RAW_INGESTION_STAKE_USD } from "@/lib/feedQualification";
+import { tradeToWhale } from "@/lib/whaleTrades";
 import { processWhaleTradeForXAgent } from "@/lib/x-agent/enqueueWhaleTrade";
 import {
   printGateSummaryBox,
@@ -95,7 +96,9 @@ export function parseShadowDaemonOptionsFromEnv(): ShadowDaemonOptions {
         ? summaryEverySec * 1000
         : DEFAULT_SUMMARY_EVERY_MS,
     minUsdNotional:
-      Number.isFinite(minUsd) && minUsd >= 0 ? minUsd : MIN_WHALE_USD,
+      Number.isFinite(minUsd) && minUsd >= 0
+        ? minUsd
+        : MIN_RAW_INGESTION_STAKE_USD,
   };
 }
 
@@ -190,7 +193,8 @@ export class ShadowCronDaemon {
 
     this.stopping = false;
     this.socket = new PolymarketLiveSocket({
-      minUsdNotional: this.options.minUsdNotional ?? MIN_WHALE_USD,
+      minUsdNotional:
+        this.options.minUsdNotional ?? MIN_RAW_INGESTION_STAKE_USD,
       onTrade: async (trade) => {
         if (this.stopping) return;
         this.stats.tradesObserved += 1;

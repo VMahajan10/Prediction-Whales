@@ -4,6 +4,7 @@ import { fetchPipelineEvBatch, fetchPipelineTradeEv } from "@/lib/pipelineEvClie
 import {
   createFeedSocketGateHandlers,
   passesFeedSocketStakeGate,
+  passesRawIngestionSocketStakeGate,
 } from "@/lib/feedSocketGateLogic";
 
 const { passesFeedSocketTradeEvGate, shouldBroadcastQualifiedSocketTrade } =
@@ -12,5 +13,6 @@ const { passesFeedSocketTradeEvGate, shouldBroadcastQualifiedSocketTrade } =
 export {
   passesFeedSocketStakeGate,
   passesFeedSocketTradeEvGate,
+  passesRawIngestionSocketStakeGate,
   shouldBroadcastQualifiedSocketTrade,
 };

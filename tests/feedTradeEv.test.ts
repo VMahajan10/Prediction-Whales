@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
-import { passesFeedSocketStakeGate } from "@/lib/feedSocketGateClient";
+import { passesFeedSocketStakeGate, passesRawIngestionSocketStakeGate } from "@/lib/feedSocketGateClient";
 import type { SocketTrade } from "@/lib/types/socket";
 
 function socketTrade(
@@ -94,6 +94,21 @@ describe("resolveFeedTradeEvPercent", () => {
     } as PipelineTradeEv;
 
     expect(resolveFeedTradeEvPercent({ price: 0.5 }, pipeline)).toBe(9);
+  });
+});
+
+describe("passesRawIngestionSocketStakeGate", () => {
+  it("accepts trades at the raw ingestion floor ($10)", () => {
+    expect(
+      passesRawIngestionSocketStakeGate(
+        socketTrade({ usdNotional: 10, title: "Test market" })
+      )
+    ).toBe(true);
+    expect(
+      passesRawIngestionSocketStakeGate(
+        socketTrade({ usdNotional: 9.99, title: "Test market" })
+      )
+    ).toBe(false);
   });
 });
 

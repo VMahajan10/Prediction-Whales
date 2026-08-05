@@ -4,7 +4,10 @@
  */
 import { evaluateLiveFeedTradeGate } from "@/lib/feedGate";
 import { resolveFeedFilterCategoryLabel } from "@/lib/feedFilterDiagnostics";
-import { meetsProductFeedStakeThreshold } from "@/lib/feedQualification";
+import {
+  meetsProductFeedStakeThreshold,
+  meetsRawIngestionStakeThreshold,
+} from "@/lib/feedQualification";
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import { pipelineEvKeyForWhale } from "@/lib/pipelineEvLookupHelpers";
 import type { SocketTrade } from "@/lib/types/socket";
@@ -103,7 +106,12 @@ function logMissingAssetReject(trade: SocketTrade): void {
   );
 }
 
-/** Product feed stake gate — flat $500 minimum. */
+/** Raw ingestion stake gate — low floor for worker/browser socket capture. */
+export function passesRawIngestionSocketStakeGate(trade: SocketTrade): boolean {
+  return meetsRawIngestionStakeThreshold(trade.usdNotional);
+}
+
+/** Product feed stake gate — flat $500 minimum (display qualification only). */
 export function passesFeedSocketStakeGate(trade: SocketTrade): boolean {
   return meetsProductFeedStakeThreshold(trade.usdNotional);
 }

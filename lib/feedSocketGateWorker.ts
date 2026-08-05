@@ -6,6 +6,7 @@
 import {
   createFeedSocketGateHandlers,
   passesFeedSocketStakeGate,
+  passesRawIngestionSocketStakeGate,
 } from "@/lib/feedSocketGateLogic";
 import {
   resolvePipelineEvBatchServer,
@@ -21,5 +22,6 @@ const { passesFeedSocketTradeEvGate, shouldBroadcastQualifiedSocketTrade } =
 export {
   passesFeedSocketStakeGate,
   passesFeedSocketTradeEvGate,
+  passesRawIngestionSocketStakeGate,
   shouldBroadcastQualifiedSocketTrade,
 };

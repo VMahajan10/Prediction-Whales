@@ -14,6 +14,9 @@ export const CREDIBILITY_CONFIG = {
   MIN_AVG_EV: 0.01,
 } as const;
 
+/** Minimum stake to ingest/cache raw live socket trades (worker + browser). */
+export const MIN_RAW_INGESTION_STAKE_USD = 10;
+
 /** Flat minimum stake for the product feed UI — not the X post queue tiered floors. */
 export const MIN_PRODUCT_FEED_STAKE_USD = 500;
 
@@ -37,6 +40,13 @@ export const MIN_FEED_RESOLVED_BETS = CREDIBILITY_CONFIG.MIN_RESOLVED_BETS;
 
 export function meetsFeedStakeThreshold(stakeUsd: number): boolean {
   return Number.isFinite(stakeUsd) && stakeUsd >= CREDIBILITY_CONFIG.MIN_STAKE_USD;
+}
+
+/** Raw ingestion gate — low floor so trades can be cached before product-feed filtering. */
+export function meetsRawIngestionStakeThreshold(stakeUsd: number): boolean {
+  return (
+    Number.isFinite(stakeUsd) && stakeUsd >= MIN_RAW_INGESTION_STAKE_USD
+  );
 }
 
 /** Product feed gate — flat $500 notional minimum (all categories). */
