@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   createUnmappedPipelineTradeEv,
   ensureFullyComputedTradeEv,
+  isFullyComputedTradeEv,
   loadMappingForTradeEv,
   type PipelineTradeEvInput,
 } from "@/lib/evPipeline/resolveTradeEv";
+import { ENSEMBLE_LLM_TIMEOUT_MS } from "@/lib/evPipeline/ensemblePricingFallback";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import { normalizePipelineLookupKey } from "@/lib/evPipeline/types";
 import {
@@ -170,20 +172,55 @@ type EnrichedTradeEvRow = {
 async function resolveTradeEvBatch(
   rows: EnrichedTradeEvRow[]
 ): Promise<PipelineTradeEv[]> {
+  const hydrateOptions = { ensembleLlmTimeoutMs: ENSEMBLE_LLM_TIMEOUT_MS };
+
+  const phase1 = await Promise.all(
+    rows.map(async (row) => {
+      const { lookupKey, item, mapping } = row;
+      try {
+        const payload = await ensureFullyComputedTradeEv(
+          lookupKey,
+          item,
+          mapping,
+          { cacheOnly: true }
+        );
+        return { row, payload };
+      } catch {
+        return {
+          row,
+          payload: createUnmappedPipelineTradeEv(lookupKey, item),
+        };
+      }
+    })
+  );
+
   const resolved: PipelineTradeEv[] = [];
 
-  for (let i = 0; i < rows.length; i += TRADE_EV_BATCH_CONCURRENCY) {
+  for (let i = 0; i < phase1.length; i += TRADE_EV_BATCH_CONCURRENCY) {
     if (i > 0) await sleep(TRADE_EV_BATCH_DELAY_MS);
-    const batch = rows.slice(i, i + TRADE_EV_BATCH_CONCURRENCY);
+    const batch = phase1.slice(i, i + TRADE_EV_BATCH_CONCURRENCY);
     const batchResults = await Promise.all(
-      batch.map(async ({ lookupKey, item, mapping }) => {
+      batch.map(async ({ row, payload }) => {
+        const { lookupKey, item, mapping } = row;
+        const sealedPartial = sealTradeEvResponse(payload, lookupKey);
+        const executionPrice = normalizeIncomingTradePrice(item.tradePrice);
+        if (
+          isFullyComputedTradeEv(sealedPartial, { executionPrice })
+        ) {
+          if (sealedPartial.status === "ok") {
+            seedPipelineLocalEvCache(lookupKey, sealedPartial);
+          }
+          return sealedPartial;
+        }
+
         try {
-          const payload = await ensureFullyComputedTradeEv(
+          const hydrated = await ensureFullyComputedTradeEv(
             lookupKey,
             item,
-            mapping
+            mapping,
+            hydrateOptions
           );
-          const sealed = sealTradeEvResponse(payload, lookupKey);
+          const sealed = sealTradeEvResponse(hydrated, lookupKey);
           if (sealed.status === "ok") {
             seedPipelineLocalEvCache(lookupKey, sealed);
           }
@@ -191,7 +228,7 @@ async function resolveTradeEvBatch(
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           console.error("Batch EV Fetch Error:", message);
-          return createUnmappedPipelineTradeEv(lookupKey, item);
+          return sealedPartial;
         }
       })
     );
@@ -341,7 +378,8 @@ export async function GET(request: NextRequest) {
     const entry = await ensureFullyComputedTradeEv(
       lookupKey,
       resolvedItem,
-      resolvedMapping
+      resolvedMapping,
+      { ensembleLlmTimeoutMs: ENSEMBLE_LLM_TIMEOUT_MS }
     );
     const enrichedEntry = sealTradeEvResponse(entry, lookupKey);
     if (enrichedEntry.status === "ok") {

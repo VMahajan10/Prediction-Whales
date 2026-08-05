@@ -645,6 +645,7 @@ async function resolveEnsembleFallbackBaseline(params: {
   slug?: string | null;
   title?: string | null;
   outcomeName?: string | null;
+  ensembleLlmTimeoutMs?: number | null;
 }): Promise<ExchangeConsensusBaseline | null> {
   const tokenId = params.tokenId?.trim().toLowerCase() || null;
   const slug = params.slug?.trim() || null;
@@ -657,7 +658,10 @@ async function resolveEnsembleFallbackBaseline(params: {
       slug,
       title,
     },
-    { logPrefix: "[exchangeConsensusArb]" }
+    {
+      logPrefix: "[exchangeConsensusArb]",
+      timeoutMs: params.ensembleLlmTimeoutMs,
+    }
   );
 
   if (resolved == null || !Number.isFinite(resolved.pTrue)) {
@@ -678,6 +682,7 @@ async function tryEnsembleBaselineFallback(
     slug?: string | null;
     title?: string | null;
     outcomeName?: string | null;
+    ensembleLlmTimeoutMs?: number | null;
   },
   reason: string,
   context: Record<string, unknown> = {}
@@ -1130,6 +1135,7 @@ export async function lookupExchangeConsensusBaseline(params: {
   tokenId?: string | null;
   slug?: string | null;
   title?: string | null;
+  ensembleLlmTimeoutMs?: number | null;
 }): Promise<ExchangeConsensusBaseline | null> {
   if (!isSportsbookOddsEnabled()) {
     console.warn(
@@ -1205,6 +1211,7 @@ export async function lookupExchangeConsensusBaseline(params: {
         slug,
         title,
         outcomeName,
+        ensembleLlmTimeoutMs: params.ensembleLlmTimeoutMs,
       },
       "no PM outcome resolved",
       { indexSize: index.size }
@@ -1239,6 +1246,7 @@ export async function lookupExchangeConsensusBaseline(params: {
       slug,
       title,
       outcomeName,
+      ensembleLlmTimeoutMs: params.ensembleLlmTimeoutMs,
     },
     "no aligned sportsbook for PM outcome",
     {

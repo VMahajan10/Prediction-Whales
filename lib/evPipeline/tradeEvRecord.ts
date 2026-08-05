@@ -384,7 +384,7 @@ export function normalizePipelineTradeEv(
     readOptionalNumber(raw.grossEvPercent) ??
     readOptionalNumber((raw as Record<string, unknown>).gross_ev_percent);
 
-  if (status === "unmapped" || status === "error") {
+  if (status === "unmapped" || status === "error" || status === "timeout") {
     return {
       key,
       status,

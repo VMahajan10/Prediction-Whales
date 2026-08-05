@@ -93,11 +93,23 @@ export function createUnmappedPipelineTradeEv(
   };
 }
 
+/** Soft failure when remote EV resolution times out — never throws upstream. */
+export function createTimeoutPipelineTradeEv(
+  key: string,
+  input?: PipelineTradeEvInput
+): PipelineTradeEv {
+  return {
+    ...createUnmappedPipelineTradeEv(key, input),
+    status: "timeout",
+  };
+}
+
 /** Always returns status ok with numeric pTrue/EV when asset identity exists. */
 export async function createLowConfidencePipelineTradeEv(
   key: string,
   item: PipelineTradeEvInput,
-  mapping?: CachedMapping | null
+  mapping?: CachedMapping | null,
+  ensembleLlmTimeoutMs?: number | null
 ): Promise<PipelineTradeEv> {
   const tokenId = normalizePmTokenId(item.tokenId);
   const kalshiTicker = normalizeKalshiTicker(item.kalshiTicker);
@@ -113,7 +125,8 @@ export async function createLowConfidencePipelineTradeEv(
     item,
     tokenId,
     mappingPairKey,
-    books
+    books,
+    ensembleLlmTimeoutMs
   );
 
   const pTrueResult = await resolvePTrue({
@@ -134,6 +147,7 @@ export async function createLowConfidencePipelineTradeEv(
     fetchExchangeConsensus: platform === "polymarket" && exchangeMid == null,
     computeEnsembleIfMissing: true,
     computeRagIfMissing: true,
+    ensembleLlmTimeoutMs,
   });
 
   return attachAverageEvField(
@@ -428,7 +442,8 @@ export function buildDynamicBaselineTradeEv(
 async function syncComputePricingEv(
   lookupKey: string,
   item: PipelineTradeEvInput,
-  mapping?: CachedMapping | null
+  mapping?: CachedMapping | null,
+  ensembleLlmTimeoutMs?: number | null
 ): Promise<PipelineTradeEv | null> {
   const enriched = mapping
     ? enrichPipelineEvInputFromMapping(item, mapping)
@@ -437,7 +452,8 @@ async function syncComputePricingEv(
   const result = await resolveTradeEvViaEnsemblePricing(
     lookupKey,
     enriched,
-    mapping
+    mapping,
+    ensembleLlmTimeoutMs
   );
   if (!result) return null;
 
@@ -588,6 +604,8 @@ export interface EnsureTradeEvOptions {
    * computation so request paths that cannot afford LLM latency stay fast.
    */
   cacheOnly?: boolean;
+  /** Hard cap on live OpenAI ensemble (ms). Defaults to 2.5s when unset. */
+  ensembleLlmTimeoutMs?: number | null;
 }
 
 /**
@@ -601,6 +619,7 @@ export async function ensureFullyComputedTradeEv(
   options?: EnsureTradeEvOptions
 ): Promise<PipelineTradeEv> {
   const cacheOnly = options?.cacheOnly === true;
+  const ensembleLlmTimeoutMs = options?.ensembleLlmTimeoutMs;
   const resolvedMapping =
     mapping ??
     (cacheOnly
@@ -661,12 +680,17 @@ export async function ensureFullyComputedTradeEv(
   }
 
   const syncPriced = tryFinalize(
-    await syncComputePricingEv(lookupKey, item, resolvedMapping)
+    await syncComputePricingEv(
+      lookupKey,
+      item,
+      resolvedMapping,
+      ensembleLlmTimeoutMs
+    )
   );
   if (syncPriced) return syncPriced;
 
   try {
-    const resolved = await resolvePipelineTradeEv(item);
+    const resolved = await resolvePipelineTradeEv(item, ensembleLlmTimeoutMs);
     const resolvedPayload = tryFinalize(resolved);
     if (resolvedPayload) return resolvedPayload;
   } catch (resolveErr) {
@@ -701,7 +725,8 @@ export async function ensureFullyComputedTradeEv(
     const lowConfidence = await createLowConfidencePipelineTradeEv(
       lookupKey,
       item,
-      resolvedMapping
+      resolvedMapping,
+      ensembleLlmTimeoutMs
     );
     const finalized = tryFinalize(lowConfidence);
     if (finalized) {
@@ -803,7 +828,8 @@ async function enrichInputFromMappingCache(
 async function resolveTradeEvViaEnsemblePricing(
   lookupKey: string,
   enriched: PipelineTradeEvInput,
-  mapping?: CachedMapping | null
+  mapping?: CachedMapping | null,
+  ensembleLlmTimeoutMs?: number | null
 ): Promise<PipelineTradeEv | null> {
   let tokenId = normalizePmTokenId(enriched.tokenId);
   let kalshiTicker = normalizeKalshiTicker(enriched.kalshiTicker);
@@ -839,6 +865,7 @@ async function resolveTradeEvViaEnsemblePricing(
     fetchExchangeConsensus: platform === "polymarket",
     computeEnsembleIfMissing: true,
     computeRagIfMissing: true,
+    ensembleLlmTimeoutMs,
   });
 
   return attachAverageEvField(
@@ -859,7 +886,8 @@ async function resolveSportsExchangeMid(
   input: PipelineTradeEvInput,
   tokenId: string | null,
   mappingPairKey: string | null,
-  books?: OrderBookContext | null
+  books?: OrderBookContext | null,
+  ensembleLlmTimeoutMs?: number | null
 ): Promise<number | null> {
   if (!tokenId || input.source !== "polymarket") return null;
 
@@ -878,6 +906,7 @@ async function resolveSportsExchangeMid(
     tokenId,
     slug: input.slug,
     title: input.title,
+    ensembleLlmTimeoutMs,
   });
   if (!baseline) return null;
   return Math.round(((baseline.yesBid + baseline.yesAsk) / 2) * 10000) / 10000;
@@ -930,7 +959,8 @@ async function applyPricingToResolvedTrade(
 }
 
 export async function resolvePipelineTradeEv(
-  input: PipelineTradeEvInput
+  input: PipelineTradeEvInput,
+  ensembleLlmTimeoutMs?: number | null
 ): Promise<PipelineTradeEv | null> {
   const enriched = await enrichInputFromMappingCache(input);
   const key = tradeEvKey(enriched);
@@ -953,7 +983,8 @@ export async function resolvePipelineTradeEv(
     enriched,
     tokenId,
     mappingPairKey,
-    books
+    books,
+    ensembleLlmTimeoutMs
   );
   const resolvedMapping = await loadMappingForTradeEv(tokenId, kalshiTicker);
 
@@ -986,7 +1017,8 @@ export async function resolvePipelineTradeEv(
   const ensemblePriced = await resolveTradeEvViaEnsemblePricing(
     key,
     enriched,
-    resolvedMapping
+    resolvedMapping,
+    ensembleLlmTimeoutMs
   );
   if (ensemblePriced) {
     await cacheTradeEvLookup(key, ensemblePriced);

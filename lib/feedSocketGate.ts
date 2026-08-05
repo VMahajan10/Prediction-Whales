@@ -7,8 +7,49 @@ import {
   fetchPipelineTradeEv,
   pipelineEvKeyForWhale,
 } from "@/lib/pipelineEvClient";
+import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import type { SocketTrade } from "@/lib/usePolymarketSocket";
 import { tradeToWhale } from "@/lib/whaleTrades";
+
+function isServerRuntime(): boolean {
+  const browserWindow = (globalThis as typeof globalThis & { window?: unknown })
+    .window;
+  return browserWindow === undefined;
+}
+
+async function resolvePipelineEvBatchForRuntime(
+  items: Array<{
+    source: "polymarket" | "kalshi";
+    tokenId?: string;
+    kalshiTicker?: string;
+    tradePrice?: number;
+  }>
+): Promise<Map<string, PipelineTradeEv>> {
+  if (isServerRuntime()) {
+    const { resolvePipelineEvBatchServer } = await import(
+      "@/lib/pipelineEvServer"
+    );
+    return resolvePipelineEvBatchServer(items);
+  }
+  return fetchPipelineEvBatch(items);
+}
+
+async function resolvePipelineTradeEvForRuntime(
+  item: {
+    source: "polymarket" | "kalshi";
+    tokenId?: string;
+    kalshiTicker?: string;
+    tradePrice?: number;
+  }
+): Promise<PipelineTradeEv | null> {
+  if (isServerRuntime()) {
+    const { resolvePipelineTradeEvServer } = await import(
+      "@/lib/pipelineEvServer"
+    );
+    return resolvePipelineTradeEvServer(item);
+  }
+  return fetchPipelineTradeEv(item);
+}
 
 function socketTradeToWhale(trade: SocketTrade) {
   return tradeToWhale(
@@ -45,22 +86,32 @@ async function resolveSocketTradeEvPercent(
   const whale = socketTradeToWhale(trade);
   const key = pipelineEvKeyForWhale(whale);
 
-  const readEvPercent = (
-    pipeline: Awaited<ReturnType<typeof fetchPipelineTradeEv>> | undefined
-  ) => resolveFeedTradeEvPercent({ price: trade.price }, pipeline ?? null);
+  const readEvPercent = (pipeline: PipelineTradeEv | null | undefined) =>
+    resolveFeedTradeEvPercent({ price: trade.price }, pipeline ?? null);
 
-  const fetched = await fetchPipelineEvBatch([evRequest]);
-  let pipeline: Awaited<ReturnType<typeof fetchPipelineTradeEv>> | undefined =
-    key ? fetched.get(key) : undefined;
-  let tradeEvPercent = readEvPercent(pipeline);
+  try {
+    const fetched = await resolvePipelineEvBatchForRuntime([evRequest]);
+    let pipeline: PipelineTradeEv | null | undefined = key
+      ? fetched.get(key)
+      : undefined;
+    let tradeEvPercent = readEvPercent(pipeline);
 
-  if (tradeEvPercent == null) {
-    console.log(`[Feed Gate] Enqueued trade ${trade.id} for EV calculation`);
-    pipeline = (await fetchPipelineTradeEv(evRequest)) ?? undefined;
-    tradeEvPercent = readEvPercent(pipeline);
+    if (tradeEvPercent == null) {
+      console.log(`[Feed Gate] Enqueued trade ${trade.id} for EV calculation`);
+      pipeline =
+        (await resolvePipelineTradeEvForRuntime(evRequest)) ?? undefined;
+      tradeEvPercent = readEvPercent(pipeline);
+    }
+
+    return tradeEvPercent;
+  } catch (err) {
+    console.warn(
+      "[Feed Gate] EV resolution failed — treating as missing EV",
+      trade.id,
+      err instanceof Error ? err.message : err
+    );
+    return null;
   }
-
-  return tradeEvPercent;
 }
 
 function buildSocketFeedTrade(

@@ -5,4 +5,5 @@ interface RequestInit {
     tags?: string[];
   };
   cache?: RequestCache;
+  dispatcher?: unknown;
 }

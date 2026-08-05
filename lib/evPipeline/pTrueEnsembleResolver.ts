@@ -313,6 +313,7 @@ export async function resolvePTrue(
         tokenId: input.tokenId,
         slug: input.slug,
         title: input.title,
+        ensembleLlmTimeoutMs: input.ensembleLlmTimeoutMs,
       });
       if (baseline) {
         exchangeMid =
@@ -357,7 +358,10 @@ export async function resolvePTrue(
             kalshiMid: input.kalshiMid ?? null,
             exchangeMid,
           },
-          { logPrefix: "[pTrueEnsembleResolver]" }
+          {
+            logPrefix: "[pTrueEnsembleResolver]",
+            timeoutMs: input.ensembleLlmTimeoutMs,
+          }
         );
         if (computed) {
           ensemblePTrue = computed.pTrue;

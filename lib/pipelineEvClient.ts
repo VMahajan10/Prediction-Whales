@@ -168,6 +168,69 @@ function dedupeRequestItems(
 
 /** Assets resolved per request — small chunks let the feed render progressively. */
 const EV_BATCH_CHUNK_SIZE = 8;
+/** Browser / remote EV HTTP — long enough for cold ensemble hydration. */
+const EV_HTTP_TIMEOUT_MS = 60_000;
+
+function isServerRuntime(): boolean {
+  const browserWindow = (globalThis as typeof globalThis & { window?: unknown })
+    .window;
+  return browserWindow === undefined;
+}
+
+async function fetchPipelineEvHttp(
+  url: string,
+  init: RequestInit
+): Promise<Response> {
+  if (isServerRuntime()) {
+    try {
+      const { postPipelineEvTrades, getPipelineEvTrade } = await import(
+        "@/lib/pipelineEvRemoteFetch"
+      );
+      if (init.method === "POST") {
+        const items = JSON.parse(String(init.body ?? "[]")) as PipelineEvRequestItem[];
+        return postPipelineEvTrades(items, { timeoutMs: EV_HTTP_TIMEOUT_MS });
+      }
+      const params = new URL(url).searchParams;
+      return getPipelineEvTrade(params, { timeoutMs: EV_HTTP_TIMEOUT_MS });
+    } catch (err) {
+      console.warn(
+        "[pipelineEvClient] Remote fetch helper failed — falling back to fetch",
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+
+  return fetch(url, {
+    ...init,
+    signal: AbortSignal.timeout(EV_HTTP_TIMEOUT_MS),
+  });
+}
+
+function createTimeoutPipelineEvEntry(
+  lookupKey: string,
+  item: PipelineEvRequestItem
+): PipelineTradeEv {
+  return {
+    key: lookupKey,
+    status: "timeout",
+    tokenId: item.tokenId?.trim().toLowerCase() ?? null,
+    kalshiTicker: item.kalshiTicker?.trim().toUpperCase() ?? null,
+    mappingPairKey: null,
+    netEvPercent: null,
+    netEv: 0,
+    grossEv: 0,
+    grossEvPercent: null,
+    averageEv: null,
+    pTrue: null,
+    pMarket: null,
+    pmMid: null,
+    kalshiMid: null,
+    pTrueSource: null,
+    pTrueConfidence: null,
+    pTrueLowConfidence: false,
+    evFormulaVersion: null,
+  };
+}
 
 async function fetchPipelineEvChunk(
   items: PipelineEvRequestItem[]
@@ -175,13 +238,20 @@ async function fetchPipelineEvChunk(
   const fullUrl = resolveAppApiUrl("/api/ev/trades");
 
   try {
-    const res = await fetch(fullUrl, {
+    const res = await fetchPipelineEvHttp(fullUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ items }),
     });
 
-    if (!res.ok) return new Map();
+    if (!res.ok) {
+      console.warn(
+        "[pipelineEvClient] EV batch HTTP error:",
+        res.status,
+        fullUrl
+      );
+      return softTimeoutChunkFallback(items);
+    }
 
     const data = (await res.json()) as {
       entries?: PipelineTradeEv[];
@@ -201,13 +271,26 @@ async function fetchPipelineEvChunk(
     return next;
   } catch (error) {
     const err = error as Error & { cause?: unknown };
-    console.error(
+    console.warn(
       "[pipelineEvClient] Failed target URL:",
       fullUrl,
       err?.cause || err
     );
-    return new Map();
+    return softTimeoutChunkFallback(items);
   }
+}
+
+function softTimeoutChunkFallback(
+  items: PipelineEvRequestItem[]
+): Map<string, PipelineTradeEv> {
+  const next = new Map<string, PipelineTradeEv>();
+  for (const item of items) {
+    const lookupKey = pipelineEvLookupKey(item);
+    if (!lookupKey) continue;
+    const timeoutEntry = createTimeoutPipelineEvEntry(lookupKey, item);
+    indexPipelineTradeEvAliases(next, timeoutEntry, lookupKey);
+  }
+  return next;
 }
 
 export interface FetchPipelineEvBatchOptions {
@@ -347,17 +430,28 @@ export async function fetchPipelineTradeEv(input: {
   const fullUrl = resolveAppApiUrl(`/api/ev/trades?${params.toString()}`);
 
   try {
-    const res = await fetch(fullUrl);
-    if (!res.ok) return null;
+    const res = await fetchPipelineEvHttp(fullUrl, { method: "GET" });
+    if (!res.ok) {
+      console.warn(
+        "[pipelineEvClient] EV GET HTTP error:",
+        res.status,
+        fullUrl
+      );
+      const lookupKey = pipelineEvLookupKey(input);
+      return lookupKey
+        ? createTimeoutPipelineEvEntry(lookupKey, input)
+        : null;
+    }
     const data = (await res.json()) as { entry?: PipelineTradeEv | null };
     return data.entry ?? null;
   } catch (error) {
     const err = error as Error & { cause?: unknown };
-    console.error(
+    console.warn(
       "[pipelineEvClient] Failed target URL:",
       fullUrl,
       err?.cause || err
     );
-    return null;
+    const lookupKey = pipelineEvLookupKey(input);
+    return lookupKey ? createTimeoutPipelineEvEntry(lookupKey, input) : null;
   }
 }

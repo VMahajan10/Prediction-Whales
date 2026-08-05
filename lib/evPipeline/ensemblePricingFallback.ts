@@ -2,7 +2,11 @@ import { computeRagPTrue } from "@/lib/ai/rag/ragPTrueProvider";
 import { withOpenAiLimiter } from "@/lib/ai/openaiLimiter";
 import { resolveEnsemblePTrue } from "@/lib/evPipeline/ensemblePTrue";
 import { resolveMarketPrior } from "@/lib/evPipeline/pricing";
-import { evRedisKeys, getOrderBookMid } from "@/lib/evPipeline/redisCache";
+import {
+  cachePTrue,
+  evRedisKeys,
+  getOrderBookMid,
+} from "@/lib/evPipeline/redisCache";
 
 export interface EnsemblePricingContext {
   tokenId?: string | null;
@@ -22,11 +26,124 @@ export interface EnsemblePricingResult {
   usedFallback?: boolean;
 }
 
+/** Hard cap for live OpenAI ensemble on interactive / API paths. */
+export const ENSEMBLE_LLM_TIMEOUT_MS = 2500;
+
+const MEMORY_CACHE_TTL_MS = 15 * 60 * 1000;
+const MEMORY_NEGATIVE_TTL_MS = 60 * 1000;
+
+interface MemoryCacheEntry {
+  result: EnsemblePricingResult;
+  expiresAt: number;
+}
+
+const memoryHitCache = new Map<string, MemoryCacheEntry>();
+const memoryNegativeUntil = new Map<string, number>();
+
 export function isEnsembleLlmConfigured(): boolean {
   return !!(
     process.env.OPENAI_API_KEY?.trim() ||
     process.env.AI_GATEWAY_API_KEY?.trim()
   );
+}
+
+function ensembleFallbackCacheKey(params: EnsemblePricingContext): string | null {
+  const tokenId = params.tokenId?.trim().toLowerCase();
+  if (tokenId) return `pm:${tokenId}`;
+  const slug = params.slug?.trim().toLowerCase();
+  if (slug) return `slug:${slug}`;
+  const title = params.title?.trim().toLowerCase();
+  if (title) return `title:${title.slice(0, 160)}`;
+  return null;
+}
+
+function readMemoryCache(key: string): EnsemblePricingResult | null {
+  const entry = memoryHitCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    memoryHitCache.delete(key);
+    return null;
+  }
+  return entry.result;
+}
+
+function writeMemoryCache(key: string, result: EnsemblePricingResult): void {
+  memoryHitCache.set(key, {
+    result,
+    expiresAt: Date.now() + MEMORY_CACHE_TTL_MS,
+  });
+}
+
+function isNegativeMemoryCached(key: string): boolean {
+  const until = memoryNegativeUntil.get(key);
+  if (!until) return false;
+  if (Date.now() > until) {
+    memoryNegativeUntil.delete(key);
+    return false;
+  }
+  return true;
+}
+
+function markNegativeMemoryCache(key: string): void {
+  memoryNegativeUntil.set(key, Date.now() + MEMORY_NEGATIVE_TTL_MS);
+}
+
+async function withHardTimeout<T>(
+  ms: number | null | undefined,
+  fn: () => Promise<T>
+): Promise<T | null> {
+  if (ms == null || !Number.isFinite(ms) || ms <= 0) {
+    try {
+      return await fn();
+    } catch {
+      return null;
+    }
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        resolve(null);
+      }
+    }, ms);
+
+    fn()
+      .then((value) => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          resolve(value);
+        }
+      })
+      .catch(() => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          resolve(null);
+        }
+      });
+  });
+}
+
+async function persistEnsembleFallbackCache(
+  tokenId: string,
+  kalshiTicker: string | null,
+  result: EnsemblePricingResult
+): Promise<void> {
+  try {
+    await cachePTrue(tokenId, {
+      pTrue: result.pTrue,
+      variance: null,
+      sourceScore: result.sourceScore,
+      sourceType: result.source,
+      kalshiTicker,
+      calculatedAt: new Date().toISOString(),
+    });
+  } catch {
+    // Non-fatal — memory cache still helps within the instance.
+  }
 }
 
 /**
@@ -35,13 +152,30 @@ export function isEnsembleLlmConfigured(): boolean {
  */
 export async function resolveEnsemblePTrueWithLlmFallback(
   params: EnsemblePricingContext,
-  options?: { logPrefix?: string }
+  options?: {
+    logPrefix?: string;
+    /** `null` disables the cap (cron). Undefined uses {@link ENSEMBLE_LLM_TIMEOUT_MS}. */
+    timeoutMs?: number | null;
+  }
 ): Promise<EnsemblePricingResult | null> {
   const logPrefix = options?.logPrefix ?? "[ensemblePricingFallback]";
+  const effectiveTimeout =
+    options?.timeoutMs === undefined ? ENSEMBLE_LLM_TIMEOUT_MS : options.timeoutMs;
   const tokenId = params.tokenId?.trim().toLowerCase() || null;
   const kalshiTicker = params.kalshiTicker?.trim().toUpperCase() || null;
   const slug = params.slug?.trim() || null;
   const title = params.title?.trim() || null;
+  const cacheKey = ensembleFallbackCacheKey(params);
+
+  if (cacheKey) {
+    const memoryHit = readMemoryCache(cacheKey);
+    if (memoryHit) {
+      return memoryHit;
+    }
+    if (isNegativeMemoryCached(cacheKey)) {
+      return null;
+    }
+  }
 
   let ensemblePTrue: number | null = tokenId
     ? await resolveEnsemblePTrue(tokenId)
@@ -52,11 +186,13 @@ export async function resolveEnsemblePTrueWithLlmFallback(
       tokenId,
       ensemblePTrue,
     });
-    return {
+    const cached: EnsemblePricingResult = {
       pTrue: ensemblePTrue,
       source: "cached_ensemble",
       sourceScore: 0.75,
     };
+    if (cacheKey) writeMemoryCache(cacheKey, cached);
+    return cached;
   }
 
   if (!isEnsembleLlmConfigured()) {
@@ -86,8 +222,8 @@ export async function resolveEnsemblePTrueWithLlmFallback(
     null
   );
 
-  try {
-    const computed = await withOpenAiLimiter(() =>
+  const computed = await withHardTimeout(effectiveTimeout, () =>
+    withOpenAiLimiter(() =>
       computeRagPTrue({
         tokenId,
         kalshiTicker,
@@ -98,31 +234,41 @@ export async function resolveEnsemblePTrueWithLlmFallback(
         exchangeMid: params.exchangeMid ?? null,
         marketPrior,
       })
-    );
+    )
+  );
 
-    console.log(`${logPrefix} OpenAI ensemble p_true`, {
+  if (!computed) {
+    if (cacheKey) markNegativeMemoryCache(cacheKey);
+    console.warn(`${logPrefix} OpenAI ensemble fallback timed out or failed`, {
       tokenId,
       slug,
       title,
-      ensemblePTrue: computed.engine.pTrue,
-      sourceScore: computed.engine.sourceScore,
-      usedFallback: computed.engine.usedFallback,
-    });
-
-    return {
-      pTrue: computed.engine.pTrue,
-      source: "rag_ensemble",
-      sourceScore: computed.engine.sourceScore,
-      contextIds: computed.contextIds,
-      usedFallback: computed.engine.usedFallback,
-    };
-  } catch (error) {
-    console.warn(`${logPrefix} OpenAI ensemble fallback failed`, {
-      tokenId,
-      slug,
-      title,
-      error: error instanceof Error ? error.message : error,
+      timeoutMs: effectiveTimeout,
     });
     return null;
   }
+
+  console.log(`${logPrefix} OpenAI ensemble p_true`, {
+    tokenId,
+    slug,
+    title,
+    ensemblePTrue: computed.engine.pTrue,
+    sourceScore: computed.engine.sourceScore,
+    usedFallback: computed.engine.usedFallback,
+  });
+
+  const result: EnsemblePricingResult = {
+    pTrue: computed.engine.pTrue,
+    source: "rag_ensemble",
+    sourceScore: computed.engine.sourceScore,
+    contextIds: computed.contextIds,
+    usedFallback: computed.engine.usedFallback,
+  };
+
+  if (tokenId) {
+    await persistEnsembleFallbackCache(tokenId, kalshiTicker, result);
+  }
+  if (cacheKey) writeMemoryCache(cacheKey, result);
+
+  return result;
 }

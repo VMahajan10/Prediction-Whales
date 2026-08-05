@@ -133,6 +133,7 @@ async function resolveMappingEnsemblePTrue(params: {
     fetchExchangeConsensus: true,
     computeEnsembleIfMissing: params.computeEnsembleIfMissing ?? true,
     computeRagIfMissing: true,
+    ensembleLlmTimeoutMs: null,
   });
 }
 

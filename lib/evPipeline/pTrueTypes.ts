@@ -67,6 +67,11 @@ export interface PTrueResolveInput extends PTrueResolveSyncInput {
   computeEnsembleIfMissing?: boolean;
   /** Trade-time: attempt RAG-backed ensemble when higher tiers are dry. */
   computeRagIfMissing?: boolean;
+  /**
+   * Hard cap on live OpenAI RAG ensemble (ms). Defaults to 2.5s on request paths.
+   * Pass `null` to disable the cap (cron / pipeline warm).
+   */
+  ensembleLlmTimeoutMs?: number | null;
 }
 
 export const EV_FORMULA_VERSION = "binary_true_ev_v1" as const;

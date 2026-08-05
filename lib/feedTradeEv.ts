@@ -29,7 +29,13 @@ export function resolveFeedTradeEvPercent(
   const fromTrade = tradeLevelEvPercent(trade);
   if (fromTrade != null) return fromTrade;
 
-  if (!pipeline || pipeline.status === "unmapped") return null;
+  if (
+    !pipeline ||
+    pipeline.status === "unmapped" ||
+    pipeline.status === "timeout"
+  ) {
+    return null;
+  }
   if (!isAuthoritativePipelineTradeEv(pipeline)) return null;
 
   const fromPipeline = tradeLevelEvPercent({

@@ -88,7 +88,7 @@ export interface PipelineTradeEvInput {
   slug?: string;
 }
 
-export type PipelineTradeEvStatus = "ok" | "unmapped" | "error";
+export type PipelineTradeEvStatus = "ok" | "unmapped" | "error" | "timeout";
 
 /** Provenance for the winning p_true tier (see pTrueEnsembleResolver). */
 export type PTrueSource =
