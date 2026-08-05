@@ -24,7 +24,7 @@ interface LastTradePriceEvent {
 
 export interface PolymarketLiveSocketOptions {
   onTrade: (trade: SocketTrade) => void | Promise<void>;
-  /** @deprecated Tiered stake floors are enforced in feedSocketGate. */
+  /** @deprecated Tiered stake floors are enforced in feedSocketGateServer. */
   minUsdNotional?: number;
 }
 
