@@ -1,8 +1,1 @@
-{
-  "crons": [
-    {
-      "path": "/api/cron/ev-pipeline",
-      "schedule": "*/10 * * * *"
-    }
-  ]
-}
+{}

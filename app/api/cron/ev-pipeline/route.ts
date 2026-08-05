@@ -12,7 +12,8 @@ export const maxDuration = 300;
  * EV pipeline cron orchestrator.
  *
  * Trigger:
- * - Vercel Cron: vercel.json path /api/cron/ev-pipeline (e.g. every minute)
+ * - Render worker: warmEvPipeline() at daemon startup (lib/x-agent/runShadowDaemon.ts)
+ * - GitHub Actions: shadow-cron workflow every 15m (backfill mode → runEvPipeline)
  * - Manual: GET /api/cron/ev-pipeline?secret=$CRON_SECRET
  *
  * Stages (see lib/evPipeline/pipeline.ts):
