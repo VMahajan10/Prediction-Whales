@@ -119,11 +119,14 @@ export default function WhaleFeedCard({
 
   const tradeEvDisplay = resolveFeedTradeEvDisplay({
     price: trade.price,
+    nowPrice: currentPrice,
+    isBuy,
     source: trade.source,
     netEvPercent: trade.netEvPercent ?? null,
     grossEvPercent: trade.grossEvPercent ?? null,
     averageEv: trade.averageEv ?? null,
   });
+  const tradeEvStatLabel = tradeEvDisplay.label;
   const tradeEvLabel = tradeEvDisplay.value;
   const tradeEvClass = tradeEvDisplay.positive
     ? "text-pulse-yes"
@@ -225,9 +228,12 @@ export default function WhaleFeedCard({
           value={formatStakeCompact(trade.usdNotional)}
         />
         <StatCell
-          label="Trade EV"
+          label={tradeEvStatLabel}
           value={tradeEvLabel}
-          sublabel={tradeEvDisplay.sublabel ?? "VS. MARKET AT ENTRY"}
+          sublabel={
+            tradeEvDisplay.sublabel ??
+            (tradeEvStatLabel === "TRADE EV" ? "VS. MARKET AT ENTRY" : undefined)
+          }
           valueClass={tradeEvClass}
         />
       </div>

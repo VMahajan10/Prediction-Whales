@@ -58,16 +58,44 @@ export function resolveFeedTradeEvPercent(
 }
 
 export interface FeedTradeEvDisplay {
+  /** Stat box header — `TRADE EV` or `IMPLIED PROB`. */
+  label: string;
   value: string;
   sublabel?: string;
   positive: boolean;
   negative: boolean;
 }
 
-/** Feed card Trade EV label — Kalshi shows implied / market-price when EV is unknown. */
+function formatFeedEvValue(evPercent: number): string {
+  return `${formatEvPercent(evPercent)} EV`;
+}
+
+function computeKalshiPriceEdgePercent(
+  entryPrice: number,
+  nowPrice: number,
+  isBuy: boolean
+): number | null {
+  const entry = normalizeIncomingTradePrice(entryPrice);
+  const now = normalizeIncomingTradePrice(nowPrice);
+  if (entry == null || now == null) return null;
+
+  if (isBuy) {
+    if (entry <= 0) return null;
+    return ((now - entry) / entry) * 100;
+  }
+
+  const entryNo = 1 - entry;
+  const nowNo = 1 - now;
+  if (entryNo <= 0) return null;
+  return ((nowNo - entryNo) / entryNo) * 100;
+}
+
+/** Feed card EV / implied-prob display — never labels probability as EV. */
 export function resolveFeedTradeEvDisplay(
   trade: {
     price: number;
+    nowPrice?: number | null;
+    isBuy?: boolean;
     source?: "polymarket" | "kalshi";
     tradeEvPercent?: number | null;
     netEvPercent?: number | null;
@@ -91,24 +119,46 @@ export function resolveFeedTradeEvDisplay(
       Object.is(tradeEvPercent, -0) || Math.abs(tradeEvPercent) < 0.05;
     if (trade.source === "kalshi" && nearZero) {
       return {
-        value: "0.0%",
+        label: "TRADE EV",
+        value: formatFeedEvValue(0),
         sublabel: "Market Price",
         positive: false,
         negative: false,
       };
     }
     return {
-      value: formatEvPercent(tradeEvPercent),
+      label: "TRADE EV",
+      value: formatFeedEvValue(tradeEvPercent),
       positive: tradeEvPercent > 0,
       negative: tradeEvPercent < -0.05,
     };
   }
 
   if (trade.source === "kalshi") {
+    const isBuy = trade.isBuy ?? true;
+    const liveNow = trade.nowPrice;
+    if (
+      liveNow != null &&
+      Number.isFinite(liveNow) &&
+      liveNow !== trade.price
+    ) {
+      const edge = computeKalshiPriceEdgePercent(trade.price, liveNow, isBuy);
+      if (edge != null && Number.isFinite(edge)) {
+        return {
+          label: "TRADE EV",
+          value: formatFeedEvValue(edge),
+          positive: edge > 0,
+          negative: edge < -0.05,
+        };
+      }
+    }
+
     const implied = normalizeIncomingTradePrice(trade.price);
     if (implied != null) {
       return {
-        value: `Implied: ${(implied * 100).toFixed(1)}%`,
+        label: "IMPLIED PROB",
+        value: `${(implied * 100).toFixed(1)}%`,
+        sublabel: "AT ENTRY",
         positive: false,
         negative: false,
       };
@@ -116,6 +166,7 @@ export function resolveFeedTradeEvDisplay(
   }
 
   return {
+    label: "TRADE EV",
     value: "N/A",
     positive: false,
     negative: false,
