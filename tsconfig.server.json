@@ -39,7 +39,7 @@
     "lib/polymarket.ts",
     "lib/polymarketLiveSocket.ts",
     "lib/feedSocketGateServer.ts",
-    "lib/feedSocketGateShared.ts",
+    "lib/feedSocketGateLogic.ts",
     "lib/socketTrade.ts",
     "lib/pipelineEvLookupHelpers.ts",
     "lib/types/ev.ts",

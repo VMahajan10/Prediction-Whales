@@ -3,7 +3,7 @@ import "server-only";
 import {
   createFeedSocketGateHandlers,
   passesFeedSocketStakeGate,
-} from "@/lib/feedSocketGateShared";
+} from "@/lib/feedSocketGateLogic";
 import {
   resolvePipelineEvBatchServer,
   resolvePipelineTradeEvServer,

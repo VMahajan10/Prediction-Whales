@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { shouldBroadcastQualifiedSocketTrade } from "@/lib/feedSocketGate";
+import { shouldBroadcastQualifiedSocketTrade } from "@/lib/feedSocketGateClient";
 import type { SocketTrade } from "@/lib/socketTrade";
 import type { TokenMarketMeta } from "@/lib/polymarket";
 

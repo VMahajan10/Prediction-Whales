@@ -1,3 +1,7 @@
+/**
+ * Pure feed socket gate logic — no `server-only`, no pipeline EV fetchers.
+ * Wired by `feedSocketGateClient` (browser) and `feedSocketGateServer` (worker).
+ */
 import { evaluateLiveFeedTradeGate } from "@/lib/feedGate";
 import { resolveFeedFilterCategoryLabel } from "@/lib/feedFilterDiagnostics";
 import { meetsProductFeedStakeThreshold } from "@/lib/feedQualification";
@@ -108,11 +112,15 @@ export function createFeedSocketGateHandlers(
   fetchBatch: PipelineEvBatchFetcher,
   fetchSingle: PipelineEvSingleFetcher
 ) {
-  async function resolveSocketTradeEvPercent(trade: SocketTrade): Promise<number | null> {
+  async function resolveSocketTradeEvPercent(
+    trade: SocketTrade
+  ): Promise<number | null> {
     return resolveSocketTradeEvPercentWith(trade, fetchBatch, fetchSingle);
   }
 
-  async function passesFeedSocketTradeEvGate(trade: SocketTrade): Promise<boolean> {
+  async function passesFeedSocketTradeEvGate(
+    trade: SocketTrade
+  ): Promise<boolean> {
     if (!trade.assetId?.trim()) {
       logMissingAssetReject(trade);
       return false;

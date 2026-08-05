@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
-import { passesFeedSocketStakeGate } from "@/lib/feedSocketGate";
+import { passesFeedSocketStakeGate } from "@/lib/feedSocketGateClient";
 import type { SocketTrade } from "@/lib/socketTrade";
 
 function socketTrade(
