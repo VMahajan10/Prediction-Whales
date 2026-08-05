@@ -1,5 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { resolveFeedTradeEvDisplay } from "@/lib/feedTradeEv";
+import {
+  entryPriceEvPercent,
+  passesFeedTradeEvGate,
+  resolveFeedTradeEvDisplay,
+} from "@/lib/feedTradeEv";
+
+describe("entryPriceEvPercent", () => {
+  it("uses ((fair - entry) / entry) × 100", () => {
+    expect(entryPriceEvPercent(0.5, 0.4)).toBeCloseTo(25, 5);
+    expect(entryPriceEvPercent(0.35, 0.5)).toBeCloseTo(-30, 5);
+  });
+});
+
+describe("passesFeedTradeEvGate", () => {
+  it("requires finite EV >= +3.0%", () => {
+    expect(passesFeedTradeEvGate(3)).toBe(true);
+    expect(passesFeedTradeEvGate(2.9)).toBe(false);
+    expect(passesFeedTradeEvGate(null)).toBe(false);
+    expect(passesFeedTradeEvGate(undefined)).toBe(false);
+  });
+});
 
 describe("resolveFeedTradeEvDisplay", () => {
   it("formats known EV with sign and EV suffix", () => {
@@ -15,7 +35,7 @@ describe("resolveFeedTradeEvDisplay", () => {
     expect(display.negative).toBe(false);
   });
 
-  it("formats negative EV in red tone", () => {
+  it("formats negative EV", () => {
     const display = resolveFeedTradeEvDisplay({
       price: 0.42,
       source: "kalshi",
@@ -27,42 +47,16 @@ describe("resolveFeedTradeEvDisplay", () => {
     expect(display.negative).toBe(true);
   });
 
-  it("shows market-price label for zero Kalshi EV", () => {
+  it("never shows implied probability as EV", () => {
     const display = resolveFeedTradeEvDisplay({
-      price: 0.42,
-      source: "kalshi",
-      netEvPercent: 0,
-    });
-
-    expect(display.label).toBe("TRADE EV");
-    expect(display.value).toBe("+0.0% EV");
-    expect(display.sublabel).toBe("Market Price");
-  });
-
-  it("uses price edge when live now price differs from entry", () => {
-    const display = resolveFeedTradeEvDisplay({
-      price: 0.4,
-      nowPrice: 0.5,
-      isBuy: true,
+      price: 0.91,
       source: "kalshi",
       netEvPercent: null,
     });
 
     expect(display.label).toBe("TRADE EV");
-    expect(display.value).toBe("+25.0% EV");
-    expect(display.positive).toBe(true);
-  });
-
-  it("shows implied probability (not EV) when model EV is unknown", () => {
-    const display = resolveFeedTradeEvDisplay({
-      price: 0.42,
-      source: "kalshi",
-      netEvPercent: null,
-    });
-
-    expect(display.label).toBe("IMPLIED PROB");
-    expect(display.value).toBe("42.0%");
-    expect(display.sublabel).toBe("AT ENTRY");
+    expect(display.value).toBe("N/A");
+    expect(display.value).not.toContain("Implied");
   });
 
   it("keeps N/A for Polymarket when EV is unknown", () => {

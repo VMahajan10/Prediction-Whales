@@ -689,8 +689,8 @@ export async function resolveKalshiTitles(
 ): Promise<Map<string, string>> {
   const markets = await resolveKalshiMarkets(tickers, concurrency);
   const titles = new Map<string, string>();
-  for (const [ticker, market] of markets) {
+  markets.forEach((market, ticker) => {
     titles.set(ticker, market.eventTitle);
-  }
+  });
   return titles;
 }

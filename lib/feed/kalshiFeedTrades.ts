@@ -1,13 +1,10 @@
 import {
-  meetsFeedTradeEvThreshold,
-} from "@/lib/feedQualification";
-import {
   classifyStakeFloorTier,
   STAKE_FLOOR_DEFAULT_USD,
   STAKE_FLOOR_SPORTS_ENTERTAINMENT_USD,
 } from "@/lib/x-agent/stakeFloor";
 import { normalizeFeedPlatform } from "@/lib/liveFeedMerge";
-import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
+import { resolveFeedTradeEvPercent, passesFeedTradeEvGate } from "@/lib/feedTradeEv";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import { resolvePipelineEvForWhale } from "@/lib/pipelineEvClient";
 import { tradeToWhale, type WhaleTrade } from "@/lib/whaleTrades";
@@ -94,9 +91,8 @@ export function isKalshiTradeStakeCandidate(trade: WhaleTrade): boolean {
 }
 
 /**
- * Kalshi product-feed gate — stake + trade EV >= +3.0% when EV is known.
- * Null / unmapped EV is admitted so the client can render immediately and
- * hydrate via /api/ev/trades (same progressive path as Polymarket candidates).
+ * Kalshi product-feed gate — tiered stake + authoritative trade EV >= +3.0%.
+ * Missing or unmapped EV is rejected (no implied-probability substitute).
  */
 export function isKalshiTradeEligibleForFeed(
   trade: WhaleTrade,
@@ -114,6 +110,5 @@ export function isKalshiTradeEligibleForFeed(
     pipeline
   );
 
-  if (tradeEvPercent == null) return true;
-  return meetsFeedTradeEvThreshold(tradeEvPercent);
+  return passesFeedTradeEvGate(tradeEvPercent);
 }

@@ -805,15 +805,57 @@ async function buildKalshiTradeEvFallback(
       ? pipelineMappingPairKey(tokenId, kalshiTicker)
       : null;
 
+  if (executionPrice != null) {
+    const pTrueResult = await resolvePTrue({
+      mappingPairKey,
+      platform: "kalshi",
+      tokenId,
+      kalshiTicker,
+      title: item.title,
+      slug: item.slug,
+      pmOb: books.pmOb,
+      kalshiOb: books.kalshiOb,
+      pmMid: books.pmMid,
+      kalshiMid: books.kalshiMid,
+      executionPrice,
+      ensemblePTrue: authoritativeMappingEnsemblePTrue(mapping),
+      fetchEnsemble: true,
+      fetchExchangeConsensus: true,
+      computeEnsembleIfMissing: false,
+      computeRagIfMissing: false,
+    });
+
+    const fromPTrue = attachAverageEvField(
+      finalizePipelineTradeEv(
+        buildPipelineTradeEvFromPTrue(lookupKey, pTrueResult, {
+          platform: "kalshi",
+          tokenId,
+          kalshiTicker,
+          mappingPairKey,
+          executionPrice,
+        }),
+        lookupKey
+      )
+    );
+    if (
+      fromPTrue.status === "ok" &&
+      fromPTrue.netEvPercent != null &&
+      Number.isFinite(fromPTrue.netEvPercent)
+    ) {
+      return fromPTrue;
+    }
+  }
+
   if (
     tokenId &&
     books.pmMid != null &&
     Number.isFinite(books.pmMid) &&
-    executionPrice != null
+    executionPrice != null &&
+    executionPrice > 0
   ) {
     const pTrue = books.pmMid;
-    const pMarket = executionPrice;
-    const netEvPercent = deriveEvPercentFromPTrue(pTrue, executionPrice, pMarket);
+    const netEvPercent =
+      ((pTrue - executionPrice) / executionPrice) * 100;
     if (netEvPercent != null && Number.isFinite(netEvPercent)) {
       return attachAverageEvField({
         key: lookupKey,
@@ -822,7 +864,7 @@ async function buildKalshiTradeEvFallback(
         kalshiTicker,
         mappingPairKey,
         pTrue,
-        pMarket,
+        pMarket: executionPrice,
         pmMid: books.pmMid,
         kalshiMid: books.kalshiMid,
         netEvPercent,
@@ -836,37 +878,6 @@ async function buildKalshiTradeEvFallback(
         evFormulaVersion: "kalshi_cross_venue_pm",
       });
     }
-  }
-
-  if (
-    books.kalshiMid != null &&
-    Number.isFinite(books.kalshiMid) &&
-    executionPrice != null
-  ) {
-    const pTrue = books.kalshiMid;
-    const netEvPercent =
-      deriveEvPercentFromPTrue(pTrue, executionPrice, books.kalshiMid) ?? 0;
-
-    return attachAverageEvField({
-      key: lookupKey,
-      status: "ok",
-      tokenId,
-      kalshiTicker,
-      mappingPairKey,
-      pTrue,
-      pMarket: executionPrice,
-      pmMid: books.pmMid,
-      kalshiMid: books.kalshiMid,
-      netEvPercent,
-      grossEvPercent: netEvPercent,
-      averageEv: netEvPercent,
-      netEv: 0,
-      grossEv: 0,
-      pTrueSource: "standalone_ob",
-      pTrueConfidence: 0.4,
-      pTrueLowConfidence: false,
-      evFormulaVersion: "kalshi_standalone_ob",
-    });
   }
 
   return null;

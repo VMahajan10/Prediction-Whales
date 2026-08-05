@@ -122,9 +122,13 @@ describe("isKalshiTradeEligibleForFeed", () => {
     ).toBe(false);
   });
 
-  it("admits stake-qualified Kalshi trades while EV is still hydrating", () => {
+  it("rejects missing EV while hydrating", () => {
     const whale = kalshiFeedTradeToWhale(sportsTrade);
-    expect(isKalshiTradeEligibleForFeed(whale, new Map())).toBe(true);
+    expect(isKalshiTradeEligibleForFeed(whale, new Map())).toBe(false);
+  });
+
+  it("admits once pipeline EV clears +3%", () => {
+    const whale = kalshiFeedTradeToWhale(sportsTrade);
     expect(
       isKalshiTradeEligibleForFeed(whale, evIndex(sportsTrade.ticker, 5))
     ).toBe(true);

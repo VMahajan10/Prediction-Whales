@@ -32,7 +32,7 @@ describe("resolveFeedTradeEvPercent", () => {
 
     expect(
       resolveFeedTradeEvPercent({ price: 0.5 }, pipeline)
-    ).toBeCloseTo(-5, 0);
+    ).toBeCloseTo(-10, 0);
   });
 
   it("prefers netEvPercent over averageEv", () => {

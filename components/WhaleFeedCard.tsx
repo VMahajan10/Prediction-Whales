@@ -119,8 +119,6 @@ export default function WhaleFeedCard({
 
   const tradeEvDisplay = resolveFeedTradeEvDisplay({
     price: trade.price,
-    nowPrice: currentPrice,
-    isBuy,
     source: trade.source,
     netEvPercent: trade.netEvPercent ?? null,
     grossEvPercent: trade.grossEvPercent ?? null,
