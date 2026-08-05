@@ -44,6 +44,38 @@ function fmtProb(n: number): string {
   return n.toFixed(6);
 }
 
+/** Maps pipeline p_true sources to DB `source_type` values (legacy check / reporting). */
+function normalizeTrueProbabilitySourceType(source: string): string {
+  const allowed = new Set(["ensemble", "llm", "cross_market", "manual"]);
+  if (allowed.has(source)) return source;
+
+  if (
+    source.includes("ensemble") ||
+    source.includes("rag") ||
+    source === "derivative_anchor" ||
+    source === "cached_ensemble" ||
+    source === "computed_ensemble" ||
+    source === "rag_ensemble"
+  ) {
+    return "ensemble";
+  }
+
+  if (
+    source.includes("ob") ||
+    source.includes("consensus") ||
+    source.includes("cross") ||
+    source.includes("venue") ||
+    source === "sportsbook_consensus" ||
+    source === "cross_venue_ob" ||
+    source === "standalone_ob"
+  ) {
+    return "cross_market";
+  }
+
+  if (source.includes("llm")) return "llm";
+  return "ensemble";
+}
+
 function resolvePlatformMarket(
   platformMid: number | null,
   crossMid: number | null,
@@ -313,29 +345,53 @@ async function persistMappingPTrue(
   const kalshiTicker = mapping.kalshiTicker.toUpperCase();
   const variance = opts.variance ?? 0.05;
   const sourceScore = opts.sourceScore ?? 0.7;
+  const sourceType = normalizeTrueProbabilitySourceType(opts.sourceType);
+  const contributors = [
+    {
+      source: opts.sourceType,
+      weight: 1,
+      p: pTrue,
+      variance,
+    },
+  ];
+  const mappingId = mapping.id > 0 ? mapping.id : null;
+  const calculatedAt = new Date();
 
   try {
-    await db.insert(trueProbabilities).values({
-      mappingId: mapping.id > 0 ? mapping.id : null,
-      polymarketTokenId: tokenId,
-      kalshiTicker,
-      pTrue: fmtProb(pTrue),
-      sourceScore: fmtProb(sourceScore),
-      variance: fmtProb(variance),
-      sourceType: opts.sourceType,
-      modelVersion: opts.modelVersion,
-      contributors: [
-        {
-          source: opts.sourceType,
-          weight: 1,
-          p: pTrue,
-          variance,
+    await db
+      .insert(trueProbabilities)
+      .values({
+        mappingId,
+        polymarketTokenId: tokenId,
+        kalshiTicker,
+        pTrue: fmtProb(pTrue),
+        sourceScore: fmtProb(sourceScore),
+        variance: fmtProb(variance),
+        sourceType,
+        modelVersion: opts.modelVersion,
+        contributors,
+        calculatedAt,
+      })
+      .onConflictDoUpdate({
+        target: trueProbabilities.polymarketTokenId,
+        set: {
+          mappingId,
+          kalshiTicker,
+          pTrue: fmtProb(pTrue),
+          sourceScore: fmtProb(sourceScore),
+          variance: fmtProb(variance),
+          sourceType,
+          modelVersion: opts.modelVersion,
+          contributors,
+          calculatedAt,
         },
-      ],
-    });
+      });
   } catch (error) {
-    console.error("[DB WRITE ERROR]", error);
-    throw error;
+    console.error(
+      "[true_probabilities] upsert failed:",
+      error instanceof Error ? error.message : error
+    );
+    return null;
   }
 
   redisBatch.queuePTrue(tokenId, {
@@ -501,24 +557,18 @@ export async function computeEvForMappedPair(
     const anchorStore = createDerivativeAnchorStore();
     const derived = deriveDerivativePTrue(spec, anchorStore, marketPrior);
     if (derived) {
-      try {
-        const pmRecord = await persistMappingPTrue(db, mapping, derived.pTrue, {
-          pmMid,
-          kalshiMid,
-          marketPrior,
-          pmOb,
-          kalshiOb,
-          sourceType: derived.method,
-          modelVersion: "derivative_pricing_v2",
-          logSuffix: `(mapping-time ${derived.marketClass})`,
-        }, redisBatch);
-        return snapshotFromPmRecord(pmRecord);
-      } catch (deriveErr) {
-        console.error(
-          "[ev-pipeline] mapping-time derivative EV failed:",
-          deriveErr instanceof Error ? deriveErr.message : deriveErr
-        );
-      }
+      const pmRecord = await persistMappingPTrue(db, mapping, derived.pTrue, {
+        pmMid,
+        kalshiMid,
+        marketPrior,
+        pmOb,
+        kalshiOb,
+        sourceType: derived.method,
+        modelVersion: "derivative_pricing_v2",
+        logSuffix: `(mapping-time ${derived.marketClass})`,
+      }, redisBatch);
+      const snapshot = snapshotFromPmRecord(pmRecord);
+      if (snapshot) return snapshot;
     }
   }
 
@@ -659,8 +709,7 @@ export async function processMappedPTrue(
     if (spec && !spec.isPrimary) {
       const derived = deriveDerivativePTrue(spec, anchorStore, marketPrior);
       if (derived) {
-        try {
-          await persistMappingPTrue(db, mapping, derived.pTrue, {
+        const persisted = await persistMappingPTrue(db, mapping, derived.pTrue, {
             pmMid,
             kalshiMid,
             marketPrior,
@@ -670,13 +719,9 @@ export async function processMappedPTrue(
             modelVersion: "derivative_pricing_v2",
             logSuffix: `(${derived.marketClass} ${derived.detail})`,
           }, redisBatch);
+        if (persisted != null) {
           processed += 1;
           continue;
-        } catch (deriveErr) {
-          console.error(
-            "[ev-pipeline] derivative persist failed:",
-            deriveErr instanceof Error ? deriveErr.message : deriveErr
-          );
         }
       }
     }
@@ -702,7 +747,7 @@ export async function processMappedPTrue(
         );
       }
 
-      await persistMappingPTrue(db, mapping, pTrueResult.pTrue, {
+      const persisted = await persistMappingPTrue(db, mapping, pTrueResult.pTrue, {
         pmMid,
         kalshiMid,
         marketPrior,
@@ -714,7 +759,11 @@ export async function processMappedPTrue(
         logSuffix: `(${pTrueResult.source})`,
       }, redisBatch);
 
-      processed += 1;
+      if (persisted != null) {
+        processed += 1;
+      } else {
+        throw new Error(`true_probabilities upsert failed for ${tokenId}`);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error("Batch EV Fetch Error:", message);
@@ -722,8 +771,7 @@ export async function processMappedPTrue(
       if (spec) {
         const derived = deriveDerivativePTrue(spec, anchorStore, marketPrior);
         if (derived) {
-          try {
-            await persistMappingPTrue(db, mapping, derived.pTrue, {
+          const persisted = await persistMappingPTrue(db, mapping, derived.pTrue, {
               pmMid,
               kalshiMid,
               marketPrior,
@@ -733,13 +781,9 @@ export async function processMappedPTrue(
               modelVersion: "derivative_pricing_v2",
               logSuffix: `(fallback ${derived.marketClass} ${derived.detail})`,
             }, redisBatch);
+          if (persisted != null) {
             processed += 1;
             continue;
-          } catch (deriveErr) {
-            console.error(
-              "[ev-pipeline] derivative fallback failed:",
-              deriveErr instanceof Error ? deriveErr.message : deriveErr
-            );
           }
         }
       }

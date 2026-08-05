@@ -149,30 +149,59 @@ export async function processTestFallbackPTrue(
       ts: Date.now(),
     });
 
-    await db.insert(trueProbabilities).values({
-      mappingId: target.mappingId ?? null,
-      polymarketTokenId: tokenId,
-      kalshiTicker: target.kalshiTicker,
-      pTrue: fmtProb(TEST_MOCK_P_TRUE),
-      sourceScore: "1.0",
-      variance: "0.01",
-      sourceType: "ensemble",
-      modelVersion: "test_fallback_v1",
-      contributors: [
-        {
-          source: "mock_clob_midpoint",
-          weight: 0.35,
-          p: pMarket,
-          variance: 0.001,
+    await db
+      .insert(trueProbabilities)
+      .values({
+        mappingId: target.mappingId ?? null,
+        polymarketTokenId: tokenId,
+        kalshiTicker: target.kalshiTicker,
+        pTrue: fmtProb(TEST_MOCK_P_TRUE),
+        sourceScore: "1.0",
+        variance: "0.01",
+        sourceType: "ensemble",
+        modelVersion: "test_fallback_v1",
+        contributors: [
+          {
+            source: "mock_clob_midpoint",
+            weight: 0.35,
+            p: pMarket,
+            variance: 0.001,
+          },
+          {
+            source: "mock_llm_forecast",
+            weight: 0.65,
+            p: TEST_MOCK_P_TRUE,
+            variance: 0.01,
+          },
+        ],
+      })
+      .onConflictDoUpdate({
+        target: trueProbabilities.polymarketTokenId,
+        set: {
+          mappingId: target.mappingId ?? null,
+          kalshiTicker: target.kalshiTicker,
+          pTrue: fmtProb(TEST_MOCK_P_TRUE),
+          sourceScore: "1.0",
+          variance: "0.01",
+          sourceType: "ensemble",
+          modelVersion: "test_fallback_v1",
+          contributors: [
+            {
+              source: "mock_clob_midpoint",
+              weight: 0.35,
+              p: pMarket,
+              variance: 0.001,
+            },
+            {
+              source: "mock_llm_forecast",
+              weight: 0.65,
+              p: TEST_MOCK_P_TRUE,
+              variance: 0.01,
+            },
+          ],
+          calculatedAt: new Date(),
         },
-        {
-          source: "mock_llm_forecast",
-          weight: 0.65,
-          p: TEST_MOCK_P_TRUE,
-          variance: 0.01,
-        },
-      ],
-    });
+      });
 
     await cachePTrue(tokenId, {
       pTrue: TEST_MOCK_P_TRUE,

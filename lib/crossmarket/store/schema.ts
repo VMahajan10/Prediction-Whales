@@ -405,6 +405,9 @@ export const trueProbabilities = pgTable(
       .notNull(),
   },
   (table) => [
+    unique("true_probabilities_polymarket_token_id_unique").on(
+      table.polymarketTokenId,
+    ),
     index("true_probabilities_pm_token_calculated_idx").on(
       table.polymarketTokenId,
       table.calculatedAt.desc(),
