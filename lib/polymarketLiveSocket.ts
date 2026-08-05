@@ -1,8 +1,8 @@
 import { fetchTokenRegistry, type TokenMarketMeta } from "@/lib/polymarket";
-import { shouldBroadcastQualifiedSocketTrade } from "@/lib/feedSocketGateServer";
-import type { SocketTrade } from "@/lib/socketTrade";
+import { shouldBroadcastQualifiedSocketTrade } from "@/lib/feedSocketGateWorker";
+import type { SocketTrade } from "@/lib/types/socket";
 
-export type { SocketTrade } from "@/lib/socketTrade";
+export type { SocketTrade } from "@/lib/types/socket";
 
 const WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market";
 
@@ -24,7 +24,7 @@ interface LastTradePriceEvent {
 
 export interface PolymarketLiveSocketOptions {
   onTrade: (trade: SocketTrade) => void | Promise<void>;
-  /** @deprecated Tiered stake floors are enforced in feedSocketGateServer. */
+  /** @deprecated Tiered stake floors are enforced in feedSocketGateWorker. */
   minUsdNotional?: number;
 }
 

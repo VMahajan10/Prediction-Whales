@@ -1,13 +1,13 @@
 /**
  * Pure feed socket gate logic — no `server-only`, no pipeline EV fetchers.
- * Wired by `feedSocketGateClient` (browser) and `feedSocketGateServer` (worker).
+ * Wired by `feedSocketGateClient` (browser) and `feedSocketGateWorker` (Render).
  */
 import { evaluateLiveFeedTradeGate } from "@/lib/feedGate";
 import { resolveFeedFilterCategoryLabel } from "@/lib/feedFilterDiagnostics";
 import { meetsProductFeedStakeThreshold } from "@/lib/feedQualification";
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import { pipelineEvKeyForWhale } from "@/lib/pipelineEvLookupHelpers";
-import type { SocketTrade } from "@/lib/socketTrade";
+import type { SocketTrade } from "@/lib/types/socket";
 import type { PipelineEvRequestItem, PipelineTradeEv } from "@/lib/types/ev";
 import { tradeToWhale } from "@/lib/whaleTrades";
 

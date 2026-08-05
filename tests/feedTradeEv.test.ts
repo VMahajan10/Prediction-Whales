@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import { passesFeedSocketStakeGate } from "@/lib/feedSocketGateClient";
-import type { SocketTrade } from "@/lib/socketTrade";
+import type { SocketTrade } from "@/lib/types/socket";
 
 function socketTrade(
   overrides: Partial<SocketTrade> & Pick<SocketTrade, "usdNotional" | "title">

@@ -1,5 +1,8 @@
-import "server-only";
-
+/**
+ * In-process trade EV for Render workers and server runtimes.
+ * Do not add `import "server-only"` — plain Node workers import this module.
+ * Browser code must use `pipelineEvClient` (POST /api/ev/trades).
+ */
 import {
   createTimeoutPipelineTradeEv,
   createUnmappedPipelineTradeEv,

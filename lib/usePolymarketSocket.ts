@@ -2,10 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { shouldBroadcastQualifiedSocketTrade } from "@/lib/feedSocketGateClient";
-import type { SocketTrade } from "@/lib/socketTrade";
+import type { SocketTrade } from "@/lib/types/socket";
 import type { TokenMarketMeta } from "@/lib/polymarket";
 
-export type { SocketTrade } from "@/lib/socketTrade";
+export type { SocketTrade } from "@/lib/types/socket";
 
 const WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market";
 
