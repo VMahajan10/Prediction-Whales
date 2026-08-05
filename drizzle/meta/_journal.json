@@ -106,6 +106,13 @@
       "when": 1785460000000,
       "tag": "0017_kalshi_shadow_trades_trade_id_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1785461000000,
+      "tag": "0018_x_post_log_rejection_reason_values",
+      "breakpoints": true
     }
   ]
 }

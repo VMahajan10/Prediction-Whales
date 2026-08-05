@@ -608,7 +608,7 @@ export const kalshiShadowTrades = pgTable(
 );
 
 /** Allowed x_post_log.rejection_reason values (Postgres enum `rejection_reason`). */
-export const xPostRejectionReasonEnum = pgEnum("rejection_reason", [
+export const X_POST_REJECTION_REASONS = [
   "KALSHI_PUBLIC_POSTING_DISABLED",
   "BELOW_RESOLVED_BETS",
   "BELOW_EV_THRESHOLD",
@@ -621,7 +621,14 @@ export const xPostRejectionReasonEnum = pgEnum("rejection_reason", [
   "DUPLICATE_TRADE",
   "RECENT_MARKET_POST",
   "Failed Trade EV (< +3.0%)",
-]);
+] as const;
+
+export type XPostRejectionReason = (typeof X_POST_REJECTION_REASONS)[number];
+
+export const xPostRejectionReasonEnum = pgEnum(
+  "rejection_reason",
+  X_POST_REJECTION_REASONS,
+);
 
 /** Append-only audit log for X post gate decisions per trade. */
 export const xPostLog = pgTable(

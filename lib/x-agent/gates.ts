@@ -1,6 +1,7 @@
 import { getDb, isDatabaseEnabled } from "@/lib/crossmarket/store/db";
 import {
   type WhaleRegistry,
+  X_POST_REJECTION_REASONS,
   xPostLog,
 } from "@/lib/crossmarket/store/schema";
 import {
@@ -49,20 +50,7 @@ export {
   BELOW_EV_THRESHOLD,
 } from "@/lib/x-agent/postQueueGates";
 
-export const GATE_REJECTION_REASONS = [
-  "KALSHI_PUBLIC_POSTING_DISABLED",
-  "BELOW_RESOLVED_BETS",
-  "BELOW_EV_THRESHOLD",
-  "LOW_EV",
-  "STAKE_TOO_LOW",
-  "BELOW_STAKE_FLOOR",
-  "STALE_TRADE",
-  "LINE_DRIFT_EXCEEDED",
-  "ILLEGIBLE_MARKET",
-  "DUPLICATE_TRADE",
-  "RECENT_MARKET_POST",
-  FAILED_TRADE_EV_REASON,
-] as const;
+export const GATE_REJECTION_REASONS = X_POST_REJECTION_REASONS;
 
 export type GateRejectionReason = (typeof GATE_REJECTION_REASONS)[number];
 
@@ -613,6 +601,14 @@ export async function handlePreGateRejection(
   await logGateFailure(trade, result.reason);
 }
 
+function readGateLogErrorCause(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const cause = error.cause;
+  if (cause instanceof Error) return cause.message;
+  if (typeof cause === "string") return cause;
+  return undefined;
+}
+
 async function logGateFailure(
   trade: TradePayload,
   reason: GateRejectionReason
@@ -643,8 +639,9 @@ async function logGateFailure(
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const causeMessage = readGateLogErrorCause(error);
     console.warn(
-      `[x-agent/gates] x_post_log insert failed (non-fatal) tradeId=${trade.tradeId} reason=${reason}: ${message}`
+      `[x-agent/gates] x_post_log insert failed (non-fatal) tradeId=${trade.tradeId} reason=${reason}: ${message}${causeMessage ? ` | cause: ${causeMessage}` : ""}`
     );
   }
 }
