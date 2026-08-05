@@ -66,6 +66,14 @@ export const GATE_REJECTION_REASONS = [
 
 export type GateRejectionReason = (typeof GATE_REJECTION_REASONS)[number];
 
+const GATE_REJECTION_REASON_SET = new Set<string>(GATE_REJECTION_REASONS);
+
+export function isGateRejectionReason(
+  reason: string
+): reason is GateRejectionReason {
+  return GATE_REJECTION_REASON_SET.has(reason);
+}
+
 export interface TradePayload {
   source: "polymarket" | "kalshi";
   tradeId: string;
@@ -617,6 +625,14 @@ async function logGateFailure(
     return;
   }
 
+  if (!isGateRejectionReason(reason)) {
+    console.warn("[x-agent/gates] skipping x_post_log insert (unknown rejection reason)", {
+      tradeId: trade.tradeId,
+      reason,
+    });
+    return;
+  }
+
   try {
     const db = getDb();
     await db.insert(xPostLog).values({
@@ -626,11 +642,10 @@ async function logGateFailure(
       payload: trade,
     });
   } catch (error) {
-    console.warn("[x-agent/gates] x_post_log insert failed (non-fatal)", {
-      tradeId: trade.tradeId,
-      reason,
-      error: error instanceof Error ? error.message : error,
-    });
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `[x-agent/gates] x_post_log insert failed (non-fatal) tradeId=${trade.tradeId} reason=${reason}: ${message}`
+    );
   }
 }
 

@@ -8,6 +8,7 @@ import {
   integer,
   jsonb,
   numeric,
+  pgEnum,
   pgTable,
   real,
   smallint,
@@ -606,6 +607,22 @@ export const kalshiShadowTrades = pgTable(
   ],
 );
 
+/** Allowed x_post_log.rejection_reason values (Postgres enum `rejection_reason`). */
+export const xPostRejectionReasonEnum = pgEnum("rejection_reason", [
+  "KALSHI_PUBLIC_POSTING_DISABLED",
+  "BELOW_RESOLVED_BETS",
+  "BELOW_EV_THRESHOLD",
+  "LOW_EV",
+  "STAKE_TOO_LOW",
+  "BELOW_STAKE_FLOOR",
+  "STALE_TRADE",
+  "LINE_DRIFT_EXCEEDED",
+  "ILLEGIBLE_MARKET",
+  "DUPLICATE_TRADE",
+  "RECENT_MARKET_POST",
+  "Failed Trade EV (< +3.0%)",
+]);
+
 /** Append-only audit log for X post gate decisions per trade. */
 export const xPostLog = pgTable(
   "x_post_log",
@@ -613,7 +630,7 @@ export const xPostLog = pgTable(
     id: bigserial("id", { mode: "number" }).primaryKey(),
     tradeId: text("trade_id").notNull(),
     gatePassed: boolean("gate_passed").notNull(),
-    rejectionReason: text("rejection_reason"),
+    rejectionReason: xPostRejectionReasonEnum("rejection_reason"),
     payload: jsonb("payload").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .defaultNow()

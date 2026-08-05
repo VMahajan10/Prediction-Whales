@@ -92,6 +92,13 @@
       "when": 1785458000000,
       "tag": "0013_x_post_queue_public_telegram",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1785459000000,
+      "tag": "0016_x_post_log_rejection_reason",
+      "breakpoints": true
     }
   ]
 }
