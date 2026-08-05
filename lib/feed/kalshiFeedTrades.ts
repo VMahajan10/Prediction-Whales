@@ -52,16 +52,25 @@ export function kalshiFeedTradeToWhale(
 }
 
 /**
- * Kalshi product-feed gate — flat $500 stake + trade EV >= +3.0%, and no wallet
- * credibility because Kalshi has no wallet. Unmapped tickers resolve to null EV
- * and are held back until progressive hydration fills them in, not dropped.
+ * Kalshi product-feed stake gate — flat $500 minimum, no wallet checks.
+ */
+export function isKalshiTradeStakeCandidate(trade: WhaleTrade): boolean {
+  return (
+    trade.source === "kalshi" &&
+    meetsProductFeedStakeThreshold(trade.usdNotional)
+  );
+}
+
+/**
+ * Kalshi product-feed gate — stake + trade EV >= +3.0% when EV is known.
+ * Null / unmapped EV is admitted so the client can render immediately and
+ * hydrate via /api/ev/trades (same progressive path as Polymarket candidates).
  */
 export function isKalshiTradeEligibleForFeed(
   trade: WhaleTrade,
   pipelineEvIndex: Map<string, PipelineTradeEv>
 ): boolean {
-  if (trade.source !== "kalshi") return false;
-  if (!meetsProductFeedStakeThreshold(trade.usdNotional)) return false;
+  if (!isKalshiTradeStakeCandidate(trade)) return false;
 
   const pipeline = resolvePipelineEvForWhale(pipelineEvIndex, trade);
   const tradeEvPercent = resolveFeedTradeEvPercent(
@@ -73,5 +82,6 @@ export function isKalshiTradeEligibleForFeed(
     pipeline
   );
 
+  if (tradeEvPercent == null) return true;
   return meetsFeedTradeEvThreshold(tradeEvPercent);
 }

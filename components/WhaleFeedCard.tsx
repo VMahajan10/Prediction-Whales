@@ -28,10 +28,10 @@ export interface WhaleFeedCardProps {
 
 /**
  * Kalshi exposes no persistent trader identity and profiling members is
- * prohibited, so Kalshi rows show a generic anonymous badge in the same slot
+ * prohibited, so Kalshi rows show a generic trader badge in the same slot
  * (docs/Kalshi Whale Attribution Audit.md). Never a pseudonym or win rate.
  */
-const KALSHI_ANONYMOUS_LABEL = "Anonymous Trader";
+const KALSHI_ANONYMOUS_LABEL = "Kalshi Trader";
 
 function resolveFeedWhaleIdentity(trade: WhaleTrade) {
   if (trade.source === "kalshi") {

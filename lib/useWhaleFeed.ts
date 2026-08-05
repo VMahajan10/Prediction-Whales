@@ -17,6 +17,7 @@ import { retainLastNonEmpty } from "@/lib/feed/feedRetention";
 import {
   isKalshiTradeEligibleForFeed,
   kalshiFeedTradeToWhale,
+  type KalshiFeedTradeInput,
 } from "@/lib/feed/kalshiFeedTrades";
 import { resolveFeedFilterCategoryLabel } from "@/lib/feedFilterDiagnostics";
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
@@ -59,9 +60,32 @@ type BackfillApiTrade = TradeSummary & {
   averageEv?: number | null;
 };
 
+type BackfillApiResponse = {
+  trades?: BackfillApiTrade[];
+  kalshiTrades?: KalshiFeedTradeInput[];
+};
+
+type BackfillPayload = {
+  polymarket: BackfillApiTrade[];
+  kalshi: KalshiFeedTradeInput[];
+};
+
+function kalshiFeedTradeFromApi(trade: KalshiFeedTradeInput): KalshiFeedTradeInput {
+  return {
+    id: trade.id,
+    title: trade.title,
+    outcome: trade.outcome,
+    side: trade.side,
+    price: trade.price,
+    usdNotional: trade.usdNotional,
+    timestamp: trade.timestamp,
+    ticker: trade.ticker,
+  };
+}
+
 async function fetchBackfillTrades(
   signal: AbortSignal
-): Promise<BackfillApiTrade[]> {
+): Promise<BackfillPayload> {
   const timeout = new AbortController();
   const onAbort = () => timeout.abort();
   signal.addEventListener("abort", onAbort);
@@ -70,8 +94,11 @@ async function fetchBackfillTrades(
   try {
     const res = await fetch("/api/feed", { signal: timeout.signal });
     if (!res.ok) throw new Error(`Feed backfill HTTP ${res.status}`);
-    const data: { trades?: BackfillApiTrade[] } = await res.json();
-    return data.trades ?? [];
+    const data: BackfillApiResponse = await res.json();
+    return {
+      polymarket: data.trades ?? [],
+      kalshi: (data.kalshiTrades ?? []).map(kalshiFeedTradeFromApi),
+    };
   } finally {
     clearTimeout(timer);
     signal.removeEventListener("abort", onAbort);
@@ -187,6 +214,9 @@ export function useWhaleFeed() {
   const { trades: kalshiFeedTrades, ok: kalshiOk } = useKalshiTrades();
   useWalletEnrichment();
   const [backfill, setBackfill] = useState<WhaleTrade[]>([]);
+  const [kalshiBackfill, setKalshiBackfill] = useState<KalshiFeedTradeInput[]>(
+    []
+  );
   const [backfillLoaded, setBackfillLoaded] = useState(false);
   const seenHashes = useRef<Set<string>>(new Set());
   const liveDetectedAt = useRef<Map<string, number>>(new Map());
@@ -204,8 +234,8 @@ export function useWhaleFeed() {
   useEffect(() => {
     const abort = new AbortController();
 
-    const applyTrades = (trades: BackfillApiTrade[]) => {
-      const whales = trades.map((t) => ({
+    const applyBackfill = (payload: BackfillPayload) => {
+      const whales = payload.polymarket.map((t) => ({
         ...tradeToWhale(t, {
           detectedAt: t.timestamp * 1000,
           isLive: false,
@@ -218,6 +248,14 @@ export function useWhaleFeed() {
         averageEv: t.averageEv ?? t.netEvPercent ?? null,
       }));
       setBackfill((prev) => retainLastNonEmpty(whales, prev));
+      if (payload.kalshi.length > 0) {
+        setKalshiBackfill((prev) => {
+          const merged = new Map<string, KalshiFeedTradeInput>();
+          for (const trade of prev) merged.set(trade.id, trade);
+          for (const trade of payload.kalshi) merged.set(trade.id, trade);
+          return Array.from(merged.values());
+        });
+      }
       for (const w of whales) {
         if (w.transactionHash) seenHashes.current.add(w.transactionHash);
         if (w.transactionHash && w.proxyWallet) {
@@ -243,10 +281,10 @@ export function useWhaleFeed() {
       for (let attempt = 1; attempt <= BACKFILL_ATTEMPTS; attempt += 1) {
         if (abort.signal.aborted) return;
         try {
-          const trades = await fetchBackfillTrades(abort.signal);
+          const payload = await fetchBackfillTrades(abort.signal);
           if (abort.signal.aborted) return;
-          applyTrades(trades);
-          if (trades.length > 0) break;
+          applyBackfill(payload);
+          if (payload.polymarket.length > 0) break;
         } catch {
           if (abort.signal.aborted) return;
           if (attempt === BACKFILL_ATTEMPTS) break;
@@ -285,10 +323,32 @@ export function useWhaleFeed() {
     [liveWhales, backfill]
   );
 
+  const mergedKalshiFeedTrades = useMemo(() => {
+    const byId = new Map<string, KalshiFeedTradeInput>();
+    for (const trade of kalshiBackfill) {
+      if (trade.id) byId.set(trade.id, trade);
+    }
+    for (const trade of kalshiFeedTrades) {
+      if (trade.id) {
+        byId.set(trade.id, {
+          id: trade.id,
+          title: trade.title,
+          outcome: trade.outcome,
+          side: trade.side,
+          price: trade.price,
+          usdNotional: trade.usdNotional,
+          timestamp: trade.timestamp,
+          ticker: trade.ticker,
+        });
+      }
+    }
+    return Array.from(byId.values());
+  }, [kalshiBackfill, kalshiFeedTrades]);
+
   const kalshiWhales = useMemo(() => {
     if (!KALSHI_FEED_ENABLED) return [];
-    return kalshiFeedTrades.map((trade) => kalshiFeedTradeToWhale(trade));
-  }, [kalshiFeedTrades]);
+    return mergedKalshiFeedTrades.map((trade) => kalshiFeedTradeToWhale(trade));
+  }, [mergedKalshiFeedTrades]);
 
   /** Both platforms share one EV batch so Kalshi tickers hydrate too. */
   const evTargetWhales = useMemo(

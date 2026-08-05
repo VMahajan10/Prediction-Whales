@@ -1,5 +1,4 @@
-import { fetchKalshiTrades } from "@/lib/kalshiTrades";
-import { meetsProductFeedStakeThreshold } from "@/lib/feedQualification";
+import { collectKalshiFeedCandidates } from "@/lib/feed/kalshiFeedCandidatesServer";
 import { recordKalshiFeedMetrics } from "@/lib/feedQualificationServer";
 import { NextResponse } from "next/server";
 
@@ -8,7 +7,7 @@ export const revalidate = 0;
 
 let cache: {
   minTs: number | undefined;
-  data: { trades: Awaited<ReturnType<typeof fetchKalshiTrades>> };
+  data: { trades: Awaited<ReturnType<typeof collectKalshiFeedCandidates>> };
   timestamp: number;
 } | null = null;
 
@@ -32,12 +31,8 @@ export async function GET(request: Request) {
   }
 
   try {
-    const trades = await fetchKalshiTrades(
+    const detected = await collectKalshiFeedCandidates(
       Number.isFinite(minTs) ? minTs : undefined
-    );
-
-    const detected = trades.filter((trade) =>
-      meetsProductFeedStakeThreshold(trade.usdNotional)
     );
     recordKalshiFeedMetrics(detected.length);
 

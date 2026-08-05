@@ -5,6 +5,7 @@ import {
   filterTranslatablePolymarketFeedTrades,
 } from "@/lib/feedQualificationServer";
 import { resolvePolymarketTradeNotionalUsd } from "@/lib/feedQualification";
+import { collectKalshiFeedCandidates } from "@/lib/feed/kalshiFeedCandidatesServer";
 import {
   fetchFallbackFeedTrades,
   recordFeedTradeHistory,
@@ -41,7 +42,21 @@ export async function GET() {
     );
 
     if (renderable.length > 0) {
-      return NextResponse.json({ trades: enriched, source: "live" });
+      let kalshiTrades: Awaited<ReturnType<typeof collectKalshiFeedCandidates>> =
+        [];
+      try {
+        kalshiTrades = await collectKalshiFeedCandidates();
+      } catch (kalshiErr) {
+        console.warn(
+          "[api/feed] Kalshi candidate fetch failed:",
+          kalshiErr instanceof Error ? kalshiErr.message : kalshiErr
+        );
+      }
+      return NextResponse.json({
+        trades: enriched,
+        kalshiTrades,
+        source: "live",
+      });
     }
 
     const fallback = await fetchFallbackFeedTrades<(typeof enriched)[number]>();
@@ -49,7 +64,22 @@ export async function GET() {
       return NextResponse.json({ trades: fallback, source: "history" });
     }
 
-    return NextResponse.json({ trades: enriched, source: "live" });
+    let kalshiTrades: Awaited<ReturnType<typeof collectKalshiFeedCandidates>> =
+      [];
+    try {
+      kalshiTrades = await collectKalshiFeedCandidates();
+    } catch (kalshiErr) {
+      console.warn(
+        "[api/feed] Kalshi candidate fetch failed:",
+        kalshiErr instanceof Error ? kalshiErr.message : kalshiErr
+      );
+    }
+
+    return NextResponse.json({
+      trades: enriched,
+      kalshiTrades,
+      source: "live",
+    });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Failed to fetch product feed";

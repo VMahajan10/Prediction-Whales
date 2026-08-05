@@ -77,9 +77,9 @@ describe("isKalshiTradeEligibleForFeed", () => {
     ).toBe(false);
   });
 
-  it("holds back unmapped tickers until EV hydrates", () => {
+  it("admits stake-qualified Kalshi trades while EV is still hydrating", () => {
     const whale = kalshiFeedTradeToWhale(baseTrade);
-    expect(isKalshiTradeEligibleForFeed(whale, new Map())).toBe(false);
+    expect(isKalshiTradeEligibleForFeed(whale, new Map())).toBe(true);
     expect(
       isKalshiTradeEligibleForFeed(whale, evIndex(baseTrade.ticker, 5))
     ).toBe(true);
