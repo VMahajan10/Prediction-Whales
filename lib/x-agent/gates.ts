@@ -603,7 +603,8 @@ export async function handlePreGateRejection(
 
 function readGateLogErrorCause(error: unknown): string | undefined {
   if (!(error instanceof Error)) return undefined;
-  const cause = error.cause;
+  const cause =
+    "cause" in error ? (error as Error & { cause?: unknown }).cause : undefined;
   if (cause instanceof Error) return cause.message;
   if (typeof cause === "string") return cause;
   return undefined;
