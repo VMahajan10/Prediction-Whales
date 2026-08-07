@@ -1,3 +1,5 @@
+import "server-only";
+
 import { sql } from "drizzle-orm";
 import {
   bigint,
@@ -17,6 +19,17 @@ import {
   unique,
   customType,
 } from "drizzle-orm/pg-core";
+import {
+  X_POST_QUEUE_STATUSES,
+  type XPostQueueStatus,
+} from "@/lib/types/xPostQueue";
+import {
+  X_POST_REJECTION_REASONS,
+  type XPostRejectionReason,
+} from "@/lib/types/xPostRejection";
+
+export { X_POST_QUEUE_STATUSES, type XPostQueueStatus };
+export { X_POST_REJECTION_REASONS, type XPostRejectionReason };
 
 // ---------------------------------------------------------------------------
 // pgvector — text-embedding-3-small (1536 dims)
@@ -474,19 +487,6 @@ export type TraderEvAnalyticInsert = typeof traderEvAnalytics.$inferInsert;
 // X Detection Engine — whale registry, post queue, gate audit log
 // ---------------------------------------------------------------------------
 
-export const X_POST_QUEUE_STATUSES = [
-  "PENDING_REVIEW",
-  "DRAFT",
-  "APPROVED",
-  "EDITED",
-  "KILLED",
-  "SCHEDULED",
-  "PUBLISHED",
-  "DISPATCHED",
-  "EXPIRED",
-] as const;
-export type XPostQueueStatus = (typeof X_POST_QUEUE_STATUSES)[number];
-
 /** Known whale wallets tracked for X post eligibility and copy generation. */
 export const whaleRegistry = pgTable("whale_registry", {
   /** Lowercase proxy wallet or platform account id. */
@@ -606,24 +606,6 @@ export const kalshiShadowTrades = pgTable(
     ),
   ],
 );
-
-/** Allowed x_post_log.rejection_reason values (Postgres enum `rejection_reason`). */
-export const X_POST_REJECTION_REASONS = [
-  "KALSHI_PUBLIC_POSTING_DISABLED",
-  "BELOW_RESOLVED_BETS",
-  "BELOW_EV_THRESHOLD",
-  "LOW_EV",
-  "STAKE_TOO_LOW",
-  "BELOW_STAKE_FLOOR",
-  "STALE_TRADE",
-  "LINE_DRIFT_EXCEEDED",
-  "ILLEGIBLE_MARKET",
-  "DUPLICATE_TRADE",
-  "RECENT_MARKET_POST",
-  "Failed Trade EV (< +3.0%)",
-] as const;
-
-export type XPostRejectionReason = (typeof X_POST_REJECTION_REASONS)[number];
 
 export const xPostRejectionReasonEnum = pgEnum(
   "rejection_reason",

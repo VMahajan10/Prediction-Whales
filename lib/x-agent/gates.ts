@@ -4,10 +4,12 @@ import {
   queueGateLogRejection,
 } from "@/lib/x-agent/batchedNeonWrites";
 import { isDatabaseEnabled } from "@/lib/crossmarket/store/db";
+import { type WhaleRegistry } from "@/lib/crossmarket/store/schema";
 import {
-  type WhaleRegistry,
-  X_POST_REJECTION_REASONS,
-} from "@/lib/crossmarket/store/schema";
+  GATE_REJECTION_REASONS,
+  type GateRejectionReason,
+  type TradePayload,
+} from "@/lib/x-agent/gateTypes";
 import {
   CREDIBILITY_CONFIG,
   meetsProductFeedStakeThreshold,
@@ -55,9 +57,11 @@ export {
   BELOW_EV_THRESHOLD,
 } from "@/lib/x-agent/postQueueGates";
 
-export const GATE_REJECTION_REASONS = X_POST_REJECTION_REASONS;
-
-export type GateRejectionReason = (typeof GATE_REJECTION_REASONS)[number];
+export {
+  GATE_REJECTION_REASONS,
+  type GateRejectionReason,
+  type TradePayload,
+} from "@/lib/x-agent/gateTypes";
 
 const GATE_REJECTION_REASON_SET = new Set<string>(GATE_REJECTION_REASONS);
 
@@ -65,23 +69,6 @@ export function isGateRejectionReason(
   reason: string
 ): reason is GateRejectionReason {
   return GATE_REJECTION_REASON_SET.has(reason);
-}
-
-export interface TradePayload {
-  source: "polymarket" | "kalshi";
-  tradeId: string;
-  walletAddress: string;
-  stakeNotional: number;
-  /** Unix epoch seconds. */
-  timestamp: number;
-  entryCents: number;
-  nowCents: number;
-  title: string;
-  outcome: string;
-  side: "BUY" | "SELL";
-  marketSlug: string;
-  slug?: string | null;
-  eventSlug?: string | null;
 }
 
 export interface TradeGateMatrix {

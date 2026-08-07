@@ -1,3 +1,5 @@
+import "server-only";
+
 import { and, desc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
 import { getDb, isDatabaseEnabled } from "@/lib/crossmarket/store/db";
 import {

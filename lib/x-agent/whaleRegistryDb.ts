@@ -1,3 +1,5 @@
+import "server-only";
+
 import type { WhaleRegistry } from "@/lib/crossmarket/store/schema";
 import {
   ANONYMOUS_WALLET_ADDRESS,

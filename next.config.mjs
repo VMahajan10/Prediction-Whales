@@ -19,6 +19,14 @@ const CLIENT_STUBS = {
   "@/lib/x-agent/kalshiShadowTrades": "./lib/stubs/client-stub.ts",
   "@/lib/x-agent/xPublisherScheduler": "./lib/stubs/client-stub.ts",
   "@/lib/x-agent/shadowTradeQualification": "./lib/stubs/client-stub.ts",
+  "@/lib/crossmarket/store/db": "./lib/stubs/client-stub.ts",
+  "@/lib/crossmarket/store/schema": "./lib/stubs/client-stub.ts",
+  "@/lib/prisma": "./lib/stubs/client-stub.ts",
+  "@/lib/x-agent/enqueueWhaleTrade": "./lib/stubs/client-stub.ts",
+  "@/lib/x-agent/reviewDb": "./lib/stubs/client-stub.ts",
+  "@/lib/x-agent/whaleRegistryDb": "./lib/stubs/client-stub.ts",
+  "@/lib/x-agent/loadReviewPageData": "./lib/stubs/client-stub.ts",
+  "@/lib/x-agent/postQueueGates": "./lib/stubs/client-stub.ts",
 };
 
 /** @type {import('next').NextConfig} */

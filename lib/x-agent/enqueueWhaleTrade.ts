@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import "server-only";
+
 import type { XPostQueue } from "@/lib/crossmarket/store/schema";
 import { coalesceDisplayEvPercent } from "@/lib/evPipeline/tradeEvRecord";
 import { ensureFullyComputedTradeEv } from "@/lib/evPipeline/resolveTradeEv";

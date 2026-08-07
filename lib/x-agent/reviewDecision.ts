@@ -4,7 +4,7 @@ import {
   isPublishedQueueStatus,
   isScheduledQueueStatus,
 } from "@/lib/x-agent/postStatus";
-import type { XPostQueueStatus } from "@/lib/crossmarket/store/schema";
+import type { XPostQueueStatus } from "@/lib/types/xPostQueue";
 
 /** Queue rows still awaiting cofounder accept / reject / edit decision. */
 export const PENDING_REVIEW_STATUSES: XPostQueueStatus[] = [

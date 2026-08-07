@@ -2,8 +2,7 @@ import "server-only";
 
 import { getDb, isDatabaseEnabled } from "@/lib/crossmarket/store/db";
 import { xPostLog } from "@/lib/crossmarket/store/schema";
-import type { TradePayload } from "@/lib/x-agent/gates";
-import type { GateRejectionReason } from "@/lib/x-agent/gates";
+import type { TradePayload, GateRejectionReason } from "@/lib/x-agent/gateTypes";
 import {
   flushKalshiShadowTradeBatch,
   KALSHI_SHADOW_FLUSH_INTERVAL_MS,

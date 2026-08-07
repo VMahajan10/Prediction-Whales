@@ -1,3 +1,5 @@
+import "server-only";
+
 import { getTradeEvLookupRedisOnly } from "@/lib/evPipeline/redisCache";
 import { isDatabaseEnabled } from "@/lib/crossmarket/store/db";
 import { getRandomScheduledTime } from "@/lib/x-agent/reviewSchedule";
