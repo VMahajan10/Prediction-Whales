@@ -12,8 +12,11 @@ import {
   isKalshiTradeEligibleForFeed,
   kalshiFeedTradeToWhale,
 } from "@/lib/feed/kalshiFeedTrades";
+import { collectKalshiFeedCandidates } from "@/lib/feed/kalshiFeedCandidatesServer";
 import {
-  MIN_FEED_STAKE_PREFILTER_USD,
+  filterQualifiedPolymarketFeedTrades,
+} from "@/lib/feedQualificationServer";
+import {
   MIN_FEED_TRADE_EV_PCT,
   MIN_PRODUCT_FEED_STAKE_USD,
   resolvePolymarketTradeNotionalUsd,
@@ -27,10 +30,17 @@ import {
   pipelineEvLookupKey,
 } from "@/lib/evPipeline/types";
 import type { FeedTrade } from "@/lib/kalshiTrades";
+import { fetchWhaleBackfill, type TradeSummary } from "@/lib/polymarket";
 
 initGlobalLocalEvCache();
 
 export const RECENT_TRADES_LIMIT = 20;
+
+/** Deep DB scan — surfaces hours-old qualifying trades within retention. */
+const EXPANDED_DB_SCAN_LIMIT = 100;
+
+/** Max Kalshi API rows to fully EV-compute when cache is cold. */
+const KALSHI_API_EV_COMPUTE_LIMIT = 20;
 
 export type RecentFeedTrade = FeedTrade & {
   /** Trade-level EV % — lets the client gate before pipeline hydration. */
@@ -99,6 +109,151 @@ function polymarketPayloadToFeedTrade(
     assetId: row.assetId?.trim() || undefined,
     netEvPercent,
   };
+}
+
+function tradeSummaryToRecentFeedTrade(
+  trade: TradeSummary,
+  netEvPercent: number
+): RecentFeedTrade | null {
+  const usdNotional = resolvePolymarketTradeNotionalUsd(trade);
+  if (usdNotional <= 0) return null;
+
+  return {
+    id: trade.id,
+    source: "polymarket",
+    title: trade.title,
+    outcome: trade.outcome,
+    side: trade.side,
+    price: trade.price,
+    size: trade.size,
+    usdNotional,
+    timestamp: trade.timestamp,
+    traceable: Boolean(trade.transactionHash?.trim()),
+    transactionHash: trade.transactionHash?.trim() || undefined,
+    slug: trade.slug,
+    assetId: trade.assetId,
+    netEvPercent,
+  };
+}
+
+function feedTradeToRecentFeedTrade(trade: FeedTrade): RecentFeedTrade {
+  return {
+    id: trade.id,
+    source: "kalshi",
+    title: trade.title,
+    outcome: trade.outcome,
+    side: trade.side,
+    price: trade.price,
+    size: trade.size,
+    usdNotional: trade.usdNotional,
+    timestamp: trade.timestamp,
+    traceable: trade.traceable,
+    ticker: trade.ticker,
+    selectionLabel: trade.selectionLabel,
+    isBlockTrade: trade.isBlockTrade,
+  };
+}
+
+function tradeDedupeKey(trade: RecentFeedTrade): string {
+  return `${trade.source}:${trade.id}`;
+}
+
+function mergeRecentTrades(
+  polymarket: RecentFeedTrade[],
+  kalshi: RecentFeedTrade[]
+): RecentFeedTrade[] {
+  return [...polymarket, ...kalshi]
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, RECENT_TRADES_LIMIT);
+}
+
+function dedupeMergeRecentTrades(
+  existing: RecentFeedTrade[],
+  supplemental: RecentFeedTrade[]
+): RecentFeedTrade[] {
+  const seen = new Set(existing.map(tradeDedupeKey));
+  const merged = [...existing];
+
+  for (const trade of supplemental.sort((a, b) => b.timestamp - a.timestamp)) {
+    const key = tradeDedupeKey(trade);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(trade);
+  }
+
+  return merged
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, RECENT_TRADES_LIMIT);
+}
+
+function filterKalshiEligible(
+  candidates: RecentFeedTrade[],
+  pipelineEvIndex: Map<string, PipelineTradeEv>
+): RecentFeedTrade[] {
+  return candidates.flatMap((trade) => {
+    const whale = kalshiFeedTradeToWhale(trade);
+    if (!isKalshiTradeEligibleForFeed(whale, pipelineEvIndex)) return [];
+
+    const lookupKey = trade.ticker
+      ? normalizePipelineLookupKey(`kalshi:${trade.ticker}`, "kalshi")
+      : null;
+    const pipeline = lookupKey ? pipelineEvIndex.get(lookupKey) : undefined;
+    const netEvPercent = resolveFeedTradeEvPercent(
+      { price: trade.price },
+      pipeline
+    );
+
+    return [{ ...trade, netEvPercent }];
+  });
+}
+
+async function qualifyKalshiRecentTrades(
+  candidates: RecentFeedTrade[],
+  options?: { cacheOnly?: boolean; computeEvLimit?: number }
+): Promise<RecentFeedTrade[]> {
+  const cacheOnly = options?.cacheOnly ?? true;
+  const pipelineEvIndex = await resolveCachedKalshiPipelineEv(candidates);
+  let qualified = filterKalshiEligible(candidates, pipelineEvIndex);
+
+  if (cacheOnly || qualified.length >= candidates.length) {
+    return qualified;
+  }
+
+  const qualifiedIds = new Set(qualified.map((trade) => trade.id));
+  const remaining = candidates
+    .filter((trade) => !qualifiedIds.has(trade.id))
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, options?.computeEvLimit ?? KALSHI_API_EV_COMPUTE_LIMIT);
+
+  await mapWithConcurrency(remaining, 4, async (trade) => {
+    if (!trade.ticker?.trim()) return;
+    const ticker = trade.ticker.trim().toUpperCase();
+    const lookupKey = normalizePipelineLookupKey(`kalshi:${ticker}`, "kalshi");
+
+    try {
+      const pipeline = await ensureFullyComputedTradeEv(
+        lookupKey,
+        {
+          source: "kalshi",
+          kalshiTicker: ticker,
+          tradePrice: trade.price,
+        },
+        null
+      );
+      const key = pipelineEvLookupKey({
+        source: "kalshi",
+        kalshiTicker: ticker,
+        tradePrice: trade.price,
+      });
+      if (key) pipelineEvIndex.set(key, pipeline);
+      pipelineEvIndex.set(lookupKey, pipeline);
+    } catch {
+      // Skip tickers that cannot be EV-mapped.
+    }
+  });
+
+  qualified = filterKalshiEligible(candidates, pipelineEvIndex);
+  return qualified;
 }
 
 function kalshiShadowToFeedTrade(row: KalshiShadowTrade): RecentFeedTrade | null {
@@ -197,7 +352,9 @@ async function resolveCachedKalshiPipelineEv(
   return index;
 }
 
-async function fetchRecentPolymarketTrades(): Promise<RecentFeedTrade[]> {
+async function fetchRecentPolymarketTrades(
+  limit = RECENT_TRADES_LIMIT
+): Promise<RecentFeedTrade[]> {
   if (!isDatabaseEnabled()) return [];
 
   try {
@@ -214,7 +371,7 @@ async function fetchRecentPolymarketTrades(): Promise<RecentFeedTrade[]> {
         )
       )
       .orderBy(desc(feedTrades.tradedAt))
-      .limit(RECENT_TRADES_LIMIT);
+      .limit(limit);
 
     return rows
       .map((row) => polymarketPayloadToFeedTrade(row.payload, row.averageEv))
@@ -228,37 +385,26 @@ async function fetchRecentPolymarketTrades(): Promise<RecentFeedTrade[]> {
   }
 }
 
-async function fetchRecentKalshiTrades(): Promise<RecentFeedTrade[]> {
+async function fetchRecentKalshiTrades(
+  limit = RECENT_TRADES_LIMIT,
+  options?: { cacheOnly?: boolean }
+): Promise<RecentFeedTrade[]> {
   if (!isDatabaseEnabled()) return [];
 
   try {
     const rows = await getDb()
       .select()
       .from(kalshiShadowTrades)
-      .where(gte(kalshiShadowTrades.usdNotional, MIN_FEED_STAKE_PREFILTER_USD))
+      .where(gte(kalshiShadowTrades.usdNotional, MIN_PRODUCT_FEED_STAKE_USD))
       .orderBy(desc(kalshiShadowTrades.tradedAt))
-      .limit(RECENT_TRADES_LIMIT);
+      .limit(limit);
 
     const candidates = rows
       .map((row) => kalshiShadowToFeedTrade(row))
       .filter((trade): trade is RecentFeedTrade => trade != null);
 
-    const pipelineEvIndex = await resolveCachedKalshiPipelineEv(candidates);
-
-    return candidates.flatMap((trade) => {
-      const whale = kalshiFeedTradeToWhale(trade);
-      if (!isKalshiTradeEligibleForFeed(whale, pipelineEvIndex)) return [];
-
-      const lookupKey = trade.ticker
-        ? normalizePipelineLookupKey(`kalshi:${trade.ticker}`, "kalshi")
-        : null;
-      const pipeline = lookupKey ? pipelineEvIndex.get(lookupKey) : undefined;
-      const netEvPercent = resolveFeedTradeEvPercent(
-        { price: trade.price },
-        pipeline
-      );
-
-      return [{ ...trade, netEvPercent }];
+    return await qualifyKalshiRecentTrades(candidates, {
+      cacheOnly: options?.cacheOnly ?? true,
     });
   } catch (error) {
     console.error(
@@ -269,16 +415,74 @@ async function fetchRecentKalshiTrades(): Promise<RecentFeedTrade[]> {
   }
 }
 
+async function fetchSupplementalPolymarketFromApi(
+  excludeKeys: Set<string>
+): Promise<RecentFeedTrade[]> {
+  try {
+    const raw = await fetchWhaleBackfill();
+    const qualified = await filterQualifiedPolymarketFeedTrades(raw);
+
+    return qualified
+      .filter((trade) => !excludeKeys.has(`polymarket:${trade.id}`))
+      .map((trade) => tradeSummaryToRecentFeedTrade(trade, trade.netEvPercent))
+      .filter((trade): trade is RecentFeedTrade => trade != null);
+  } catch (error) {
+    console.error(
+      "[recentTrades] polymarket API supplemental failed",
+      error instanceof Error ? error.message : error
+    );
+    return [];
+  }
+}
+
+async function fetchSupplementalKalshiFromApi(
+  excludeKeys: Set<string>
+): Promise<RecentFeedTrade[]> {
+  try {
+    const candidates = collectKalshiFeedCandidates()
+      .then((trades) =>
+        trades
+          .filter((trade) => !excludeKeys.has(`kalshi:${trade.id}`))
+          .map(feedTradeToRecentFeedTrade)
+      );
+
+    const recentTrades = await candidates;
+    return await qualifyKalshiRecentTrades(recentTrades, {
+      cacheOnly: false,
+      computeEvLimit: KALSHI_API_EV_COMPUTE_LIMIT,
+    });
+  } catch (error) {
+    console.error(
+      "[recentTrades] kalshi API supplemental failed",
+      error instanceof Error ? error.message : error
+    );
+    return [];
+  }
+}
+
 /** Latest qualifying feed trades from Postgres — instant page-load hydration. */
 export async function fetchRecentFeedTrades(): Promise<RecentFeedTrade[]> {
   const [polymarket, kalshi] = await Promise.all([
-    fetchRecentPolymarketTrades(),
-    fetchRecentKalshiTrades(),
+    fetchRecentPolymarketTrades(EXPANDED_DB_SCAN_LIMIT),
+    fetchRecentKalshiTrades(EXPANDED_DB_SCAN_LIMIT),
   ]);
 
-  const merged = [...polymarket, ...kalshi]
-    .sort((a, b) => b.timestamp - a.timestamp)
-    .slice(0, RECENT_TRADES_LIMIT);
+  let merged = mergeRecentTrades(polymarket, kalshi);
+
+  if (merged.length >= RECENT_TRADES_LIMIT) {
+    return merged;
+  }
+
+  const excludeKeys = new Set(merged.map(tradeDedupeKey));
+  const [apiPolymarket, apiKalshi] = await Promise.all([
+    fetchSupplementalPolymarketFromApi(excludeKeys),
+    fetchSupplementalKalshiFromApi(excludeKeys),
+  ]);
+
+  merged = dedupeMergeRecentTrades(
+    merged,
+    mergeRecentTrades(apiPolymarket, apiKalshi)
+  );
 
   return merged;
 }

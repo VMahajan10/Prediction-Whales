@@ -22,8 +22,6 @@ import {
 } from "@/lib/feedQualification";
 import type { WhaleTrade } from "@/lib/whaleTrades";
 
-const TOP_WHALE_COUNT = 20;
-
 interface WhaleTrackerProps {
   whales: WhaleTrade[];
   connected: boolean;
@@ -84,7 +82,7 @@ export default function WhaleTracker({
     if (categoryTab === "trending") {
       rows.sort((a, b) => b.usdNotional - a.usdNotional);
     }
-    return rows.slice(0, TOP_WHALE_COUNT);
+    return rows;
   }, [filteredWhales, categoryTab]);
 
   return (

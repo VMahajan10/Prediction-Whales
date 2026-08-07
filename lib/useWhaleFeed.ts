@@ -51,6 +51,9 @@ import {
  */
 const KALSHI_FEED_ENABLED = true;
 
+/** Fixed rolling buffer for the Whale Feed UI. */
+export const WHALE_FEED_RETENTION = 20;
+
 const BACKFILL_TIMEOUT_MS = 15_000;
 const BACKFILL_ATTEMPTS = 3;
 const BACKFILL_RETRY_DELAY_MS = 1_500;
@@ -132,6 +135,33 @@ async function fetchBackfillTrades(
 
 function byDetectedDesc(a: WhaleTrade, b: WhaleTrade): number {
   return b.detectedAt - a.detectedAt;
+}
+
+function whaleKey(trade: WhaleTrade): string {
+  return trade.source === "kalshi"
+    ? `kalshi:${trade.id}`
+    : trade.transactionHash || trade.id;
+}
+
+/** Prepend new whales, dedupe by key, cap at WHALE_FEED_RETENTION. */
+function prependWhaleBuffer(prev: WhaleTrade[], incoming: WhaleTrade[]): WhaleTrade[] {
+  const seen = new Set<string>();
+  const merged: WhaleTrade[] = [];
+
+  for (const trade of incoming) {
+    const key = whaleKey(trade);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    merged.push(trade);
+  }
+  for (const trade of prev) {
+    const key = whaleKey(trade);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    merged.push(trade);
+  }
+
+  return merged.slice(0, WHALE_FEED_RETENTION);
 }
 
 function queueWhaleTweetNotify(whale: WhaleTrade): void {
@@ -254,6 +284,8 @@ export function useWhaleFeed() {
   const [retainedKalshiWhales, setRetainedKalshiWhales] = useState<WhaleTrade[]>(
     []
   );
+  const [whaleBuffer, setWhaleBuffer] = useState<WhaleTrade[]>([]);
+  const whaleBufferSeen = useRef<Set<string>>(new Set());
   const [newWhale, setNewWhale] = useState<WhaleTrade | null>(null);
 
   useEffect(() => {
@@ -313,11 +345,13 @@ export function useWhaleFeed() {
       try {
         const seeded = await fetchRecentSeedTrades(abort.signal);
         if (abort.signal.aborted) return;
-        if (seeded.length > 0) {
-          setBackfill((prev) => retainLastNonEmpty(seeded, prev));
-          for (const w of seeded) {
-            if (w.transactionHash) seenHashes.current.add(w.transactionHash);
-          }
+        const hydrated = seeded
+          .sort(byDetectedDesc)
+          .slice(0, WHALE_FEED_RETENTION);
+        setWhaleBuffer(hydrated);
+        for (const w of hydrated) {
+          whaleBufferSeen.current.add(whaleKey(w));
+          if (w.transactionHash) seenHashes.current.add(w.transactionHash);
         }
       } catch (error) {
         console.error(
@@ -515,6 +549,30 @@ export function useWhaleFeed() {
   useEffect(() => {
     if (!backfillLoaded) return;
 
+    const merged = buildPlatformFeed(
+      displayWhales,
+      displayKalshiWhales,
+      "all",
+      byDetectedDesc
+    );
+
+    const incoming: WhaleTrade[] = [];
+    for (const trade of merged) {
+      const key = whaleKey(trade);
+      if (!key || whaleBufferSeen.current.has(key)) continue;
+      whaleBufferSeen.current.add(key);
+      incoming.push(trade);
+    }
+
+    if (incoming.length === 0) return;
+
+    incoming.sort(byDetectedDesc);
+    setWhaleBuffer((prev) => prependWhaleBuffer(prev, incoming));
+  }, [backfillLoaded, displayWhales, displayKalshiWhales]);
+
+  useEffect(() => {
+    if (!backfillLoaded) return;
+
     let newDetected = 0;
     let newPassed = 0;
     const passedWallets: string[] = [];
@@ -644,16 +702,7 @@ export function useWhaleFeed() {
     }
   }, [liveWhales, backfillLoaded, walletQualifications, pipelineEvIndex]);
 
-  const whales = useMemo(
-    () =>
-      buildPlatformFeed(
-        displayWhales,
-        displayKalshiWhales,
-        "all",
-        byDetectedDesc
-      ),
-    [displayWhales, displayKalshiWhales]
-  );
+  const whales = whaleBuffer;
 
   const dismissNewWhale = useCallback(() => setNewWhale(null), []);
 

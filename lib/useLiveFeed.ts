@@ -110,13 +110,11 @@ export function useLiveFeed(platform: LiveFeedPlatform = "all") {
       .then((data: { trades?: HydratedFeedTrade[] }) => {
         if (cancelled) return;
         const incoming = Array.isArray(data.trades) ? data.trades : [];
-        if (incoming.length > 0) {
-          const hydrated = incoming
-            .sort(byTimeDesc)
-            .slice(0, LIVE_FEED_RETENTION);
-          setFeedBuffer(hydrated);
-          for (const trade of hydrated) seenIds.current.add(trade.id);
-        }
+        const hydrated = incoming
+          .sort(byTimeDesc)
+          .slice(0, LIVE_FEED_RETENTION);
+        setFeedBuffer(hydrated);
+        for (const trade of hydrated) seenIds.current.add(trade.id);
         finishLoading();
       })
       .catch((error) => {
