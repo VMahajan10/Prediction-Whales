@@ -119,7 +119,11 @@ export function useLiveFeed(platform: LiveFeedPlatform = "all") {
         }
         finishLoading();
       })
-      .catch(() => {
+      .catch((error) => {
+        console.error(
+          "[useLiveFeed] /api/trades/recent failed",
+          error instanceof Error ? error.message : error
+        );
         if (!cancelled) finishLoading();
       });
 

@@ -14,6 +14,7 @@ export interface UseArbitrageScanOptions {
 
 interface ArbitrageScanApiResponse {
   windows?: ArbitrageWindow[];
+  locks?: ArbitrageWindow[];
   scannedPairs?: number;
   actionableCount?: number;
   scanDurationMs?: number;
@@ -60,25 +61,23 @@ export function useArbitrageScan(options: UseArbitrageScanOptions = {}) {
         params.set("stake", String(stakeUsd));
       }
 
-      const res = await fetch(`/api/arbitrage/scan?${params.toString()}`);
+      const res = await fetch(`/api/locks?${params.toString()}`);
       const data = (await res.json()) as ArbitrageScanApiResponse;
 
-      if (!res.ok) {
-        setWindows([]);
-        setError(data.error ?? `HTTP ${res.status}`);
-        return;
-      }
-
-      const actionable = topArbitrageWindows(data.windows ?? [], top);
+      const rawWindows = data.windows ?? data.locks ?? [];
+      const actionable = topArbitrageWindows(rawWindows, top);
       setWindows(actionable);
       setScannedPairs(data.scannedPairs ?? 0);
       setActionableCount(data.actionableCount ?? actionable.length);
       setScanDurationMs(data.scanDurationMs ?? 0);
+      setError(null);
     } catch (err) {
-      setWindows([]);
-      setError(
-        err instanceof Error ? err.message : "Arbitrage scan fetch failed"
+      console.error(
+        "[useArbitrageScan] lock scan fetch failed",
+        err instanceof Error ? err.message : err
       );
+      setWindows([]);
+      setError(null);
     } finally {
       setLoading(false);
     }

@@ -71,9 +71,12 @@ export function tradeToWhale(
 ): WhaleTrade {
   const usd = opts.usdNotional ?? trade.size;
 
+  const source = opts.source ?? "polymarket";
+
   return {
     ...trade,
-    source: opts.source ?? "polymarket",
+    source,
+    platform: source === "kalshi" ? "KALSHI" : "POLYMARKET",
     usdNotional: usd,
     detectedAt: opts.detectedAt ?? trade.timestamp * 1000,
     isLive: opts.isLive ?? false,

@@ -6,7 +6,9 @@ export const revalidate = 0;
 
 export async function GET() {
   try {
-    const trades = await fetchTrades();
+    const trades = (await fetchTrades())
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(0, 20);
     return NextResponse.json(
       {
         trades: trades.map((t) => ({
@@ -22,6 +24,7 @@ export async function GET() {
       }
     );
   } catch (err) {
+    console.error("[api/trades]", err);
     return NextResponse.json(
       { trades: [], error: String(err) },
       {

@@ -82,7 +82,14 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     const message = err instanceof Error ? err.message : "Arbitrage batch scan failed";
     console.error("[api/arbitrage/scan] POST failed:", err);
-    return NextResponse.json({ error: message, windows: [] }, { status: 500 });
+    return NextResponse.json({
+      error: message,
+      windows: [],
+      locks: [],
+      scannedPairs: 0,
+      actionableCount: 0,
+      scanDurationMs: 0,
+    });
   }
 }
 
@@ -123,9 +130,13 @@ export async function GET(request: NextRequest) {
     const message =
       err instanceof Error ? err.message : "Arbitrage scan failed";
     console.error("[api/arbitrage/scan] GET failed:", err);
-    return NextResponse.json(
-      { error: message, windows: [], scannedPairs: 0, actionableCount: 0 },
-      { status: 500 }
-    );
+    return NextResponse.json({
+      error: message,
+      windows: [],
+      locks: [],
+      scannedPairs: 0,
+      actionableCount: 0,
+      scanDurationMs: 0,
+    });
   }
 }

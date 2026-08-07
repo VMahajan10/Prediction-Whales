@@ -137,7 +137,7 @@ export default function WhaleTracker({
       {sortedWhales.length === 0 ? (
         <div className="pulse-card rounded-2xl px-4 py-8 text-center">
           <p className="text-sm text-pulse-muted">
-            {!backfillLoaded && platformFilter !== "kalshi"
+            {!backfillLoaded
               ? "Loading recent whale trades…"
               : platformFilter === "kalshi"
                 ? kalshiOk

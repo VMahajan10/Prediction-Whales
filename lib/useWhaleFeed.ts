@@ -14,6 +14,8 @@ import {
   resolvePolymarketTradeNotionalUsd,
 } from "@/lib/feedQualification";
 import { retainLastNonEmpty } from "@/lib/feed/feedRetention";
+import { recentTradeToWhale } from "@/lib/feed/whaleFeedHydration";
+import type { FeedTrade } from "@/lib/kalshiTrades";
 import {
   isKalshiTradeEligibleForFeed,
   kalshiFeedTradeToWhale,
@@ -52,6 +54,11 @@ const KALSHI_FEED_ENABLED = true;
 const BACKFILL_TIMEOUT_MS = 15_000;
 const BACKFILL_ATTEMPTS = 3;
 const BACKFILL_RETRY_DELAY_MS = 1_500;
+const RECENT_SEED_TIMEOUT_MS = 5_000;
+
+type RecentApiResponse = {
+  trades?: Array<FeedTrade & { netEvPercent?: number | null }>;
+};
 
 type BackfillApiTrade = TradeSummary & {
   whaleIdentity?: ResolvedWhaleIdentity;
@@ -82,6 +89,23 @@ function kalshiFeedTradeFromApi(trade: KalshiFeedTradeInput): KalshiFeedTradeInp
     ticker: trade.ticker,
     selectionLabel: trade.selectionLabel,
   };
+}
+
+async function fetchRecentSeedTrades(signal: AbortSignal): Promise<WhaleTrade[]> {
+  const timeout = new AbortController();
+  const onAbort = () => timeout.abort();
+  signal.addEventListener("abort", onAbort);
+  const timer = setTimeout(() => timeout.abort(), RECENT_SEED_TIMEOUT_MS);
+
+  try {
+    const res = await fetch("/api/trades/recent", { signal: timeout.signal });
+    if (!res.ok) throw new Error(`Recent trades HTTP ${res.status}`);
+    const data = (await res.json()) as RecentApiResponse;
+    return (data.trades ?? []).map(recentTradeToWhale);
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", onAbort);
+  }
 }
 
 async function fetchBackfillTrades(
@@ -234,6 +258,13 @@ export function useWhaleFeed() {
 
   useEffect(() => {
     const abort = new AbortController();
+    let seedMarked = false;
+
+    const markSeedLoaded = () => {
+      if (seedMarked || abort.signal.aborted) return;
+      seedMarked = true;
+      setBackfillLoaded(true);
+    };
 
     const applyBackfill = (payload: BackfillPayload) => {
       const whales = payload.polymarket.map((t) => ({
@@ -278,6 +309,26 @@ export function useWhaleFeed() {
       }
     };
 
+    const loadRecentSeed = async () => {
+      try {
+        const seeded = await fetchRecentSeedTrades(abort.signal);
+        if (abort.signal.aborted) return;
+        if (seeded.length > 0) {
+          setBackfill((prev) => retainLastNonEmpty(seeded, prev));
+          for (const w of seeded) {
+            if (w.transactionHash) seenHashes.current.add(w.transactionHash);
+          }
+        }
+      } catch (error) {
+        console.error(
+          "[useWhaleFeed] /api/trades/recent failed",
+          error instanceof Error ? error.message : error
+        );
+      } finally {
+        markSeedLoaded();
+      }
+    };
+
     const load = async () => {
       for (let attempt = 1; attempt <= BACKFILL_ATTEMPTS; attempt += 1) {
         if (abort.signal.aborted) return;
@@ -286,7 +337,11 @@ export function useWhaleFeed() {
           if (abort.signal.aborted) return;
           applyBackfill(payload);
           if (payload.polymarket.length > 0 || payload.kalshi.length > 0) break;
-        } catch {
+        } catch (error) {
+          console.error(
+            `[useWhaleFeed] /api/feed attempt ${attempt}/${BACKFILL_ATTEMPTS} failed`,
+            error instanceof Error ? error.message : error
+          );
           if (abort.signal.aborted) return;
           if (attempt === BACKFILL_ATTEMPTS) break;
           await new Promise((resolve) =>
@@ -294,10 +349,9 @@ export function useWhaleFeed() {
           );
         }
       }
-
-      if (!abort.signal.aborted) setBackfillLoaded(true);
     };
 
+    void loadRecentSeed();
     void load();
     return () => abort.abort();
   }, []);

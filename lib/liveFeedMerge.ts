@@ -64,17 +64,19 @@ export function buildPlatformFeed<T>(
 
 /** Normalize platform tab value from `source` or uppercase `platform` tags. */
 export function normalizeFeedPlatform(
-  row: { source?: string; platform?: string }
+  row: { source?: string; platform?: string } | null | undefined
 ): LiveFeedPlatform | null {
-  const raw = (row.platform ?? row.source ?? "").toLowerCase();
+  if (!row) return null;
+  const raw = String(row.platform ?? row.source ?? "").trim().toLowerCase();
   if (raw === "polymarket" || raw === "kalshi") return raw;
   return null;
 }
 
 /** Client-side platform filter — matches `source` and uppercase `platform` tags. */
 export function filterFeedByPlatform<
-  T extends { source?: "polymarket" | "kalshi"; platform?: string },
+  T extends { source?: string; platform?: string },
 >(rows: T[], platform: LiveFeedPlatform): T[] {
+  if (!Array.isArray(rows) || rows.length === 0) return [];
   if (platform === "all") return rows;
   return rows.filter((row) => normalizeFeedPlatform(row) === platform);
 }

@@ -64,7 +64,7 @@ export default function ArbitrageOpportunityFeed({
   top = 8,
   defaultStakeUsd = 500,
 }: ArbitrageOpportunityFeedProps) {
-  const { windows, scannedPairs, actionableCount, loading, error, scanDurationMs } =
+  const { windows, scannedPairs, actionableCount, loading, scanDurationMs } =
     useArbitrageScan({
       mappingLimit,
       top,
@@ -98,10 +98,6 @@ export default function ArbitrageOpportunityFeed({
         {loading && windows.length === 0 ? (
           <p className="py-4 text-center text-sm text-pulse-muted animate-pulse">
             Scanning mapped order books…
-          </p>
-        ) : error ? (
-          <p className="py-4 text-center text-sm text-pulse-muted">
-            Lock scan unavailable
           </p>
         ) : windows.length === 0 ? (
           <p className="py-4 text-center text-sm text-pulse-muted">
