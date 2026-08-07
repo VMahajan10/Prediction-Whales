@@ -1,6 +1,20 @@
+import { mapWithConcurrency } from "@/lib/clvPriceHistory";
+import { ensureFullyComputedTradeEv } from "@/lib/evPipeline/resolveTradeEv";
+import type { PipelineTradeEv } from "@/lib/evPipeline/types";
+import {
+  normalizePipelineLookupKey,
+  pipelineEvLookupKey,
+} from "@/lib/evPipeline/types";
+import {
+  meetsFeedTradeEvThreshold,
+  meetsProductFeedStakeThreshold,
+} from "@/lib/feedQualification";
+import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import { resolveKalshiMarkets } from "@/lib/kalshiTitleResolver";
 import { kalshiFetch } from "@/lib/kalshi/http";
-import { persistKalshiShadowTrade } from "@/lib/x-agent/kalshiShadowTrades";
+import {
+  queueKalshiShadowTrade,
+} from "@/lib/x-agent/kalshiShadowTrades";
 
 export interface FeedTrade {
   id: string;
@@ -41,7 +55,7 @@ export type { KalshiRawTrade };
 function shadowInputFromRaw(
   raw: KalshiRawTrade,
   normalized: FeedTrade
-): Parameters<typeof persistKalshiShadowTrade>[0] {
+): Parameters<typeof queueKalshiShadowTrade>[0] {
   return {
     tradeId: raw.trade_id,
     ticker: raw.ticker,
@@ -106,6 +120,62 @@ function normalizeKalshiTrade(
   };
 }
 
+async function resolveCachedKalshiPipelineEv(
+  trades: FeedTrade[]
+): Promise<Map<string, PipelineTradeEv>> {
+  const index = new Map<string, PipelineTradeEv>();
+  const byTicker = new Map<string, { ticker: string; price: number }>();
+
+  for (const trade of trades) {
+    if (!trade.ticker?.trim()) continue;
+    const ticker = trade.ticker.trim().toUpperCase();
+    if (!byTicker.has(ticker)) {
+      byTicker.set(ticker, { ticker, price: trade.price });
+    }
+  }
+
+  await mapWithConcurrency(Array.from(byTicker.values()), 8, async (bucket) => {
+    const lookupKey = normalizePipelineLookupKey(
+      `kalshi:${bucket.ticker}`,
+      "kalshi"
+    );
+    try {
+      const pipeline = await ensureFullyComputedTradeEv(
+        lookupKey,
+        {
+          source: "kalshi",
+          kalshiTicker: bucket.ticker,
+          tradePrice: bucket.price,
+        },
+        null,
+        { cacheOnly: true }
+      );
+      const key = pipelineEvLookupKey({
+        source: "kalshi",
+        kalshiTicker: bucket.ticker,
+        tradePrice: bucket.price,
+      });
+      if (key) index.set(key, pipeline);
+      index.set(lookupKey, pipeline);
+    } catch {
+      // Skip tickers without cached EV.
+    }
+  });
+
+  return index;
+}
+
+function kalshiTradeEvPercent(
+  trade: FeedTrade,
+  pipelineEvIndex: Map<string, PipelineTradeEv>
+): number | null {
+  if (!trade.ticker?.trim()) return null;
+  const ticker = trade.ticker.trim().toUpperCase();
+  const lookupKey = normalizePipelineLookupKey(`kalshi:${ticker}`, "kalshi");
+  const pipeline = pipelineEvIndex.get(lookupKey);
+  return resolveFeedTradeEvPercent({ price: trade.price }, pipeline ?? null);
+}
+
 export async function fetchKalshiTrades(
   minTs?: number
 ): Promise<FeedTrade[]> {
@@ -133,6 +203,10 @@ export async function fetchKalshiTrades(
   const tickers = raws.map((raw) => raw.ticker).filter(Boolean);
   const marketCache = await resolveKalshiMarkets(tickers);
   const trades: FeedTrade[] = [];
+  const shadowCandidates: Array<{
+    raw: KalshiRawTrade;
+    normalized: FeedTrade;
+  }> = [];
 
   for (const raw of raws) {
     if (!raw?.trade_id || !raw?.ticker) continue;
@@ -146,8 +220,23 @@ export async function fetchKalshiTrades(
     const normalized = normalizeKalshiTrade(raw, market, nowEpochSeconds);
     if (!normalized) continue;
 
-    void persistKalshiShadowTrade(shadowInputFromRaw(raw, normalized));
     trades.push(normalized);
+
+    if (meetsProductFeedStakeThreshold(normalized.usdNotional)) {
+      shadowCandidates.push({ raw, normalized });
+    }
+  }
+
+  if (shadowCandidates.length > 0) {
+    const pipelineEvIndex = await resolveCachedKalshiPipelineEv(
+      shadowCandidates.map((candidate) => candidate.normalized)
+    );
+
+    for (const { raw, normalized } of shadowCandidates) {
+      const tradeEvPercent = kalshiTradeEvPercent(normalized, pipelineEvIndex);
+      if (!meetsFeedTradeEvThreshold(tradeEvPercent)) continue;
+      queueKalshiShadowTrade(shadowInputFromRaw(raw, normalized));
+    }
   }
 
   return trades;

@@ -1,7 +1,15 @@
 import { sql } from "drizzle-orm";
 import { getDb, isDatabaseEnabled } from "@/lib/crossmarket/store/db";
 import { kalshiShadowTrades } from "@/lib/crossmarket/store/schema";
+import {
+  meetsFeedTradeEvThreshold,
+  meetsProductFeedStakeThreshold,
+} from "@/lib/feedQualification";
+import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import type { WhaleTrade } from "@/lib/whaleTrades";
+
+/** Batched Neon flush cadence for Kalshi shadow trade inserts. */
+export const KALSHI_SHADOW_FLUSH_INTERVAL_MS = 20_000;
 
 export interface KalshiShadowTradeInput {
   tradeId: string;
@@ -111,14 +119,22 @@ export function formatShadowInsertError(error: unknown): Record<string, unknown>
   return details;
 }
 
+const pendingShadowRows = new Map<string, ShadowInsertRow>();
+let shadowFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleKalshiShadowFlush(): void {
+  if (shadowFlushTimer) return;
+  shadowFlushTimer = setTimeout(() => {
+    shadowFlushTimer = null;
+    void flushKalshiShadowTradeBatch();
+  }, KALSHI_SHADOW_FLUSH_INTERVAL_MS);
+}
+
 /**
- * Persist a Kalshi trade event for internal shadow P&L tracking.
- * Dedupes on trade_id — safe to call on every poll/notify.
- * Trade-level only; never joined to whale_registry (OQ-2).
+ * Queue a pre-qualified Kalshi shadow row for batched Neon flush.
+ * Callers must gate on stake + trade EV before queueing.
  */
-export async function persistKalshiShadowTrade(
-  input: KalshiShadowTradeInput
-): Promise<void> {
+export function queueKalshiShadowTrade(input: KalshiShadowTradeInput): void {
   if (!input.tradeId?.trim() || !input.ticker?.trim()) return;
   if (!isDatabaseEnabled()) return;
 
@@ -134,20 +150,41 @@ export async function persistKalshiShadowTrade(
     return;
   }
 
+  pendingShadowRows.set(row.tradeId, row);
+  scheduleKalshiShadowFlush();
+}
+
+export async function flushKalshiShadowTradeBatch(): Promise<void> {
+  if (!isDatabaseEnabled() || pendingShadowRows.size === 0) return;
+
+  const rows = Array.from(pendingShadowRows.values());
+  pendingShadowRows.clear();
+
   try {
     const db = getDb();
     await db
       .insert(kalshiShadowTrades)
-      .values(shadowInsertValues(row))
+      .values(rows.map((row) => shadowInsertValues(row)))
       .onConflictDoNothing({ target: kalshiShadowTrades.tradeId });
   } catch (error) {
     const details = formatShadowInsertError(error);
     const causeMessage = readErrorCauseMessage(error);
     console.warn(
-      `[kalshi/shadow] insert failed (non-fatal) tradeId=${row.tradeId} ticker=${row.ticker}: ${details.message ?? "unknown"}${causeMessage ? ` | cause: ${causeMessage}` : ""}`,
+      `[kalshi/shadow] batch insert failed (non-fatal) count=${rows.length}: ${details.message ?? "unknown"}${causeMessage ? ` | cause: ${causeMessage}` : ""}`,
       details
     );
   }
+}
+
+/**
+ * Persist a Kalshi trade event for internal shadow P&L tracking.
+ * Dedupes on trade_id — batched flush every ~20s.
+ * Trade-level only; never joined to whale_registry (OQ-2).
+ */
+export async function persistKalshiShadowTrade(
+  input: KalshiShadowTradeInput
+): Promise<void> {
+  queueKalshiShadowTrade(input);
 }
 
 /** Fire-and-forget shadow log from a WhaleTrade notify payload.
@@ -158,13 +195,25 @@ export function persistKalshiShadowTradeFromWhale(trade: WhaleTrade): void {
   const tradeId = trade.id?.trim();
   if (!tradeId) return;
 
+  if (!meetsProductFeedStakeThreshold(trade.usdNotional)) return;
+
+  const tradeEvPercent = resolveFeedTradeEvPercent(
+    {
+      price: trade.price,
+      netEvPercent: trade.netEvPercent,
+      grossEvPercent: trade.grossEvPercent,
+    },
+    null
+  );
+  if (!meetsFeedTradeEvThreshold(tradeEvPercent)) return;
+
   const entryPrice = toShadowFloat(trade.price);
   const size =
     entryPrice > 0 && Number.isFinite(trade.usdNotional)
       ? toShadowFloat(trade.usdNotional / entryPrice)
       : toShadowFloat(trade.size);
 
-  void persistKalshiShadowTrade({
+  queueKalshiShadowTrade({
     tradeId,
     ticker: trade.ticker,
     size,

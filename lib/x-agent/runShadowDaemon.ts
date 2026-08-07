@@ -9,9 +9,11 @@ import {
   writePipelineMeta,
 } from "@/lib/evPipeline/redisCache";
 import { resolveWalletForTrade } from "@/lib/resolveWhaleWallet";
-import { MIN_RAW_INGESTION_STAKE_USD } from "@/lib/feedQualification";
+import { MIN_PRODUCT_FEED_STAKE_USD } from "@/lib/feedQualification";
 import { tradeToWhale } from "@/lib/whaleTrades";
 import { processWhaleTradeForXAgent } from "@/lib/x-agent/enqueueWhaleTrade";
+import { flushAllBatchedNeonWrites } from "@/lib/x-agent/batchedNeonWrites";
+import { passesShadowProductFeedGate } from "@/lib/x-agent/shadowTradeQualification";
 import {
   printGateSummaryBox,
   RollingGateMatrixTracker,
@@ -98,7 +100,7 @@ export function parseShadowDaemonOptionsFromEnv(): ShadowDaemonOptions {
     minUsdNotional:
       Number.isFinite(minUsd) && minUsd >= 0
         ? minUsd
-        : MIN_RAW_INGESTION_STAKE_USD,
+        : MIN_PRODUCT_FEED_STAKE_USD,
   };
 }
 
@@ -194,7 +196,7 @@ export class ShadowCronDaemon {
     this.stopping = false;
     this.socket = new PolymarketLiveSocket({
       minUsdNotional:
-        this.options.minUsdNotional ?? MIN_RAW_INGESTION_STAKE_USD,
+        this.options.minUsdNotional ?? MIN_PRODUCT_FEED_STAKE_USD,
       onTrade: async (trade) => {
         if (this.stopping) return;
         this.stats.tradesObserved += 1;
@@ -217,6 +219,8 @@ export class ShadowCronDaemon {
     while (this.draining || this.pending.length > 0) {
       await sleep(100);
     }
+
+    await flushAllBatchedNeonWrites();
   }
 
   maybePrintRollingSummary(force = false): void {
@@ -246,7 +250,8 @@ export class ShadowCronDaemon {
       if (!trade) break;
 
       try {
-        if (!trade.assetId?.trim()) continue;
+        if (!await passesShadowProductFeedGate(trade)) continue;
+
         const whale = await socketTradeToWhale(trade);
         await processWhaleTradeForXAgent(whale, this.rolling);
         this.stats.tradesProcessed += 1;

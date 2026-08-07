@@ -1,8 +1,10 @@
-import { getDb, isDatabaseEnabled } from "@/lib/crossmarket/store/db";
+import {
+  queueGateLogRejection,
+} from "@/lib/x-agent/batchedNeonWrites";
+import { isDatabaseEnabled } from "@/lib/crossmarket/store/db";
 import {
   type WhaleRegistry,
   X_POST_REJECTION_REASONS,
-  xPostLog,
 } from "@/lib/crossmarket/store/schema";
 import {
   CREDIBILITY_CONFIG,
@@ -601,15 +603,6 @@ export async function handlePreGateRejection(
   await logGateFailure(trade, result.reason);
 }
 
-function readGateLogErrorCause(error: unknown): string | undefined {
-  if (!(error instanceof Error)) return undefined;
-  const cause =
-    "cause" in error ? (error as Error & { cause?: unknown }).cause : undefined;
-  if (cause instanceof Error) return cause.message;
-  if (typeof cause === "string") return cause;
-  return undefined;
-}
-
 async function logGateFailure(
   trade: TradePayload,
   reason: GateRejectionReason
@@ -630,21 +623,7 @@ async function logGateFailure(
     return;
   }
 
-  try {
-    const db = getDb();
-    await db.insert(xPostLog).values({
-      tradeId: trade.tradeId,
-      gatePassed: false,
-      rejectionReason: reason,
-      payload: trade,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const causeMessage = readGateLogErrorCause(error);
-    console.warn(
-      `[x-agent/gates] x_post_log insert failed (non-fatal) tradeId=${trade.tradeId} reason=${reason}: ${message}${causeMessage ? ` | cause: ${causeMessage}` : ""}`
-    );
-  }
+  queueGateLogRejection(trade, reason);
 }
 
 /**

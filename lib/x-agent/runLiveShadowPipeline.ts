@@ -9,6 +9,9 @@ import {
   writePipelineMeta,
 } from "@/lib/evPipeline/redisCache";
 import { processWhaleTradeForXAgent } from "@/lib/x-agent/enqueueWhaleTrade";
+import { flushAllBatchedNeonWrites } from "@/lib/x-agent/batchedNeonWrites";
+import { MIN_PRODUCT_FEED_STAKE_USD } from "@/lib/feedQualification";
+import { passesShadowProductFeedGate } from "@/lib/x-agent/shadowTradeQualification";
 import {
   createGateSummary,
 } from "@/lib/x-agent/gateMetrics";
@@ -115,9 +118,10 @@ export async function runXAgentLiveShadowPipeline(
     while (pending.length > 0 && !finished) {
       const trade = pending.shift();
       if (!trade) break;
-      if (!trade.assetId?.trim()) continue;
 
       try {
+        if (!await passesShadowProductFeedGate(trade)) continue;
+
         const whale = await socketTradeToWhale(trade);
         await processWhaleTradeForXAgent(whale, gateSummary);
         whalesProcessed += 1;
@@ -144,6 +148,7 @@ export async function runXAgentLiveShadowPipeline(
   };
 
   socket = new PolymarketLiveSocket({
+    minUsdNotional: MIN_PRODUCT_FEED_STAKE_USD,
     onTrade: async (trade) => {
       if (finished) return;
       tradesReceived += 1;
@@ -184,6 +189,8 @@ export async function runXAgentLiveShadowPipeline(
   while (draining || (pending.length > 0 && evaluations < maxEvaluations)) {
     await sleep(100);
   }
+
+  await flushAllBatchedNeonWrites();
 
   console.log(
     `[x-agent/shadow-live] complete | reason=${stopReason} | socketTrades=${tradesReceived} | evaluated=${evaluations} | processed=${whalesProcessed} | failed=${whalesFailed}`
