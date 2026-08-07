@@ -11,6 +11,7 @@ import {
 } from "@/lib/feedGate";
 import {
   meetsProductFeedStakeThreshold,
+  meetsFeedTradeEvThreshold,
   resolvePolymarketTradeNotionalUsd,
 } from "@/lib/feedQualification";
 import { retainLastNonEmpty } from "@/lib/feed/feedRetention";
@@ -293,7 +294,7 @@ export function useWhaleFeed() {
     let seedMarked = false;
 
     const markSeedLoaded = () => {
-      if (seedMarked || abort.signal.aborted) return;
+      if (seedMarked) return;
       seedMarked = true;
       setBackfillLoaded(true);
     };
@@ -545,6 +546,47 @@ export function useWhaleFeed() {
     qualifiedKalshiWhales,
     retainedKalshiWhales
   );
+
+  useEffect(() => {
+    if (!backfillLoaded) return;
+
+    const incoming: WhaleTrade[] = [];
+
+    for (const whale of liveWhales) {
+      const key = whaleKey(whale);
+      if (!key || whaleBufferSeen.current.has(key)) continue;
+
+      if (!meetsProductFeedStakeThreshold(whale.usdNotional)) continue;
+
+      const pipelineKey = pipelineEvKeyForWhale(whale);
+      const pipeline = pipelineKey ? pipelineEvIndex.get(pipelineKey) : undefined;
+      const tradeEvPercent = resolveFeedTradeEvPercent(
+        {
+          price: whale.price,
+          netEvPercent: whale.netEvPercent,
+          grossEvPercent: whale.grossEvPercent,
+        },
+        pipeline
+      );
+      if (!meetsFeedTradeEvThreshold(tradeEvPercent)) continue;
+
+      whaleBufferSeen.current.add(key);
+      incoming.push(whale);
+    }
+
+    for (const whale of qualifiedKalshiWhales) {
+      if (!whale.isLive) continue;
+      const key = whaleKey(whale);
+      if (!key || whaleBufferSeen.current.has(key)) continue;
+      whaleBufferSeen.current.add(key);
+      incoming.push(whale);
+    }
+
+    if (incoming.length === 0) return;
+
+    incoming.sort(byDetectedDesc);
+    setWhaleBuffer((prev) => prependWhaleBuffer(prev, incoming));
+  }, [liveWhales, qualifiedKalshiWhales, backfillLoaded, pipelineEvIndex]);
 
   useEffect(() => {
     if (!backfillLoaded) return;

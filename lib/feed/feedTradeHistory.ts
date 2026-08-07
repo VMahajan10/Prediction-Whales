@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, desc, gte, lt, sql } from "drizzle-orm";
+import { and, desc, gte, sql } from "drizzle-orm";
 import {
   MIN_FEED_TRADE_EV_PCT,
   MIN_PRODUCT_FEED_STAKE_USD,
@@ -20,9 +20,6 @@ export {
   isRecordableFeedTrade,
   type FeedTradeHistoryInput,
 } from "@/lib/feed/feedTradeHistoryCore";
-
-/** History older than this is pruned; the feed is a recency product. */
-const RETENTION_MS = 24 * 60 * 60 * 1000;
 
 /** Best-effort — the feed response must never fail because history write failed. */
 export async function recordFeedTradeHistory(
@@ -45,10 +42,6 @@ export async function recordFeedTradeHistory(
           updatedAt: sql`now()`,
         },
       });
-
-    await getDb()
-      .delete(feedTrades)
-      .where(lt(feedTrades.tradedAt, new Date(Date.now() - RETENTION_MS)));
   } catch (error) {
     console.error(
       "[feedTradeHistory] write failed",

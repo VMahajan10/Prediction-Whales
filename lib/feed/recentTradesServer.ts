@@ -36,11 +36,8 @@ initGlobalLocalEvCache();
 
 export const RECENT_TRADES_LIMIT = 20;
 
-/** Deep DB scan — surfaces hours-old qualifying trades within retention. */
-const EXPANDED_DB_SCAN_LIMIT = 100;
-
-/** Max Kalshi API rows to fully EV-compute when cache is cold. */
-const KALSHI_API_EV_COMPUTE_LIMIT = 20;
+/** Max Kalshi rows to fully EV-compute when cache is cold. */
+const KALSHI_EV_COMPUTE_LIMIT = 20;
 
 export type RecentFeedTrade = FeedTrade & {
   /** Trade-level EV % — lets the client gate before pipeline hydration. */
@@ -223,7 +220,7 @@ async function qualifyKalshiRecentTrades(
   const remaining = candidates
     .filter((trade) => !qualifiedIds.has(trade.id))
     .sort((a, b) => b.timestamp - a.timestamp)
-    .slice(0, options?.computeEvLimit ?? KALSHI_API_EV_COMPUTE_LIMIT);
+    .slice(0, options?.computeEvLimit ?? KALSHI_EV_COMPUTE_LIMIT);
 
   await mapWithConcurrency(remaining, 4, async (trade) => {
     if (!trade.ticker?.trim()) return;
@@ -386,8 +383,7 @@ async function fetchRecentPolymarketTrades(
 }
 
 async function fetchRecentKalshiTrades(
-  limit = RECENT_TRADES_LIMIT,
-  options?: { cacheOnly?: boolean }
+  limit = RECENT_TRADES_LIMIT
 ): Promise<RecentFeedTrade[]> {
   if (!isDatabaseEnabled()) return [];
 
@@ -404,7 +400,8 @@ async function fetchRecentKalshiTrades(
       .filter((trade): trade is RecentFeedTrade => trade != null);
 
     return await qualifyKalshiRecentTrades(candidates, {
-      cacheOnly: options?.cacheOnly ?? true,
+      cacheOnly: false,
+      computeEvLimit: KALSHI_EV_COMPUTE_LIMIT,
     });
   } catch (error) {
     console.error(
@@ -449,7 +446,7 @@ async function fetchSupplementalKalshiFromApi(
     const recentTrades = await candidates;
     return await qualifyKalshiRecentTrades(recentTrades, {
       cacheOnly: false,
-      computeEvLimit: KALSHI_API_EV_COMPUTE_LIMIT,
+      computeEvLimit: KALSHI_EV_COMPUTE_LIMIT,
     });
   } catch (error) {
     console.error(
@@ -463,8 +460,8 @@ async function fetchSupplementalKalshiFromApi(
 /** Latest qualifying feed trades from Postgres — instant page-load hydration. */
 export async function fetchRecentFeedTrades(): Promise<RecentFeedTrade[]> {
   const [polymarket, kalshi] = await Promise.all([
-    fetchRecentPolymarketTrades(EXPANDED_DB_SCAN_LIMIT),
-    fetchRecentKalshiTrades(EXPANDED_DB_SCAN_LIMIT),
+    fetchRecentPolymarketTrades(RECENT_TRADES_LIMIT),
+    fetchRecentKalshiTrades(RECENT_TRADES_LIMIT),
   ]);
 
   let merged = mergeRecentTrades(polymarket, kalshi);
