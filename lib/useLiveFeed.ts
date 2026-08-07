@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { LiveFeedPlatform } from "@/lib/liveFeedPlatform";
-import { buildPlatformFeed } from "@/lib/liveFeedMerge";
+import { filterFeedByPlatform } from "@/lib/liveFeedMerge";
 import {
   meetsProductFeedStakeThreshold,
   meetsFeedTradeEvThreshold,
@@ -16,7 +16,8 @@ import { useKalshiTrades } from "@/lib/useKalshiTrades";
 import { usePipelineEvIndex } from "@/lib/usePipelineEvIndex";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 
-export { MAX_FEED_ITEMS as MAX_TRADES } from "@/lib/liveFeedMerge";
+/** Fixed rolling buffer for the Live Trades feed UI. */
+export const LIVE_FEED_RETENTION = 20;
 
 function byTimeDesc(a: FeedTrade, b: FeedTrade): number {
   return b.timestamp - a.timestamp;
@@ -40,68 +41,134 @@ function adaptPolymarketTrade(t: SocketTrade): FeedTrade {
   };
 }
 
-export function buildLiveFeedTrades(
-  pmTrades: FeedTrade[],
-  kalshiTrades: FeedTrade[],
-  platform: LiveFeedPlatform
-): FeedTrade[] {
-  return buildPlatformFeed(pmTrades, kalshiTrades, platform, byTimeDesc);
-}
+type HydratedFeedTrade = FeedTrade & { netEvPercent?: number | null };
 
 function passesLiveFeedTradeGate(
-  trade: FeedTrade,
+  trade: HydratedFeedTrade,
   pipelineEvIndex: Map<string, PipelineTradeEv>
 ): boolean {
-  if (
-    !meetsProductFeedStakeThreshold(trade.usdNotional)
-  ) {
+  if (!meetsProductFeedStakeThreshold(trade.usdNotional)) {
     return false;
   }
 
   const pipelineKey = pipelineEvKeyForTrade(trade);
   const pipeline = pipelineKey ? pipelineEvIndex.get(pipelineKey) : undefined;
   const tradeEvPercent = resolveFeedTradeEvPercent(
-    { price: trade.price },
+    { price: trade.price, netEvPercent: trade.netEvPercent },
     pipeline ?? null
   );
 
   return meetsFeedTradeEvThreshold(tradeEvPercent);
 }
 
+/** Prepend new trades, dedupe by id, cap at LIVE_FEED_RETENTION. */
+function prependToFeedBuffer(
+  prev: HydratedFeedTrade[],
+  newTrades: HydratedFeedTrade[]
+): HydratedFeedTrade[] {
+  const seen = new Set<string>();
+  const merged: HydratedFeedTrade[] = [];
+
+  for (const trade of newTrades) {
+    if (seen.has(trade.id)) continue;
+    seen.add(trade.id);
+    merged.push(trade);
+  }
+  for (const trade of prev) {
+    if (seen.has(trade.id)) continue;
+    seen.add(trade.id);
+    merged.push(trade);
+  }
+
+  return merged.slice(0, LIVE_FEED_RETENTION);
+}
+
+const RECENT_TRADES_HYDRATION_MS = 200;
+
 export function useLiveFeed(platform: LiveFeedPlatform = "all") {
   const { trades: pmTrades, connected: polymarketConnected } =
     usePolymarketSocketContext();
   const { trades: kalshiTrades, ok: kalshiOk } = useKalshiTrades();
+  const [feedBuffer, setFeedBuffer] = useState<HydratedFeedTrade[]>([]);
+  const [seedLoading, setSeedLoading] = useState(true);
+  const seenIds = useRef(new Set<string>());
+  const liveIngestReady = useRef(false);
 
-  const rawTrades = useMemo(() => {
-    const pmMap = new Map<string, FeedTrade>();
-    const kalshiMap = new Map<string, FeedTrade>();
+  useEffect(() => {
+    let cancelled = false;
+    const minSkeletonTimer = setTimeout(() => {
+      if (!cancelled) setSeedLoading(false);
+    }, RECENT_TRADES_HYDRATION_MS);
+
+    const finishLoading = () => {
+      clearTimeout(minSkeletonTimer);
+      if (!cancelled) setSeedLoading(false);
+    };
+
+    void fetch("/api/trades/recent")
+      .then((res) => (res.ok ? res.json() : Promise.reject(res)))
+      .then((data: { trades?: HydratedFeedTrade[] }) => {
+        if (cancelled) return;
+        const incoming = Array.isArray(data.trades) ? data.trades : [];
+        if (incoming.length > 0) {
+          const hydrated = incoming
+            .sort(byTimeDesc)
+            .slice(0, LIVE_FEED_RETENTION);
+          setFeedBuffer(hydrated);
+          for (const trade of hydrated) seenIds.current.add(trade.id);
+        }
+        finishLoading();
+      })
+      .catch(() => {
+        if (!cancelled) finishLoading();
+      });
+
+    return () => {
+      cancelled = true;
+      clearTimeout(minSkeletonTimer);
+    };
+  }, []);
+
+  const { index: pipelineEvIndex } = usePipelineEvIndex(feedBuffer);
+
+  useEffect(() => {
+    if (seedLoading) return;
+
+    if (!liveIngestReady.current) {
+      for (const t of pmTrades) seenIds.current.add(adaptPolymarketTrade(t).id);
+      for (const t of kalshiTrades) seenIds.current.add(t.id);
+      liveIngestReady.current = true;
+      return;
+    }
+
+    const incoming: HydratedFeedTrade[] = [];
 
     for (const t of pmTrades) {
       const feed = adaptPolymarketTrade(t);
-      pmMap.set(feed.id, feed);
+      if (seenIds.current.has(feed.id)) continue;
+      if (!passesLiveFeedTradeGate(feed, pipelineEvIndex)) continue;
+      seenIds.current.add(feed.id);
+      incoming.push(feed);
     }
 
     for (const t of kalshiTrades) {
-      kalshiMap.set(t.id, t);
+      if (seenIds.current.has(t.id)) continue;
+      if (!passesLiveFeedTradeGate(t, pipelineEvIndex)) continue;
+      seenIds.current.add(t.id);
+      incoming.push(t);
     }
 
-    return buildLiveFeedTrades(
-      Array.from(pmMap.values()),
-      Array.from(kalshiMap.values()),
-      platform
-    );
-  }, [pmTrades, kalshiTrades, platform]);
+    if (incoming.length === 0) return;
 
-  const { index: pipelineEvIndex } = usePipelineEvIndex(rawTrades);
+    incoming.sort(byTimeDesc);
+    setFeedBuffer((prev) => prependToFeedBuffer(prev, incoming));
+  }, [seedLoading, pmTrades, kalshiTrades, pipelineEvIndex]);
 
   const trades = useMemo(
     () =>
-      rawTrades.filter((trade) =>
-        passesLiveFeedTradeGate(trade, pipelineEvIndex)
-      ),
-    [rawTrades, pipelineEvIndex]
+      filterFeedByPlatform(feedBuffer, platform).slice(0, LIVE_FEED_RETENTION),
+    [feedBuffer, platform]
   );
 
-  return { trades, polymarketConnected, kalshiOk };
+  return { trades, polymarketConnected, kalshiOk, seedLoading };
 }

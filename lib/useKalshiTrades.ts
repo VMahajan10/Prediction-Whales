@@ -4,15 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import type { FeedTrade } from "@/lib/kalshiTrades";
 
 const POLL_MS = 4_000;
-/** Periodic full REST refresh — Kalshi has no DB backfill, so re-pull recent tape. */
-const FULL_REFRESH_MS = 120_000;
 
 export function useKalshiTrades() {
   const [trades, setTrades] = useState<FeedTrade[]>([]);
   const [ok, setOk] = useState(true);
   const tradeMap = useRef<Map<string, FeedTrade>>(new Map());
   const minTsRef = useRef<number | undefined>(undefined);
-  const lastFullRefreshRef = useRef<number>(Date.now());
 
   useEffect(() => {
     let mounted = true;
@@ -20,13 +17,6 @@ export function useKalshiTrades() {
 
     const poll = async () => {
       try {
-        const needsFullRefresh =
-          Date.now() - lastFullRefreshRef.current >= FULL_REFRESH_MS;
-        if (needsFullRefresh) {
-          minTsRef.current = undefined;
-          lastFullRefreshRef.current = Date.now();
-        }
-
         const params = new URLSearchParams();
         if (minTsRef.current != null && minTsRef.current > 0) {
           params.set("min_ts", String(minTsRef.current));
@@ -43,10 +33,6 @@ export function useKalshiTrades() {
         } else {
           setOk(true);
           const incoming = (data.trades ?? []) as FeedTrade[];
-
-          if (needsFullRefresh && incoming.length > 0) {
-            tradeMap.current.clear();
-          }
 
           let maxTs = minTsRef.current ?? 0;
 

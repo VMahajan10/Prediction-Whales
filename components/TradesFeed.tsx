@@ -167,9 +167,38 @@ function TradeRowContent({
   return <div className={rowClass}>{inner}</div>;
 }
 
+function TradeFeedSkeleton() {
+  return (
+    <div className="space-y-2 py-1" aria-hidden="true">
+      {Array.from({ length: 6 }, (_, index) => (
+        <div
+          key={index}
+          className="rounded-lg border border-transparent p-2"
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0 flex-1 space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="h-4 w-12 animate-pulse rounded bg-slate-700/70" />
+                <div className="h-4 w-16 animate-pulse rounded bg-slate-700/60" />
+                <div className="h-4 w-2/3 animate-pulse rounded bg-slate-700/50" />
+              </div>
+              <div className="h-3 w-1/2 animate-pulse rounded bg-slate-800/80" />
+            </div>
+            <div className="flex flex-col items-end gap-1">
+              <div className="h-5 w-10 animate-pulse rounded bg-slate-700/60" />
+              <div className="h-3 w-8 animate-pulse rounded bg-slate-800/80" />
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function TradesFeed() {
   const { platform, setPlatform } = useLiveFeedPlatform();
-  const { trades, polymarketConnected, kalshiOk } = useLiveFeed(platform);
+  const { trades, polymarketConnected, kalshiOk, seedLoading } =
+    useLiveFeed(platform);
   const { index: evIndex } = useCrossMarketEvIndex();
   const { index: pipelineEvIndex } = usePipelineEvIndex(trades);
   const [newTradeKeys, setNewTradeKeys] = useState<Set<string>>(new Set());
@@ -244,7 +273,9 @@ export default function TradesFeed() {
       </div>
 
       <div className="max-h-[480px] flex-1 space-y-1 overflow-y-auto">
-        {trades.length === 0 ? (
+        {seedLoading && trades.length === 0 ? (
+          <TradeFeedSkeleton />
+        ) : trades.length === 0 ? (
           <div className="py-8 text-center text-sm text-slate-500">
             {polymarketConnected ? "Waiting for trades..." : "Connecting..."}
           </div>
