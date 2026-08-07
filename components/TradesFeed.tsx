@@ -7,7 +7,7 @@ import AiArbitrageBadge from "@/components/AiArbitrageBadge";
 import PipelineEvBadge from "@/components/PipelineEvBadge";
 import PlatformFilterToggle from "@/components/PlatformFilterToggle";
 import { getTimeAgo } from "@/lib/client-utils";
-import type { FeedTrade } from "@/lib/kalshiTrades";
+import type { FeedTrade } from "@/lib/feedTradeTypes";
 import type { OutcomeBooks } from "@/lib/crossMarketEv";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import { useLiveFeedPlatform } from "@/lib/LiveFeedPlatformContext";

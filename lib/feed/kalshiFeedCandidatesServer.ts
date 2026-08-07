@@ -1,7 +1,8 @@
 import "server-only";
 
 import { meetsProductFeedStakeThreshold } from "@/lib/feedQualification";
-import { fetchKalshiTrades, type FeedTrade } from "@/lib/kalshiTrades";
+import { fetchKalshiTrades } from "@/lib/kalshiTradesServer";
+import type { FeedTrade } from "@/lib/feedTradeTypes";
 
 /**
  * Transient Kalshi product-feed candidates — stake-qualified only, no EV gate.

@@ -11,6 +11,14 @@ const CLIENT_STUBS = {
   "@/lib/feedQualificationServer": "./lib/stubs/client-stub.ts",
   "@/lib/feed/kalshiFeedCandidatesServer": "./lib/stubs/client-stub.ts",
   "@/lib/feed/feedTradeHistory": "./lib/stubs/client-stub.ts",
+  "@/lib/kalshiTrades": "./lib/stubs/client-stub.ts",
+  "@/lib/kalshiTradesServer": "./lib/stubs/client-stub.ts",
+  "@/lib/feed/recentTradesServer": "./lib/stubs/client-stub.ts",
+  "@/lib/x-agent/gates": "./lib/stubs/client-stub.ts",
+  "@/lib/x-agent/batchedNeonWrites": "./lib/stubs/client-stub.ts",
+  "@/lib/x-agent/kalshiShadowTrades": "./lib/stubs/client-stub.ts",
+  "@/lib/x-agent/xPublisherScheduler": "./lib/stubs/client-stub.ts",
+  "@/lib/x-agent/shadowTradeQualification": "./lib/stubs/client-stub.ts",
 };
 
 /** @type {import('next').NextConfig} */

@@ -61,6 +61,11 @@ function validateTwitterCredentials():
   };
 }
 
+/** True when all X API credentials are configured for scheduled publishing. */
+export function isTwitterPublishingConfigured(): boolean {
+  return validateTwitterCredentials().ok;
+}
+
 async function buildReceiptPng(item: XPostQueue): Promise<Buffer | null> {
   try {
     const receiptData = await resolveWhaleReceiptData(item);

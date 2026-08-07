@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import "server-only";
 import { getDb, isDatabaseEnabled } from "@/lib/crossmarket/store/db";
 import { kalshiShadowTrades } from "@/lib/crossmarket/store/schema";
 import {

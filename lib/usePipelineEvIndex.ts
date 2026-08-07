@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { FeedTrade } from "@/lib/kalshiTrades";
+import type { FeedTrade } from "@/lib/feedTradeTypes";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import type { WhaleTrade } from "@/lib/whaleTrades";
 import {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { FeedTrade } from "@/lib/kalshiTrades";
+import type { FeedTrade } from "@/lib/feedTradeTypes";
 
 const POLL_MS = 4_000;
 

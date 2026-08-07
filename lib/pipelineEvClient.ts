@@ -1,7 +1,7 @@
 "use client";
 
 import { resolveAppApiUrl } from "@/lib/appBaseUrl";
-import type { FeedTrade } from "@/lib/kalshiTrades";
+import type { FeedTrade } from "@/lib/feedTradeTypes";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import {
   pipelineEvLookupKey,

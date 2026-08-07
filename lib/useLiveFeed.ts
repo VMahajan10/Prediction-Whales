@@ -8,7 +8,7 @@ import {
   meetsFeedTradeEvThreshold,
 } from "@/lib/feedQualification";
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
-import type { FeedTrade } from "@/lib/kalshiTrades";
+import type { FeedTrade } from "@/lib/feedTradeTypes";
 import { pipelineEvKeyForTrade } from "@/lib/pipelineEvClient";
 import { usePolymarketSocketContext } from "@/lib/PolymarketSocketProvider";
 import type { SocketTrade } from "@/lib/usePolymarketSocket";

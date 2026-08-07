@@ -1,3 +1,5 @@
+import "server-only";
+
 import {
   queueGateLogRejection,
 } from "@/lib/x-agent/batchedNeonWrites";
@@ -8,6 +10,7 @@ import {
 } from "@/lib/crossmarket/store/schema";
 import {
   CREDIBILITY_CONFIG,
+  meetsProductFeedStakeThreshold,
 } from "@/lib/feedQualification";
 import {
   FAILED_TRADE_EV_REASON,
@@ -603,6 +606,26 @@ export async function handlePreGateRejection(
   await logGateFailure(trade, result.reason);
 }
 
+/** Cheap rejections and sub-product-feed trades never touch x_post_log (Neon quota). */
+function shouldPersistGateRejectionToDb(
+  trade: TradePayload,
+  reason: GateRejectionReason
+): boolean {
+  if (!meetsProductFeedStakeThreshold(trade.stakeNotional)) {
+    return false;
+  }
+
+  switch (reason) {
+    case "BELOW_STAKE_FLOOR":
+    case "STAKE_TOO_LOW":
+    case "LOW_EV":
+    case FAILED_TRADE_EV_REASON:
+      return false;
+    default:
+      return true;
+  }
+}
+
 async function logGateFailure(
   trade: TradePayload,
   reason: GateRejectionReason
@@ -620,6 +643,10 @@ async function logGateFailure(
       tradeId: trade.tradeId,
       reason,
     });
+    return;
+  }
+
+  if (!shouldPersistGateRejectionToDb(trade, reason)) {
     return;
   }
 

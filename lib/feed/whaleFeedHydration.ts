@@ -1,4 +1,4 @@
-import type { FeedTrade } from "@/lib/kalshiTrades";
+import type { FeedTrade } from "@/lib/feedTradeTypes";
 import { kalshiFeedTradeToWhale } from "@/lib/feed/kalshiFeedTrades";
 import { translateWhaleTradeMarket } from "@/lib/marketTranslator";
 import { tradeToWhale, type WhaleTrade } from "@/lib/whaleTrades";

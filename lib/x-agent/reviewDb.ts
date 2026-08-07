@@ -269,6 +269,29 @@ export async function listScheduledPostsReadyToPublish(
     .limit(limit);
 }
 
+/** Lightweight check — avoids full row fetch when the publisher tick has no work. */
+export async function countScheduledPostsReadyToPublish(): Promise<number> {
+  if (!isDatabaseEnabled()) return 0;
+
+  const db = getDb();
+  const now = new Date();
+
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(xPostQueue)
+    .where(
+      and(
+        lte(xPostQueue.scheduledFor, now),
+        or(
+          eq(xPostQueue.status, "SCHEDULED"),
+          eq(xPostQueue.status, "APPROVED")
+        )
+      )
+    );
+
+  return row?.count ?? 0;
+}
+
 const PUBLISHED_QUEUE_STATUSES: XPostQueueStatus[] = ["PUBLISHED", "DISPATCHED"];
 
 /** Count posts published to X since `since` (typically UTC day start). */

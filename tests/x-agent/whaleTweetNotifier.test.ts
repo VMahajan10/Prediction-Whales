@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import type { FeedTrade } from "@/lib/kalshiTrades";
+import type { FeedTrade } from "@/lib/feedTradeTypes";
 import {
   feedTradeToWhaleTrade,
   notifyKalshiFeedTradeIfEligible,

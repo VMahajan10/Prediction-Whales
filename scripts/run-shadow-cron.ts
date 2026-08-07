@@ -35,6 +35,10 @@ import {
 } from "../lib/x-agent/runShadowPipeline";
 import { disconnectPrisma, getPrisma } from "../lib/prisma";
 import { runCronPublisher } from "../lib/x-agent/cronPublisher";
+import {
+  isXPublisherSchedulerActive,
+  resolveXPublisherIntervalMs,
+} from "../lib/x-agent/xPublisherScheduler";
 
 loadEnvFiles();
 logReviewEmailEnvAtStartup();
@@ -51,7 +55,6 @@ const PENDING_QUEUE_STATUSES = [
 
 const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
 const KEEP_ALIVE_INTERVAL_MS = 60_000;
-const SCHEDULED_PUBLISHER_INTERVAL_MS = 60_000;
 
 type ShadowMode = "daemon" | "batch" | "backfill";
 
@@ -193,14 +196,22 @@ async function runScheduledXPublisherTick(): Promise<void> {
 }
 
 function startScheduledPublisherTicker(): void {
+  if (!isXPublisherSchedulerActive()) {
+    console.log(
+      `[${formatTimestamp()}] [Shadow Cron] [X Publisher] scheduler inactive — no x_post_queue polling (missing X credentials or SHADOW_CRON_X_PUBLISHER_ENABLED=false)`
+    );
+    return;
+  }
+
+  const intervalMs = resolveXPublisherIntervalMs();
   void runScheduledXPublisherTick();
 
   scheduledPublisherTicker = setInterval(() => {
     void runScheduledXPublisherTick();
-  }, SCHEDULED_PUBLISHER_INTERVAL_MS);
+  }, intervalMs);
 
   console.log(
-    `[${formatTimestamp()}] [Shadow Cron] [X Publisher] scheduled — every ${SCHEDULED_PUBLISHER_INTERVAL_MS / 1000}s`
+    `[${formatTimestamp()}] [Shadow Cron] [X Publisher] scheduled — every ${intervalMs / 1000}s`
   );
 }
 

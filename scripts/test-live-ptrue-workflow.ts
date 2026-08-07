@@ -16,7 +16,8 @@ import { loadEnvFiles } from "./loadEnv";
 
 loadEnvFiles();
 
-import { fetchKalshiTrades, type FeedTrade } from "../lib/kalshiTrades";
+import { fetchKalshiTrades } from "../lib/kalshiTradesServer";
+import type { FeedTrade } from "../lib/feedTradeTypes";
 import { fetchTrades, fetchWhaleBackfill } from "../lib/polymarket";
 import {
   ensureFullyComputedTradeEv,

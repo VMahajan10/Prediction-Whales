@@ -1,4 +1,4 @@
-import type { FeedTrade } from "@/lib/kalshiTrades";
+import type { FeedTrade } from "@/lib/feedTradeTypes";
 import {
   isWhaleNotional,
   tradeToWhale,

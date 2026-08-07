@@ -1,6 +1,6 @@
 "use client";
 
-import type { FeedTrade } from "@/lib/kalshiTrades";
+import type { FeedTrade } from "@/lib/feedTradeTypes";
 import type { KalshiTradeDetail } from "@/lib/kalshiDetail";
 import { feedTradeToKalshiDetail } from "@/lib/kalshiDetail";
 import type { TradeSummary } from "@/lib/polymarket";

@@ -1,9 +1,10 @@
-import { listScheduledPostsReadyToPublish } from "@/lib/x-agent/reviewDb";
+import { listScheduledPostsReadyToPublish, countScheduledPostsReadyToPublish } from "@/lib/x-agent/reviewDb";
 import { publishScheduledQueueItem } from "@/lib/x-agent/publishQueuePost";
 import {
   formatDailyLimitLogMessage,
   getDailyPostLimitStatus,
 } from "@/lib/x-agent/dailyPostLimit";
+import { isXPublisherSchedulerActive } from "@/lib/x-agent/xPublisherScheduler";
 
 export interface CronPublisherResult {
   scanned: number;
@@ -31,9 +32,22 @@ export async function runCronPublisher(): Promise<CronPublisherResult> {
     errors: [],
   };
 
+  if (!isXPublisherSchedulerActive()) {
+    console.log(
+      `${LOG_PREFIX} Scheduler inactive — skipping x_post_queue scan (set SHADOW_CRON_X_PUBLISHER_ENABLED=true and X API credentials to enable)`
+    );
+    return result;
+  }
+
+  const dueCount = await countScheduledPostsReadyToPublish();
+  if (dueCount === 0) {
+    console.log(`${LOG_PREFIX} No scheduled posts ready to publish`);
+    return result;
+  }
+
   const now = new Date();
   console.log(
-    `${LOG_PREFIX} Scanning for due posts (status=SCHEDULED, scheduledAt <= ${now.toISOString()})`
+    `${LOG_PREFIX} Scanning for due posts (status=SCHEDULED, scheduledAt <= ${now.toISOString()}) | dueCount=${dueCount}`
   );
 
   const ready = await listScheduledPostsReadyToPublish();
@@ -59,7 +73,6 @@ export async function runCronPublisher(): Promise<CronPublisherResult> {
   }
 
   if (ready.length === 0) {
-    console.log(`${LOG_PREFIX} No scheduled posts ready to publish`);
     return result;
   }
 

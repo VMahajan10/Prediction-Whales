@@ -16,7 +16,7 @@ import {
 } from "@/lib/feedQualification";
 import { retainLastNonEmpty } from "@/lib/feed/feedRetention";
 import { recentTradeToWhale } from "@/lib/feed/whaleFeedHydration";
-import type { FeedTrade } from "@/lib/kalshiTrades";
+import type { FeedTrade } from "@/lib/feedTradeTypes";
 import {
   isKalshiTradeEligibleForFeed,
   kalshiFeedTradeToWhale,

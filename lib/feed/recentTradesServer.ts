@@ -29,7 +29,7 @@ import {
   normalizePipelineLookupKey,
   pipelineEvLookupKey,
 } from "@/lib/evPipeline/types";
-import type { FeedTrade } from "@/lib/kalshiTrades";
+import type { FeedTrade } from "@/lib/feedTradeTypes";
 import { fetchWhaleBackfill, type TradeSummary } from "@/lib/polymarket";
 
 initGlobalLocalEvCache();

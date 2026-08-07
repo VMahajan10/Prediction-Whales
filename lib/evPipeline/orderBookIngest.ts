@@ -8,7 +8,7 @@ import {
   type OrderBookLevel,
 } from "@/lib/finance/evEngine";
 import { fetchKalshiMarketDetail } from "@/lib/kalshiDetail";
-import { fetchKalshiTrades } from "@/lib/kalshiTrades";
+import { fetchKalshiTrades } from "@/lib/kalshiTradesServer";
 import { sleep } from "@/lib/kalshi/http";
 import { fetchWhaleBackfill } from "@/lib/polymarket";
 import { MIN_WHALE_USD } from "@/lib/whaleTrades";

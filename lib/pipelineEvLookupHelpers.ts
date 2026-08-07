@@ -2,7 +2,7 @@ import {
   pipelineEvLookupKeyKalshi,
   pipelineEvLookupKeyPm,
 } from "@/lib/evPipeline/types";
-import type { FeedTrade } from "@/lib/kalshiTrades";
+import type { FeedTrade } from "@/lib/feedTradeTypes";
 import type { WhaleTrade } from "@/lib/whaleTrades";
 
 export function pipelineEvKeyForTrade(trade: FeedTrade): string | null {
