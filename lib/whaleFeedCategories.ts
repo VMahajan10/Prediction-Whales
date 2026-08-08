@@ -1,36 +1,22 @@
 import { inferMarketCategory, type MarketCategory } from "@/lib/marketCategory";
+import { categorizeMarketByRegex } from "@/lib/categorizerRegex";
 import {
-  categorizeMarketByRegex,
+  TRENDING_MIN_STAKE_USD,
+  TRENDING_WINDOW_MS,
   normalizeMarketFeedCategory,
-} from "@/lib/categorizer";
+  tradeCategoryForTab,
+  whaleFeedCategoryLabel,
+  WHALE_FEED_CATEGORY_TABS,
+  type WhaleFeedCategoryTab,
+} from "@/lib/constants/categories";
 import type { WhaleTrade } from "@/lib/whaleTrades";
 
-export type WhaleFeedCategoryTab =
-  | "all"
-  | "trending"
-  | "sports"
-  | "politics"
-  | "culture";
-
-export const WHALE_FEED_CATEGORY_TABS: {
-  value: WhaleFeedCategoryTab;
-  label: string;
-}[] = [
-  { value: "all", label: "All" },
-  { value: "trending", label: "Trending" },
-  { value: "sports", label: "Sports" },
-  { value: "politics", label: "Politics" },
-  { value: "culture", label: "Culture" },
-];
-
-const TAB_TO_CATEGORY: Partial<Record<WhaleFeedCategoryTab, MarketCategory>> = {
-  sports: "SPORTS",
-  politics: "POLITICS",
-  culture: "CULTURE",
-};
-
-const TRENDING_WINDOW_MS = 10 * 60 * 1000;
-const TRENDING_MIN_STAKE_USD = 1_000;
+export {
+  formatFeedRecency,
+  whaleFeedCategoryLabel,
+  WHALE_FEED_CATEGORY_TABS,
+  type WhaleFeedCategoryTab,
+} from "@/lib/constants/categories";
 
 export function isTrendingWhaleTrade(
   trade: WhaleTrade,
@@ -65,20 +51,7 @@ export function matchesWhaleFeedCategory(
   if (tab === "all") return true;
   if (tab === "trending") return isTrendingWhaleTrade(trade, now);
 
-  const expected = TAB_TO_CATEGORY[tab];
+  const expected = tradeCategoryForTab(tab);
   if (!expected) return true;
   return resolveTradeMarketCategory(trade) === expected;
-}
-
-export function formatFeedRecency(detectedAt: number, now: number): string {
-  const sec = Math.max(0, Math.floor((now - detectedAt) / 1000));
-  if (sec < 60) return `${sec}s`;
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m`;
-  const hr = Math.floor(min / 60);
-  return `${hr}h`;
-}
-
-export function whaleFeedCategoryLabel(tab: WhaleFeedCategoryTab): string {
-  return WHALE_FEED_CATEGORY_TABS.find((t) => t.value === tab)?.label ?? tab;
 }

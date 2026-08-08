@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { categorizeMarketByRegex } from "@/lib/categorizer";
+import { categorizeMarketByRegex } from "@/lib/categorizerRegex";
 
 describe("categorizer", () => {
   it("classifies player-vs-player tennis titles as SPORTS", () => {

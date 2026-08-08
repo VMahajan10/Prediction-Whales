@@ -28,58 +28,30 @@ import {
 } from "@/lib/evPipeline/types";
 import type { FeedTrade } from "@/lib/feedTradeTypes";
 import { mergeWithReservedSlots } from "@/lib/liveFeedMerge";
-import type { MarketFeedCategory } from "@/lib/categorizer";
+import {
+  isTrendingByStakeAndRecency,
+  tradeCategoryForTab,
+  type MarketFeedCategory,
+  type RecentFeedCategoryFilter,
+} from "@/lib/constants/categories";
 
 initGlobalLocalEvCache();
 
 export const RECENT_TRADES_LIMIT = 20;
 
-export type RecentFeedCategoryFilter =
-  | "all"
-  | "sports"
-  | "politics"
-  | "culture"
-  | "trending";
-
-const TRENDING_WINDOW_SEC = 10 * 60;
-const TRENDING_MIN_STAKE_USD = 1_000;
-
-export function parseRecentFeedCategoryFilter(
-  value: string | null | undefined
-): RecentFeedCategoryFilter {
-  const normalized = value?.trim().toLowerCase();
-  if (
-    normalized === "sports" ||
-    normalized === "politics" ||
-    normalized === "culture" ||
-    normalized === "trending"
-  ) {
-    return normalized;
-  }
-  return "all";
-}
+export type { RecentFeedCategoryFilter } from "@/lib/constants/categories";
 
 function dbCategoryForFilter(
   filter: RecentFeedCategoryFilter
 ): MarketFeedCategory | null {
-  switch (filter) {
-    case "sports":
-      return "SPORTS";
-    case "politics":
-      return "POLITICS";
-    case "culture":
-      return "CULTURE";
-    default:
-      return null;
-  }
+  return tradeCategoryForTab(filter);
 }
 
 function isTrendingRecentTrade(
   trade: RecentFeedTrade,
   nowEpochSec = Math.floor(Date.now() / 1000)
 ): boolean {
-  const ageSec = nowEpochSec - trade.timestamp;
-  return ageSec <= TRENDING_WINDOW_SEC && trade.usdNotional >= TRENDING_MIN_STAKE_USD;
+  return isTrendingByStakeAndRecency(trade.usdNotional, trade.timestamp, nowEpochSec * 1000);
 }
 
 function applyRecentCategoryFilter(

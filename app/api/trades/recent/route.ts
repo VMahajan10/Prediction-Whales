@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  fetchRecentFeedTrades,
-  parseRecentFeedCategoryFilter,
-} from "@/lib/feed/recentTradesServer";
+import { parseRecentFeedCategoryFilter } from "@/lib/constants/categories";
+import { fetchRecentFeedTrades } from "@/lib/feed/recentTradesServer";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;

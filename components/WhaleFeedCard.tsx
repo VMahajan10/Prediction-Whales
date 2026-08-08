@@ -5,7 +5,7 @@ import {
   categoryBadgeClass,
   inferCategoryBadge,
 } from "@/lib/marketCategory";
-import { formatFeedRecency } from "@/lib/whaleFeedCategories";
+import { formatFeedRecency } from "@/lib/constants/categories";
 import { formatPriceCents, formatStakeCompact } from "@/lib/whaleDetails";
 import { resolveFeedTradeEvDisplay } from "@/lib/feedTradeEv";
 import {

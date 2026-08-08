@@ -9,8 +9,10 @@ import { filterFeedByPlatform } from "@/lib/liveFeedMerge";
 import {
   matchesWhaleFeedCategory,
   type WhaleFeedCategoryTab,
-  whaleFeedCategoryLabel,
 } from "@/lib/whaleFeedCategories";
+import {
+  whaleFeedCategoryLabel,
+} from "@/lib/constants/categories";
 import {
   stashKalshiTradeForNavigation,
   stashTradeForNavigation,

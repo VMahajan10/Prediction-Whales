@@ -1,20 +1,14 @@
+import "server-only";
+
 import { z } from "zod";
+import { categorizeMarketByRegex } from "@/lib/categorizerRegex";
+import {
+  MARKET_FEED_CATEGORIES,
+  normalizeMarketFeedCategory,
+  type MarketFeedCategory,
+} from "@/lib/constants/categories";
 
-/** Normalized feed tab category stored on trade rows. */
-export type MarketFeedCategory =
-  | "SPORTS"
-  | "POLITICS"
-  | "CULTURE"
-  | "TRENDING"
-  | "OTHER";
-
-export const MARKET_FEED_CATEGORIES: MarketFeedCategory[] = [
-  "SPORTS",
-  "POLITICS",
-  "CULTURE",
-  "TRENDING",
-  "OTHER",
-];
+export type { MarketFeedCategory } from "@/lib/constants/categories";
 
 const LRU_MAX = 500;
 const REDIS_PREFIX = "marketpulse:category:";
@@ -22,31 +16,6 @@ const REDIS_TTL_SEC = 60 * 60 * 24 * 30;
 
 const memoryCache = new Map<string, MarketFeedCategory>();
 const memoryOrder: string[] = [];
-
-const ESPORTS_PROBE =
-  /lol|lec|lcs|lck|lpl|cs2|csgo|valorant|dota|dota2|esports|esport|vct|msi|worlds|blast|iem|esl|major|map\s*\d/i;
-
-const SPORTS_REGEXES: RegExp[] = [
-  /\b(wta|atp|nba|nfl|nhl|mlb|mls|ufc|pga|f1|ncaa|epl|ucl|serie\s*a|bundesliga|ligue\s*1|nascar|mlb)\b/i,
-  /\bvs\.?\b|\bv\s+s\b/i,
-  /\bo\/u\b|\bover\/under\b|\bspread\b|\bmoneyline\b/i,
-  /\b(tennis|soccer|football|basketball|baseball|hockey|golf|boxing|mma|cricket|rugby)\b/i,
-  /\b(touchdown|goalscorer|world\s+cup|super\s+bowl|playoffs?)\b/i,
-  /\b[A-Z]{2,}(?:\s+[A-Z]{2,})*\s+VS\.?\s+[A-Z]{2,}(?:\s+[A-Z]{2,})*\b/,
-  /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+vs\.?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b/,
-  ESPORTS_PROBE,
-];
-
-const POLITICS_REGEXES: RegExp[] = [
-  /\b(congress|senate|house|president|election|primary|democrat|republican|governor|parliament)\b/i,
-  /\b(trump|biden|harris|modi|starmer|macron)\b/i,
-  /\b(federal|fed\s+chair|fed\s+rate|white\s+house|supreme\s+court)\b/i,
-];
-
-const CULTURE_REGEXES: RegExp[] = [
-  /\b(oscar|grammy|emmy|tony|billboard|album|movie|celebrity|tiktok|twitter|culture)\b/i,
-  /\b(netflix|spotify|box\s+office|reality\s+tv)\b/i,
-];
 
 function normalizeCacheKey(title: string, eventSlug?: string): string {
   const slug = eventSlug?.trim().toLowerCase();
@@ -68,38 +37,9 @@ function rememberInMemory(key: string, category: MarketFeedCategory): void {
 }
 
 function parseCategory(value: unknown): MarketFeedCategory | null {
-  if (typeof value !== "string") return null;
-  const upper = value.trim().toUpperCase();
-  if (MARKET_FEED_CATEGORIES.includes(upper as MarketFeedCategory)) {
-    return upper as MarketFeedCategory;
-  }
-  return null;
-}
-
-export function normalizeMarketFeedCategory(
-  value: string | null | undefined
-): MarketFeedCategory | null {
-  return parseCategory(value);
-}
-
-/**
- * High-confidence regex classification. Returns null when uncertain (LLM may run).
- */
-export function categorizeMarketByRegex(
-  title: string,
-  eventSlug?: string
-): MarketFeedCategory | null {
-  const corpus = `${title} ${eventSlug ?? ""}`.trim();
-  if (!corpus) return null;
-
-  const t = corpus.toLowerCase();
-
-  if (SPORTS_REGEXES.some((re) => re.test(corpus))) return "SPORTS";
-  if (POLITICS_REGEXES.some((re) => re.test(t))) return "POLITICS";
-  if (CULTURE_REGEXES.some((re) => re.test(t))) return "CULTURE";
-  if (/btc|eth|crypto|bitcoin|solana|token|defi/.test(t)) return "OTHER";
-
-  return null;
+  return normalizeMarketFeedCategory(
+    typeof value === "string" ? value : undefined
+  );
 }
 
 async function getRedisClient(): Promise<{
@@ -299,3 +239,7 @@ export async function backfillMarketCategoryInDatabase(
     });
   }
 }
+
+// Re-export for server callers that only need regex (e.g. tests).
+export { categorizeMarketByRegex } from "@/lib/categorizerRegex";
+export { MARKET_FEED_CATEGORIES, normalizeMarketFeedCategory };

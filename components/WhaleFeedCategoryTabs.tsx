@@ -3,7 +3,7 @@
 import {
   WHALE_FEED_CATEGORY_TABS,
   type WhaleFeedCategoryTab,
-} from "@/lib/whaleFeedCategories";
+} from "@/lib/constants/categories";
 
 interface WhaleFeedCategoryTabsProps {
   value: WhaleFeedCategoryTab;
