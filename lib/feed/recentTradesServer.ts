@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, desc, eq, gte } from "drizzle-orm";
+import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { mapWithConcurrency } from "@/lib/clvPriceHistory";
 import { getDb, isDatabaseEnabled } from "@/lib/crossmarket/store/db";
 import {
@@ -39,6 +39,26 @@ initGlobalLocalEvCache();
 export const RECENT_TRADES_LIMIT = 20;
 const RECENT_TRADES_HOUR_MS = 60 * 60 * 1000;
 const POLYMARKET_FALLBACK_READ_LIMIT = 40;
+
+/** Raised when a per-source DB read fails — collected into `degraded` instead of silent []. */
+export class RecentTradesReadError extends Error {
+  readonly source: "polymarket" | "kalshi";
+  readonly cause: unknown;
+
+  constructor(source: "polymarket" | "kalshi", cause: unknown) {
+    const detail =
+      cause instanceof Error ? cause.message : String(cause);
+    super(`[recentTrades] ${source} read failed: ${detail}`);
+    this.name = "RecentTradesReadError";
+    this.source = source;
+    this.cause = cause;
+  }
+}
+
+export type FetchRecentFeedTradesResult = {
+  trades: RecentFeedTrade[];
+  degraded: string[];
+};
 
 export type { RecentFeedCategoryFilter } from "@/lib/constants/categories";
 
@@ -312,16 +332,6 @@ function kalshiShadowToFeedTrade(row: KalshiShadowTrade): RecentFeedTrade | null
   };
 }
 
-function filterKalshiByStoredEv(
-  trades: RecentFeedTrade[]
-): RecentFeedTrade[] {
-  return trades.filter(
-    (trade) =>
-      trade.netEvPercent != null &&
-      meetsFeedTradeEvThreshold(trade.netEvPercent)
-  );
-}
-
 async function resolveCachedKalshiPipelineEv(
   trades: RecentFeedTrade[]
 ): Promise<Map<string, PipelineTradeEv>> {
@@ -409,8 +419,23 @@ async function fetchRecentPolymarketTrades(
       "[recentTrades] polymarket read failed",
       error instanceof Error ? error.message : error
     );
-    return [];
+    throw new RecentTradesReadError("polymarket", error);
   }
+}
+
+function kalshiStoredEvSqlPredicates(): ReturnType<typeof sql>[] {
+  return [
+    sql`(${kalshiShadowTrades.rawPayload} ->> 'netEvPercent') ~ '^-?[0-9]+(\\.[0-9]+)?$'`,
+    sql`(${kalshiShadowTrades.rawPayload} ->> 'netEvPercent')::double precision >= ${MIN_FEED_TRADE_EV_PCT}`,
+  ];
+}
+
+function kalshiMissingStoredEvSqlPredicate(): ReturnType<typeof sql> {
+  return sql`(
+    ${kalshiShadowTrades.rawPayload} ->> 'netEvPercent' IS NULL
+    OR NOT ((${kalshiShadowTrades.rawPayload} ->> 'netEvPercent') ~ '^-?[0-9]+(\\.[0-9]+)?$')
+    OR (${kalshiShadowTrades.rawPayload} ->> 'netEvPercent')::double precision < ${MIN_FEED_TRADE_EV_PCT}
+  )`;
 }
 
 async function fetchRecentKalshiTrades(
@@ -421,48 +446,52 @@ async function fetchRecentKalshiTrades(
   if (!isDatabaseEnabled()) return [];
 
   const dbCategory = dbCategoryForFilter(categoryFilter);
-  const predicates = [
+  const basePredicates = [
     gte(kalshiShadowTrades.usdNotional, MIN_PRODUCT_FEED_STAKE_USD),
   ];
   if (options.since) {
-    predicates.push(gte(kalshiShadowTrades.tradedAt, options.since));
+    basePredicates.push(gte(kalshiShadowTrades.tradedAt, options.since));
   }
-  if (dbCategory) predicates.push(eq(kalshiShadowTrades.category, dbCategory));
+  if (dbCategory) basePredicates.push(eq(kalshiShadowTrades.category, dbCategory));
 
   try {
-    const rows = await getDb()
+    const storedEvRows = await getDb()
       .select()
       .from(kalshiShadowTrades)
-      .where(and(...predicates))
+      .where(and(...basePredicates, ...kalshiStoredEvSqlPredicates()))
       .orderBy(desc(kalshiShadowTrades.tradedAt))
-      .limit(KALSHI_DB_READ_LIMIT);
+      .limit(limit);
 
-    const candidates = rows
+    let merged = storedEvRows
       .map((row) => kalshiShadowToFeedTrade(row))
       .filter((trade): trade is RecentFeedTrade => trade != null)
       .filter(
         (trade) => !options.excludeKeys?.has(recentTradeDedupeKey(trade))
       );
 
-    const withStoredEv = filterKalshiByStoredEv(candidates);
-    let merged =
-      withStoredEv.length >= limit
-        ? withStoredEv
-            .sort((a, b) => b.timestamp - a.timestamp)
-            .slice(0, limit)
-        : null;
+    if (merged.length < limit) {
+      const seenIds = new Set(merged.map((trade) => trade.id));
 
-    if (!merged) {
-      const storedIds = new Set(withStoredEv.map((trade) => trade.id));
-      const needsPipeline = candidates.filter(
-        (trade) => !storedIds.has(trade.id)
-      );
+      const supplementalRows = await getDb()
+        .select()
+        .from(kalshiShadowTrades)
+        .where(and(...basePredicates, kalshiMissingStoredEvSqlPredicate()))
+        .orderBy(desc(kalshiShadowTrades.tradedAt))
+        .limit(KALSHI_DB_READ_LIMIT);
 
-      const pipelineQualified = await qualifyKalshiRecentTrades(needsPipeline, {
+      const candidates = supplementalRows
+        .map((row) => kalshiShadowToFeedTrade(row))
+        .filter((trade): trade is RecentFeedTrade => trade != null)
+        .filter((trade) => !seenIds.has(trade.id))
+        .filter(
+          (trade) => !options.excludeKeys?.has(recentTradeDedupeKey(trade))
+        );
+
+      const pipelineQualified = await qualifyKalshiRecentTrades(candidates, {
         cacheOnly: true,
       });
 
-      merged = [...withStoredEv, ...pipelineQualified]
+      merged = [...merged, ...pipelineQualified]
         .sort((a, b) => b.timestamp - a.timestamp)
         .slice(0, limit);
     }
@@ -473,31 +502,48 @@ async function fetchRecentKalshiTrades(
       "[recentTrades] kalshi read failed",
       error instanceof Error ? error.message : error
     );
-    return [];
+    throw new RecentTradesReadError("kalshi", error);
   }
 }
 
 /** Latest qualifying feed trades from Postgres — instant page-load hydration. */
 export async function fetchRecentFeedTrades(options?: {
   category?: RecentFeedCategoryFilter;
-}): Promise<RecentFeedTrade[]> {
+}): Promise<FetchRecentFeedTradesResult> {
   const categoryFilter = options?.category ?? "all";
-  if (!isDatabaseEnabled()) return [];
+  if (!isDatabaseEnabled()) return { trades: [], degraded: [] };
 
+  const degraded: string[] = [];
   const oneHourAgo = new Date(Date.now() - RECENT_TRADES_HOUR_MS);
 
-  const [pmHour, kalshiHour] = await Promise.all([
-    fetchRecentPolymarketTrades({
+  let pmHour: RecentFeedTrade[] = [];
+  let kalshiHour: RecentFeedTrade[] = [];
+
+  try {
+    pmHour = await fetchRecentPolymarketTrades({
       since: oneHourAgo,
       limit: RECENT_TRADES_LIMIT,
       categoryFilter,
-    }),
-    fetchRecentKalshiTrades({
+    });
+  } catch (error) {
+    degraded.push(
+      error instanceof RecentTradesReadError ? error.source : "polymarket"
+    );
+    console.error(error);
+  }
+
+  try {
+    kalshiHour = await fetchRecentKalshiTrades({
       since: oneHourAgo,
       limit: RECENT_TRADES_LIMIT,
       categoryFilter,
-    }),
-  ]);
+    });
+  } catch (error) {
+    degraded.push(
+      error instanceof RecentTradesReadError ? error.source : "kalshi"
+    );
+    console.error(error);
+  }
 
   let results = combineRecentTrades(pmHour, kalshiHour, RECENT_TRADES_LIMIT);
 
@@ -505,18 +551,38 @@ export async function fetchRecentFeedTrades(options?: {
     const excludeKeys = new Set(results.map(recentTradeDedupeKey));
     const need = RECENT_TRADES_LIMIT - results.length;
 
-    const [pmFallback, kalshiFallback] = await Promise.all([
-      fetchRecentPolymarketTrades({
+    let pmFallback: RecentFeedTrade[] = [];
+    let kalshiFallback: RecentFeedTrade[] = [];
+
+    try {
+      pmFallback = await fetchRecentPolymarketTrades({
         limit: need + POLYMARKET_FALLBACK_READ_LIMIT,
         excludeKeys,
         categoryFilter,
-      }),
-      fetchRecentKalshiTrades({
+      });
+    } catch (error) {
+      if (!degraded.includes("polymarket")) {
+        degraded.push(
+          error instanceof RecentTradesReadError ? error.source : "polymarket"
+        );
+      }
+      console.error(error);
+    }
+
+    try {
+      kalshiFallback = await fetchRecentKalshiTrades({
         limit: need,
         excludeKeys,
         categoryFilter,
-      }),
-    ]);
+      });
+    } catch (error) {
+      if (!degraded.includes("kalshi")) {
+        degraded.push(
+          error instanceof RecentTradesReadError ? error.source : "kalshi"
+        );
+      }
+      console.error(error);
+    }
 
     results = dedupeRecentTrades([
       ...results,
@@ -527,5 +593,8 @@ export async function fetchRecentFeedTrades(options?: {
       .slice(0, RECENT_TRADES_LIMIT);
   }
 
-  return applyRecentCategoryFilter(results, categoryFilter);
+  return {
+    trades: applyRecentCategoryFilter(results, categoryFilter),
+    degraded,
+  };
 }

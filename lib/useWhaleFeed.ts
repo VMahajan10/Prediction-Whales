@@ -60,7 +60,9 @@ export const WHALE_FEED_LIVE_MAX = 50;
 const BACKFILL_TIMEOUT_MS = 15_000;
 const BACKFILL_ATTEMPTS = 3;
 const BACKFILL_RETRY_DELAY_MS = 1_500;
-const RECENT_SEED_TIMEOUT_MS = 3_000;
+const RECENT_SEED_TIMEOUT_MS = 10_000;
+const RECENT_SEED_ATTEMPTS = 3;
+const RECENT_SEED_RETRY_DELAY_MS = 1_000;
 
 type RecentApiResponse = {
   trades?: Array<FeedTrade & { netEvPercent?: number | null }>;
@@ -365,23 +367,34 @@ export function useWhaleFeed() {
     };
 
     const loadRecentSeed = async () => {
-      try {
-        const seeded = await fetchRecentSeedTrades(abort.signal);
+      for (let attempt = 1; attempt <= RECENT_SEED_ATTEMPTS; attempt += 1) {
         if (abort.signal.aborted) return;
-        const hydrated = seeded.sort(byDetectedDesc);
-        setWhaleBuffer(hydrated);
-        for (const w of hydrated) {
-          whaleBufferSeen.current.add(whaleKey(w));
-          if (w.transactionHash) seenHashes.current.add(w.transactionHash);
+        try {
+          const seeded = await fetchRecentSeedTrades(abort.signal);
+          if (abort.signal.aborted) return;
+          if (seeded.length > 0) {
+            const hydrated = seeded.sort(byDetectedDesc);
+            setWhaleBuffer((prev) => prependWhaleBuffer(prev, hydrated));
+            for (const w of hydrated) {
+              whaleBufferSeen.current.add(whaleKey(w));
+              if (w.transactionHash) seenHashes.current.add(w.transactionHash);
+            }
+            break;
+          }
+        } catch (error) {
+          console.error(
+            `[useWhaleFeed] /api/trades/recent attempt ${attempt}/${RECENT_SEED_ATTEMPTS} failed`,
+            error instanceof Error ? error.message : error
+          );
         }
-      } catch (error) {
-        console.error(
-          "[useWhaleFeed] /api/trades/recent failed",
-          error instanceof Error ? error.message : error
-        );
-      } finally {
-        markSeedLoaded();
+        if (abort.signal.aborted) return;
+        if (attempt < RECENT_SEED_ATTEMPTS) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, RECENT_SEED_RETRY_DELAY_MS * attempt)
+          );
+        }
       }
+      markSeedLoaded();
     };
 
     const load = async () => {

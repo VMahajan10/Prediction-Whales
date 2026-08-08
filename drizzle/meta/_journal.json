@@ -113,6 +113,27 @@
       "when": 1785461000000,
       "tag": "0018_x_post_log_rejection_reason_values",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1785462000000,
+      "tag": "0014_feed_trades",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1785463000000,
+      "tag": "0015_true_probabilities_token_unique",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1785464000000,
+      "tag": "0019_market_category",
+      "breakpoints": true
     }
   ]
 }
