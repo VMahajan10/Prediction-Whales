@@ -27,7 +27,6 @@ import {
   pipelineEvLookupKey,
 } from "@/lib/evPipeline/types";
 import type { FeedTrade } from "@/lib/feedTradeTypes";
-import { mergeWithReservedSlots } from "@/lib/liveFeedMerge";
 import {
   isTrendingByStakeAndRecency,
   tradeCategoryForTab,
@@ -38,8 +37,42 @@ import {
 initGlobalLocalEvCache();
 
 export const RECENT_TRADES_LIMIT = 20;
+const RECENT_TRADES_HOUR_MS = 60 * 60 * 1000;
+const POLYMARKET_FALLBACK_READ_LIMIT = 40;
 
 export type { RecentFeedCategoryFilter } from "@/lib/constants/categories";
+
+type RecentFetchOptions = {
+  limit?: number;
+  since?: Date;
+  excludeKeys?: Set<string>;
+  categoryFilter?: RecentFeedCategoryFilter;
+};
+
+function recentTradeDedupeKey(trade: RecentFeedTrade): string {
+  if (trade.source === "kalshi") return `kalshi:${trade.id}`;
+  return trade.transactionHash?.trim() || trade.id;
+}
+
+function dedupeRecentTrades(trades: RecentFeedTrade[]): RecentFeedTrade[] {
+  const seen = new Set<string>();
+  return trades.filter((trade) => {
+    const key = recentTradeDedupeKey(trade);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function combineRecentTrades(
+  polymarket: RecentFeedTrade[],
+  kalshi: RecentFeedTrade[],
+  limit = RECENT_TRADES_LIMIT
+): RecentFeedTrade[] {
+  return dedupeRecentTrades([...polymarket, ...kalshi])
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, limit);
+}
 
 function dbCategoryForFilter(
   filter: RecentFeedCategoryFilter
@@ -144,21 +177,6 @@ function polymarketPayloadToFeedTrade(
     netEvPercent,
     category: category?.trim() || undefined,
   };
-}
-
-function mergeRecentTrades(
-  polymarket: RecentFeedTrade[],
-  kalshi: RecentFeedTrade[]
-): RecentFeedTrade[] {
-  // kalshi_shadow_trades is written continuously by the worker while feed_trades
-  // only updates when /api/feed is served — a global timestamp sort lets Kalshi
-  // claim every slot.
-  return mergeWithReservedSlots(
-    polymarket,
-    kalshi,
-    (a, b) => b.timestamp - a.timestamp,
-    RECENT_TRADES_LIMIT
-  );
 }
 
 function filterKalshiEligible(
@@ -350,22 +368,19 @@ async function resolveCachedKalshiPipelineEv(
 }
 
 async function fetchRecentPolymarketTrades(
-  limit = RECENT_TRADES_LIMIT,
-  categoryFilter: RecentFeedCategoryFilter = "all"
+  options: RecentFetchOptions = {}
 ): Promise<RecentFeedTrade[]> {
+  const limit = options.limit ?? RECENT_TRADES_LIMIT;
+  const categoryFilter = options.categoryFilter ?? "all";
   if (!isDatabaseEnabled()) return [];
 
   const dbCategory = dbCategoryForFilter(categoryFilter);
-  const whereClause = dbCategory
-    ? and(
-        gte(feedTrades.stakeAmount, MIN_PRODUCT_FEED_STAKE_USD),
-        gte(feedTrades.averageEv, MIN_FEED_TRADE_EV_PCT),
-        eq(feedTrades.category, dbCategory)
-      )
-    : and(
-        gte(feedTrades.stakeAmount, MIN_PRODUCT_FEED_STAKE_USD),
-        gte(feedTrades.averageEv, MIN_FEED_TRADE_EV_PCT)
-      );
+  const predicates = [
+    gte(feedTrades.stakeAmount, MIN_PRODUCT_FEED_STAKE_USD),
+    gte(feedTrades.averageEv, MIN_FEED_TRADE_EV_PCT),
+  ];
+  if (options.since) predicates.push(gte(feedTrades.tradedAt, options.since));
+  if (dbCategory) predicates.push(eq(feedTrades.category, dbCategory));
 
   try {
     const rows = await getDb()
@@ -375,7 +390,7 @@ async function fetchRecentPolymarketTrades(
         category: feedTrades.category,
       })
       .from(feedTrades)
-      .where(whereClause)
+      .where(and(...predicates))
       .orderBy(desc(feedTrades.tradedAt))
       .limit(limit);
 
@@ -383,7 +398,10 @@ async function fetchRecentPolymarketTrades(
       .map((row) =>
         polymarketPayloadToFeedTrade(row.payload, row.averageEv, row.category)
       )
-      .filter((trade): trade is RecentFeedTrade => trade != null);
+      .filter((trade): trade is RecentFeedTrade => trade != null)
+      .filter(
+        (trade) => !options.excludeKeys?.has(recentTradeDedupeKey(trade))
+      );
 
     return applyRecentCategoryFilter(trades, categoryFilter);
   } catch (error) {
@@ -396,30 +414,35 @@ async function fetchRecentPolymarketTrades(
 }
 
 async function fetchRecentKalshiTrades(
-  limit = RECENT_TRADES_LIMIT,
-  categoryFilter: RecentFeedCategoryFilter = "all"
+  options: RecentFetchOptions = {}
 ): Promise<RecentFeedTrade[]> {
+  const limit = options.limit ?? RECENT_TRADES_LIMIT;
+  const categoryFilter = options.categoryFilter ?? "all";
   if (!isDatabaseEnabled()) return [];
 
   const dbCategory = dbCategoryForFilter(categoryFilter);
-  const whereClause = dbCategory
-    ? and(
-        gte(kalshiShadowTrades.usdNotional, MIN_PRODUCT_FEED_STAKE_USD),
-        eq(kalshiShadowTrades.category, dbCategory)
-      )
-    : gte(kalshiShadowTrades.usdNotional, MIN_PRODUCT_FEED_STAKE_USD);
+  const predicates = [
+    gte(kalshiShadowTrades.usdNotional, MIN_PRODUCT_FEED_STAKE_USD),
+  ];
+  if (options.since) {
+    predicates.push(gte(kalshiShadowTrades.tradedAt, options.since));
+  }
+  if (dbCategory) predicates.push(eq(kalshiShadowTrades.category, dbCategory));
 
   try {
     const rows = await getDb()
       .select()
       .from(kalshiShadowTrades)
-      .where(whereClause)
+      .where(and(...predicates))
       .orderBy(desc(kalshiShadowTrades.tradedAt))
       .limit(KALSHI_DB_READ_LIMIT);
 
     const candidates = rows
       .map((row) => kalshiShadowToFeedTrade(row))
-      .filter((trade): trade is RecentFeedTrade => trade != null);
+      .filter((trade): trade is RecentFeedTrade => trade != null)
+      .filter(
+        (trade) => !options.excludeKeys?.has(recentTradeDedupeKey(trade))
+      );
 
     const withStoredEv = filterKalshiByStoredEv(candidates);
     let merged =
@@ -459,10 +482,50 @@ export async function fetchRecentFeedTrades(options?: {
   category?: RecentFeedCategoryFilter;
 }): Promise<RecentFeedTrade[]> {
   const categoryFilter = options?.category ?? "all";
-  const [polymarket, kalshi] = await Promise.all([
-    fetchRecentPolymarketTrades(RECENT_TRADES_LIMIT, categoryFilter),
-    fetchRecentKalshiTrades(RECENT_TRADES_LIMIT, categoryFilter),
+  if (!isDatabaseEnabled()) return [];
+
+  const oneHourAgo = new Date(Date.now() - RECENT_TRADES_HOUR_MS);
+
+  const [pmHour, kalshiHour] = await Promise.all([
+    fetchRecentPolymarketTrades({
+      since: oneHourAgo,
+      limit: RECENT_TRADES_LIMIT,
+      categoryFilter,
+    }),
+    fetchRecentKalshiTrades({
+      since: oneHourAgo,
+      limit: RECENT_TRADES_LIMIT,
+      categoryFilter,
+    }),
   ]);
 
-  return mergeRecentTrades(polymarket, kalshi);
+  let results = combineRecentTrades(pmHour, kalshiHour, RECENT_TRADES_LIMIT);
+
+  if (results.length < RECENT_TRADES_LIMIT) {
+    const excludeKeys = new Set(results.map(recentTradeDedupeKey));
+    const need = RECENT_TRADES_LIMIT - results.length;
+
+    const [pmFallback, kalshiFallback] = await Promise.all([
+      fetchRecentPolymarketTrades({
+        limit: need + POLYMARKET_FALLBACK_READ_LIMIT,
+        excludeKeys,
+        categoryFilter,
+      }),
+      fetchRecentKalshiTrades({
+        limit: need,
+        excludeKeys,
+        categoryFilter,
+      }),
+    ]);
+
+    results = dedupeRecentTrades([
+      ...results,
+      ...pmFallback,
+      ...kalshiFallback,
+    ])
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(0, RECENT_TRADES_LIMIT);
+  }
+
+  return applyRecentCategoryFilter(results, categoryFilter);
 }

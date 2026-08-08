@@ -52,8 +52,10 @@ import {
  */
 const KALSHI_FEED_ENABLED = true;
 
-/** Fixed rolling buffer for the Whale Feed UI. */
-export const WHALE_FEED_RETENTION = 20;
+/** API seed target — matches `/api/trades/recent` limit. */
+export const WHALE_FEED_SEED_LIMIT = 20;
+/** Live websocket buffer cap — larger than seed so incoming trades accumulate. */
+export const WHALE_FEED_LIVE_MAX = 50;
 
 const BACKFILL_TIMEOUT_MS = 15_000;
 const BACKFILL_ATTEMPTS = 3;
@@ -166,7 +168,7 @@ function whaleKey(trade: WhaleTrade): string {
     : trade.transactionHash || trade.id;
 }
 
-/** Prepend new whales, dedupe by key, cap at WHALE_FEED_RETENTION. */
+/** Prepend new whales, dedupe by key, cap at WHALE_FEED_LIVE_MAX. */
 function prependWhaleBuffer(prev: WhaleTrade[], incoming: WhaleTrade[]): WhaleTrade[] {
   const seen = new Set<string>();
   const merged: WhaleTrade[] = [];
@@ -184,7 +186,8 @@ function prependWhaleBuffer(prev: WhaleTrade[], incoming: WhaleTrade[]): WhaleTr
     merged.push(trade);
   }
 
-  return merged.slice(0, WHALE_FEED_RETENTION);
+  if (merged.length <= WHALE_FEED_LIVE_MAX) return merged;
+  return merged.slice(0, WHALE_FEED_LIVE_MAX);
 }
 
 function queueWhaleTweetNotify(whale: WhaleTrade): void {
@@ -365,9 +368,7 @@ export function useWhaleFeed() {
       try {
         const seeded = await fetchRecentSeedTrades(abort.signal);
         if (abort.signal.aborted) return;
-        const hydrated = seeded
-          .sort(byDetectedDesc)
-          .slice(0, WHALE_FEED_RETENTION);
+        const hydrated = seeded.sort(byDetectedDesc);
         setWhaleBuffer(hydrated);
         for (const w of hydrated) {
           whaleBufferSeen.current.add(whaleKey(w));
