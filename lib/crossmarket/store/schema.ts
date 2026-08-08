@@ -594,6 +594,7 @@ export const kalshiShadowTrades = pgTable(
     takerBookSide: text("taker_book_side"),
     isBlockTrade: boolean("is_block_trade").notNull().default(false),
     usdNotional: doublePrecision("usd_notional"),
+    category: text("category"),
     rawPayload: jsonb("raw_payload"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .defaultNow()
@@ -602,6 +603,10 @@ export const kalshiShadowTrades = pgTable(
   (table) => [
     index("kalshi_shadow_trades_ticker_traded_at_idx").on(
       table.ticker,
+      table.tradedAt.desc(),
+    ),
+    index("kalshi_shadow_trades_category_traded_at_idx").on(
+      table.category,
       table.tradedAt.desc(),
     ),
   ],
@@ -652,6 +657,7 @@ export const feedTrades = pgTable(
     title: text("title").notNull(),
     stakeAmount: doublePrecision("stake_amount").notNull(),
     averageEv: doublePrecision("average_ev").notNull(),
+    category: text("category"),
     tradedAt: timestamp("traded_at", { withTimezone: true, mode: "date" }).notNull(),
     payload: jsonb("payload").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
@@ -665,6 +671,10 @@ export const feedTrades = pgTable(
     index("feed_trades_fallback_idx").on(
       table.stakeAmount,
       table.averageEv,
+      table.tradedAt.desc(),
+    ),
+    index("feed_trades_category_traded_at_idx").on(
+      table.category,
       table.tradedAt.desc(),
     ),
   ],

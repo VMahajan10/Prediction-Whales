@@ -16,6 +16,7 @@ export interface FeedTradeHistoryInput {
   stakeAmountUsd: number;
   averageEvPercent: number;
   payload: unknown;
+  category?: string | null;
 }
 
 export function buildFeedTradeRow(input: FeedTradeHistoryInput) {
@@ -26,6 +27,7 @@ export function buildFeedTradeRow(input: FeedTradeHistoryInput) {
     title: input.title,
     stakeAmount: input.stakeAmountUsd,
     averageEv: input.averageEvPercent,
+    category: input.category ?? null,
     tradedAt: new Date(input.timestamp * 1000),
     payload: input.payload,
     updatedAt: new Date(),

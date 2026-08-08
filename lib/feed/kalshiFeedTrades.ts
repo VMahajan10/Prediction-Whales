@@ -24,6 +24,7 @@ export interface KalshiFeedTradeInput {
   ticker?: string;
   selectionLabel?: string;
   netEvPercent?: number | null;
+  category?: string;
 }
 
 /**
@@ -67,6 +68,7 @@ export function kalshiFeedTradeToWhale(
     averageEv: netEvPercent,
     netEvPercent,
     grossEvPercent: null,
+    category: trade.category,
   };
 }
 

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, desc, gte } from "drizzle-orm";
+import { and, desc, eq, gte } from "drizzle-orm";
 import { mapWithConcurrency } from "@/lib/clvPriceHistory";
 import { getDb, isDatabaseEnabled } from "@/lib/crossmarket/store/db";
 import {
@@ -28,10 +28,75 @@ import {
 } from "@/lib/evPipeline/types";
 import type { FeedTrade } from "@/lib/feedTradeTypes";
 import { mergeWithReservedSlots } from "@/lib/liveFeedMerge";
+import type { MarketFeedCategory } from "@/lib/categorizer";
 
 initGlobalLocalEvCache();
 
 export const RECENT_TRADES_LIMIT = 20;
+
+export type RecentFeedCategoryFilter =
+  | "all"
+  | "sports"
+  | "politics"
+  | "culture"
+  | "trending";
+
+const TRENDING_WINDOW_SEC = 10 * 60;
+const TRENDING_MIN_STAKE_USD = 1_000;
+
+export function parseRecentFeedCategoryFilter(
+  value: string | null | undefined
+): RecentFeedCategoryFilter {
+  const normalized = value?.trim().toLowerCase();
+  if (
+    normalized === "sports" ||
+    normalized === "politics" ||
+    normalized === "culture" ||
+    normalized === "trending"
+  ) {
+    return normalized;
+  }
+  return "all";
+}
+
+function dbCategoryForFilter(
+  filter: RecentFeedCategoryFilter
+): MarketFeedCategory | null {
+  switch (filter) {
+    case "sports":
+      return "SPORTS";
+    case "politics":
+      return "POLITICS";
+    case "culture":
+      return "CULTURE";
+    default:
+      return null;
+  }
+}
+
+function isTrendingRecentTrade(
+  trade: RecentFeedTrade,
+  nowEpochSec = Math.floor(Date.now() / 1000)
+): boolean {
+  const ageSec = nowEpochSec - trade.timestamp;
+  return ageSec <= TRENDING_WINDOW_SEC && trade.usdNotional >= TRENDING_MIN_STAKE_USD;
+}
+
+function applyRecentCategoryFilter(
+  trades: RecentFeedTrade[],
+  filter: RecentFeedCategoryFilter
+): RecentFeedTrade[] {
+  if (filter === "all") return trades;
+  if (filter === "trending") {
+    const now = Math.floor(Date.now() / 1000);
+    return trades.filter((trade) => isTrendingRecentTrade(trade, now));
+  }
+
+  const expected = dbCategoryForFilter(filter);
+  if (!expected) return trades;
+
+  return trades.filter((trade) => trade.category === expected);
+}
 
 /** Max Kalshi rows to read before in-memory EV filter (DB has no EV column). */
 const KALSHI_DB_READ_LIMIT = 60;
@@ -58,7 +123,8 @@ type PolymarketPayload = {
 
 function polymarketPayloadToFeedTrade(
   payload: unknown,
-  averageEv?: number
+  averageEv?: number,
+  category?: string | null
 ): RecentFeedTrade | null {
   if (!payload || typeof payload !== "object") return null;
   const row = payload as PolymarketPayload;
@@ -104,6 +170,7 @@ function polymarketPayloadToFeedTrade(
     slug: row.slug?.trim() || undefined,
     assetId: row.assetId?.trim() || undefined,
     netEvPercent,
+    category: category?.trim() || undefined,
   };
 }
 
@@ -251,6 +318,7 @@ function kalshiShadowToFeedTrade(row: KalshiShadowTrade): RecentFeedTrade | null
         : undefined,
     isBlockTrade: row.isBlockTrade,
     netEvPercent,
+    category: row.category?.trim() || undefined,
   };
 }
 
@@ -310,29 +378,42 @@ async function resolveCachedKalshiPipelineEv(
 }
 
 async function fetchRecentPolymarketTrades(
-  limit = RECENT_TRADES_LIMIT
+  limit = RECENT_TRADES_LIMIT,
+  categoryFilter: RecentFeedCategoryFilter = "all"
 ): Promise<RecentFeedTrade[]> {
   if (!isDatabaseEnabled()) return [];
+
+  const dbCategory = dbCategoryForFilter(categoryFilter);
+  const whereClause = dbCategory
+    ? and(
+        gte(feedTrades.stakeAmount, MIN_PRODUCT_FEED_STAKE_USD),
+        gte(feedTrades.averageEv, MIN_FEED_TRADE_EV_PCT),
+        eq(feedTrades.category, dbCategory)
+      )
+    : and(
+        gte(feedTrades.stakeAmount, MIN_PRODUCT_FEED_STAKE_USD),
+        gte(feedTrades.averageEv, MIN_FEED_TRADE_EV_PCT)
+      );
 
   try {
     const rows = await getDb()
       .select({
         payload: feedTrades.payload,
         averageEv: feedTrades.averageEv,
+        category: feedTrades.category,
       })
       .from(feedTrades)
-      .where(
-        and(
-          gte(feedTrades.stakeAmount, MIN_PRODUCT_FEED_STAKE_USD),
-          gte(feedTrades.averageEv, MIN_FEED_TRADE_EV_PCT)
-        )
-      )
+      .where(whereClause)
       .orderBy(desc(feedTrades.tradedAt))
       .limit(limit);
 
-    return rows
-      .map((row) => polymarketPayloadToFeedTrade(row.payload, row.averageEv))
+    const trades = rows
+      .map((row) =>
+        polymarketPayloadToFeedTrade(row.payload, row.averageEv, row.category)
+      )
       .filter((trade): trade is RecentFeedTrade => trade != null);
+
+    return applyRecentCategoryFilter(trades, categoryFilter);
   } catch (error) {
     console.error(
       "[recentTrades] polymarket read failed",
@@ -343,15 +424,24 @@ async function fetchRecentPolymarketTrades(
 }
 
 async function fetchRecentKalshiTrades(
-  limit = RECENT_TRADES_LIMIT
+  limit = RECENT_TRADES_LIMIT,
+  categoryFilter: RecentFeedCategoryFilter = "all"
 ): Promise<RecentFeedTrade[]> {
   if (!isDatabaseEnabled()) return [];
+
+  const dbCategory = dbCategoryForFilter(categoryFilter);
+  const whereClause = dbCategory
+    ? and(
+        gte(kalshiShadowTrades.usdNotional, MIN_PRODUCT_FEED_STAKE_USD),
+        eq(kalshiShadowTrades.category, dbCategory)
+      )
+    : gte(kalshiShadowTrades.usdNotional, MIN_PRODUCT_FEED_STAKE_USD);
 
   try {
     const rows = await getDb()
       .select()
       .from(kalshiShadowTrades)
-      .where(gte(kalshiShadowTrades.usdNotional, MIN_PRODUCT_FEED_STAKE_USD))
+      .where(whereClause)
       .orderBy(desc(kalshiShadowTrades.tradedAt))
       .limit(KALSHI_DB_READ_LIMIT);
 
@@ -360,22 +450,29 @@ async function fetchRecentKalshiTrades(
       .filter((trade): trade is RecentFeedTrade => trade != null);
 
     const withStoredEv = filterKalshiByStoredEv(candidates);
-    if (withStoredEv.length >= limit) {
-      return withStoredEv
+    let merged =
+      withStoredEv.length >= limit
+        ? withStoredEv
+            .sort((a, b) => b.timestamp - a.timestamp)
+            .slice(0, limit)
+        : null;
+
+    if (!merged) {
+      const storedIds = new Set(withStoredEv.map((trade) => trade.id));
+      const needsPipeline = candidates.filter(
+        (trade) => !storedIds.has(trade.id)
+      );
+
+      const pipelineQualified = await qualifyKalshiRecentTrades(needsPipeline, {
+        cacheOnly: true,
+      });
+
+      merged = [...withStoredEv, ...pipelineQualified]
         .sort((a, b) => b.timestamp - a.timestamp)
         .slice(0, limit);
     }
 
-    const storedIds = new Set(withStoredEv.map((trade) => trade.id));
-    const needsPipeline = candidates.filter((trade) => !storedIds.has(trade.id));
-
-    const pipelineQualified = await qualifyKalshiRecentTrades(needsPipeline, {
-      cacheOnly: true,
-    });
-
-    return [...withStoredEv, ...pipelineQualified]
-      .sort((a, b) => b.timestamp - a.timestamp)
-      .slice(0, limit);
+    return applyRecentCategoryFilter(merged, categoryFilter);
   } catch (error) {
     console.error(
       "[recentTrades] kalshi read failed",
@@ -386,10 +483,13 @@ async function fetchRecentKalshiTrades(
 }
 
 /** Latest qualifying feed trades from Postgres — instant page-load hydration. */
-export async function fetchRecentFeedTrades(): Promise<RecentFeedTrade[]> {
+export async function fetchRecentFeedTrades(options?: {
+  category?: RecentFeedCategoryFilter;
+}): Promise<RecentFeedTrade[]> {
+  const categoryFilter = options?.category ?? "all";
   const [polymarket, kalshi] = await Promise.all([
-    fetchRecentPolymarketTrades(RECENT_TRADES_LIMIT),
-    fetchRecentKalshiTrades(RECENT_TRADES_LIMIT),
+    fetchRecentPolymarketTrades(RECENT_TRADES_LIMIT, categoryFilter),
+    fetchRecentKalshiTrades(RECENT_TRADES_LIMIT, categoryFilter),
   ]);
 
   return mergeRecentTrades(polymarket, kalshi);

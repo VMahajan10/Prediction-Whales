@@ -21,6 +21,7 @@ export function recentTradeToWhale(trade: RecentHydratedTrade): WhaleTrade {
         timestamp: trade.timestamp,
         ticker: trade.ticker,
         selectionLabel: trade.selectionLabel,
+        category: trade.category,
       },
       {
         isLive: false,
@@ -59,5 +60,6 @@ export function recentTradeToWhale(trade: RecentHydratedTrade): WhaleTrade {
     marketTranslation,
     netEvPercent,
     averageEv: netEvPercent,
+    category: trade.category ?? undefined,
   };
 }

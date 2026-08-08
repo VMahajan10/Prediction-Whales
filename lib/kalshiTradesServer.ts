@@ -233,12 +233,21 @@ export async function fetchKalshiTrades(
       shadowCandidates.map((candidate) => candidate.normalized)
     );
 
+    const { categorizeMarket } = await import("@/lib/categorizer");
+
     for (const { raw, normalized } of shadowCandidates) {
       const tradeEvPercent = kalshiTradeEvPercent(normalized, pipelineEvIndex);
       if (!meetsFeedTradeEvThreshold(tradeEvPercent)) continue;
-      queueKalshiShadowTrade(
-        shadowInputFromRaw(raw, normalized, tradeEvPercent)
-      );
+
+      const category = await categorizeMarket(normalized.title, normalized.ticker, {
+        backfillDb: true,
+        marketKey: normalized.ticker,
+      });
+
+      queueKalshiShadowTrade({
+        ...shadowInputFromRaw(raw, normalized, tradeEvPercent),
+        category,
+      });
       shadowQueued += 1;
     }
   }

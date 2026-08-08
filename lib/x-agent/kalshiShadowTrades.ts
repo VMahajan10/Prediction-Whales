@@ -24,6 +24,7 @@ export interface KalshiShadowTradeInput {
   takerBookSide?: string | null;
   isBlockTrade?: boolean;
   usdNotional?: number | string | null;
+  category?: string | null;
   rawPayload?: Record<string, unknown> | null;
 }
 
@@ -69,6 +70,7 @@ export function buildKalshiShadowTradeRow(input: KalshiShadowTradeInput) {
     isBlockTrade: input.isBlockTrade === true,
     usdNotional:
       input.usdNotional == null ? null : toShadowFloat(input.usdNotional),
+    category: input.category?.trim() || null,
     rawPayload: serializedPayload,
   };
 }
@@ -214,20 +216,29 @@ export function persistKalshiShadowTradeFromWhale(trade: WhaleTrade): void {
       ? toShadowFloat(trade.usdNotional / entryPrice)
       : toShadowFloat(trade.size);
 
-  queueKalshiShadowTrade({
-    tradeId,
-    ticker: trade.ticker,
-    size,
-    timestamp: trade.timestamp,
-    entryPrice,
-    usdNotional: trade.usdNotional,
-    rawPayload: {
-      title: trade.title,
-      outcome: trade.outcome,
-      side: trade.side,
-      detectedAt: trade.detectedAt,
-      isLive: trade.isLive,
-      netEvPercent: tradeEvPercent,
-    },
-  });
+  void (async () => {
+    const { categorizeMarket } = await import("@/lib/categorizer");
+    const category = await categorizeMarket(trade.title, trade.ticker, {
+      backfillDb: true,
+      marketKey: trade.ticker,
+    });
+
+    queueKalshiShadowTrade({
+      tradeId,
+      ticker: trade.ticker!,
+      size,
+      timestamp: trade.timestamp,
+      entryPrice,
+      usdNotional: trade.usdNotional,
+      category,
+      rawPayload: {
+        title: trade.title,
+        outcome: trade.outcome,
+        side: trade.side,
+        detectedAt: trade.detectedAt,
+        isLive: trade.isLive,
+        netEvPercent: tradeEvPercent,
+      },
+    });
+  })();
 }

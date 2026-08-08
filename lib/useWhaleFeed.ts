@@ -69,6 +69,7 @@ type BackfillApiTrade = TradeSummary & {
   marketTranslation?: WhaleTrade["marketTranslation"];
   netEvPercent?: number | null;
   averageEv?: number | null;
+  category?: string;
 };
 
 type BackfillApiResponse = {
@@ -93,6 +94,7 @@ function kalshiFeedTradeFromApi(trade: KalshiFeedTradeInput): KalshiFeedTradeInp
     ticker: trade.ticker,
     selectionLabel: trade.selectionLabel,
     netEvPercent: trade.netEvPercent ?? null,
+    category: trade.category,
   };
 }
 
@@ -327,6 +329,7 @@ export function useWhaleFeed() {
         marketTranslation: t.marketTranslation,
         netEvPercent: t.netEvPercent ?? null,
         averageEv: t.averageEv ?? t.netEvPercent ?? null,
+        category: t.category,
       }));
       setBackfill((prev) => retainLastNonEmpty(whales, prev));
       if (payload.kalshi.length > 0) {

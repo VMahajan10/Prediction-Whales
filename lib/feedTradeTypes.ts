@@ -21,4 +21,6 @@ export interface FeedTrade {
   isBlockTrade?: boolean;
   /** Trade-level EV % (+3.0 = +3%) when known at ingest or from DB. */
   netEvPercent?: number | null;
+  /** Normalized feed category (SPORTS, POLITICS, CULTURE, OTHER). */
+  category?: string;
 }

@@ -26,8 +26,34 @@ export async function recordFeedTradeHistory(
   trades: FeedTradeHistoryInput[]
 ): Promise<void> {
   if (!isDatabaseEnabled()) return;
-  const rows = trades.filter(isRecordableFeedTrade).map(buildFeedTradeRow);
-  if (rows.length === 0) return;
+  const recordable = trades.filter(isRecordableFeedTrade);
+  if (recordable.length === 0) return;
+
+  const { categorizeMarket } = await import("@/lib/categorizer");
+
+  const rows = await Promise.all(
+    recordable.map(async (trade) => {
+      const payload =
+        trade.payload && typeof trade.payload === "object"
+          ? (trade.payload as Record<string, unknown>)
+          : null;
+      const eventSlug =
+        typeof payload?.eventSlug === "string"
+          ? payload.eventSlug
+          : typeof payload?.slug === "string"
+            ? payload.slug
+            : undefined;
+
+      const category =
+        trade.category ??
+        (await categorizeMarket(trade.title, eventSlug, {
+          backfillDb: true,
+          marketKey: eventSlug,
+        }));
+
+      return buildFeedTradeRow({ ...trade, category });
+    })
+  );
 
   try {
     await getDb()
@@ -38,6 +64,7 @@ export async function recordFeedTradeHistory(
         set: {
           stakeAmount: sql`excluded.stake_amount`,
           averageEv: sql`excluded.average_ev`,
+          category: sql`excluded.category`,
           payload: sql`excluded.payload`,
           updatedAt: sql`now()`,
         },

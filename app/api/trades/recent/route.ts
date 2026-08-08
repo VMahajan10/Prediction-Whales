@@ -1,5 +1,8 @@
-import { NextResponse } from "next/server";
-import { fetchRecentFeedTrades } from "@/lib/feed/recentTradesServer";
+import { NextRequest, NextResponse } from "next/server";
+import {
+  fetchRecentFeedTrades,
+  parseRecentFeedCategoryFilter,
+} from "@/lib/feed/recentTradesServer";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -8,10 +11,13 @@ const CACHE_HEADERS = {
   "Cache-Control": "public, s-maxage=5, stale-while-revalidate=10",
 };
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const trades = await fetchRecentFeedTrades();
-    return NextResponse.json({ trades }, { headers: CACHE_HEADERS });
+    const category = parseRecentFeedCategoryFilter(
+      request.nextUrl.searchParams.get("category")
+    );
+    const trades = await fetchRecentFeedTrades({ category });
+    return NextResponse.json({ trades, category }, { headers: CACHE_HEADERS });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Failed to fetch recent trades";

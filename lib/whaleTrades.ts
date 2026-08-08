@@ -27,6 +27,8 @@ export interface WhaleTrade extends TradeSummary {
   marketTranslation?: MarketPositionTranslation;
   /** Kalshi contract selection label (player, line, prop). */
   selectionLabel?: string;
+  /** Normalized feed category from ingestion (SPORTS, POLITICS, CULTURE, OTHER). */
+  category?: string;
 }
 
 export function isWhaleNotional(usd: number): boolean {
