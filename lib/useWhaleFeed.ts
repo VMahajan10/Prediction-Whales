@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { buildPlatformFeed } from "@/lib/liveFeedMerge";
 import type { ResolvedWhaleIdentity } from "@/lib/whaleIdentityResolver";
 import type { TradeSummary } from "@/lib/polymarket";
 import { usePolymarketSocketContext } from "@/lib/PolymarketSocketProvider";
@@ -493,6 +494,32 @@ export function useWhaleFeed() {
   const walletQualifications = useQualifiedWalletFilter(polymarketWalletAddresses);
   const { index: pipelineEvIndex } = usePipelineEvForWhales(evTargetWhales);
 
+  const qualifiedPolymarketWhales = useMemo(
+    () =>
+      polymarketWhales
+        .filter((trade) =>
+          isPolymarketTradeEligibleForFeed(
+            trade,
+            pipelineEvIndex,
+            loggedFilterRejects.current
+          )
+        )
+        .map((trade) => {
+          const pipelineKey = pipelineEvKeyForWhale(trade);
+          const withIdentity = attachWhaleIdentity(
+            trade,
+            trade.proxyWallet
+              ? walletQualifications.get(trade.proxyWallet.trim().toLowerCase())
+              : undefined
+          );
+          return mergePipelineEvOntoWhale(
+            withIdentity,
+            pipelineKey ? pipelineEvIndex.get(pipelineKey) : undefined
+          );
+        }),
+    [polymarketWhales, walletQualifications, pipelineEvIndex]
+  );
+
   const qualifiedKalshiWhales = useMemo(
     () =>
       kalshiWhales
@@ -553,14 +580,27 @@ export function useWhaleFeed() {
       incoming.push(whale);
     }
 
+    for (const whale of qualifiedPolymarketWhales) {
+      const key = whaleKey(whale);
+      if (!key || whaleBufferSeen.current.has(key)) continue;
+      whaleBufferSeen.current.add(key);
+      incoming.push(whale);
+    }
+
     if (incoming.length === 0) return;
 
-    incoming.sort(byDetectedDesc);
-    setWhaleBuffer((prev) => prependWhaleBuffer(prev, incoming));
+    const ordered = buildPlatformFeed(
+      incoming.filter((trade) => trade.source !== "kalshi"),
+      incoming.filter((trade) => trade.source === "kalshi"),
+      "all",
+      byDetectedDesc
+    );
+    setWhaleBuffer((prev) => prependWhaleBuffer(prev, ordered));
   }, [
     liveWhales,
     qualifiedKalshiWhales,
     mergedKalshiFeedTrades,
+    qualifiedPolymarketWhales,
     backfillLoaded,
     pipelineEvIndex,
   ]);

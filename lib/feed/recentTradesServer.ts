@@ -27,6 +27,7 @@ import {
   pipelineEvLookupKey,
 } from "@/lib/evPipeline/types";
 import type { FeedTrade } from "@/lib/feedTradeTypes";
+import { mergeWithReservedSlots } from "@/lib/liveFeedMerge";
 
 initGlobalLocalEvCache();
 
@@ -110,9 +111,15 @@ function mergeRecentTrades(
   polymarket: RecentFeedTrade[],
   kalshi: RecentFeedTrade[]
 ): RecentFeedTrade[] {
-  return [...polymarket, ...kalshi]
-    .sort((a, b) => b.timestamp - a.timestamp)
-    .slice(0, RECENT_TRADES_LIMIT);
+  // kalshi_shadow_trades is written continuously by the worker while feed_trades
+  // only updates when /api/feed is served — a global timestamp sort lets Kalshi
+  // claim every slot.
+  return mergeWithReservedSlots(
+    polymarket,
+    kalshi,
+    (a, b) => b.timestamp - a.timestamp,
+    RECENT_TRADES_LIMIT
+  );
 }
 
 function filterKalshiEligible(
