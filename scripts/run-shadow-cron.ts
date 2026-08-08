@@ -40,10 +40,6 @@ import {
   resolveXPublisherIntervalMs,
 } from "../lib/x-agent/xPublisherScheduler";
 
-loadEnvFiles();
-logReviewEmailEnvAtStartup();
-bootstrapCloudWorker();
-
 const PENDING_QUEUE_STATUSES = [
   "PENDING",
   "PENDING_REVIEW",
@@ -231,8 +227,6 @@ async function runBackfillShadowPipeline(): Promise<XAgentShadowPipelineResult> 
 }
 
 async function runDaemon(): Promise<void> {
-  registerProcessHandlers();
-
   const options = parseShadowDaemonOptionsFromEnv();
   console.log(
     `[${formatTimestamp()}] [Shadow Cron] mode=daemon (24/7 WebSocket) | rollingWindow=${options.rollingWindowSize} | summaryEveryTrades=${options.summaryEveryTrades} | summaryEverySec=${Math.round((options.summaryEveryMs ?? 0) / 1000)}`
@@ -309,7 +303,15 @@ async function runOneShot(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  // Installed before any bootstrap work so a failure during startup is logged
+  // and drained through shutdown() instead of dying as a top-level throw.
+  registerProcessHandlers();
+
   console.log(`[${formatTimestamp()}] [Shadow Cron] Starting worker...`);
+
+  loadEnvFiles();
+  logReviewEmailEnvAtStartup();
+  bootstrapCloudWorker();
 
   const mode = resolveShadowMode();
   if (mode === "daemon") {

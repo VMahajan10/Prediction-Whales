@@ -39,6 +39,8 @@ export interface ShadowDaemonStats {
 const DEFAULT_ROLLING_WINDOW = 1000;
 const DEFAULT_SUMMARY_EVERY_TRADES = 100;
 const DEFAULT_SUMMARY_EVERY_MS = 60 * 60 * 1000;
+const SOCKET_START_RETRY_BASE_MS = 1_000;
+const SOCKET_START_RETRY_MAX_MS = 30_000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -194,7 +196,7 @@ export class ShadowCronDaemon {
     if (this.socket) return;
 
     this.stopping = false;
-    this.socket = new PolymarketLiveSocket({
+    const socket = new PolymarketLiveSocket({
       minUsdNotional:
         this.options.minUsdNotional ?? MIN_PRODUCT_FEED_STAKE_USD,
       onTrade: async (trade) => {
@@ -204,11 +206,31 @@ export class ShadowCronDaemon {
         void this.drainQueue();
       },
     });
+    this.socket = socket;
 
-    await this.socket.start();
-    console.log(
-      "[Shadow Daemon] Polymarket WebSocket connected — listening for live trades"
-    );
+    // An empty token registry (transient Polymarket outage or rate limit) makes
+    // start() throw. Letting that escape exits the process, and the host restarts
+    // straight back into it — so retry in place instead. start() throws before
+    // it ever opens a socket, so retrying cannot double-connect.
+    for (let attempt = 1; !this.stopping; attempt += 1) {
+      try {
+        await socket.start();
+        console.log(
+          "[Shadow Daemon] Polymarket WebSocket connected — listening for live trades"
+        );
+        return;
+      } catch (err) {
+        const delay = Math.min(
+          SOCKET_START_RETRY_BASE_MS * 2 ** (attempt - 1),
+          SOCKET_START_RETRY_MAX_MS
+        );
+        console.warn(
+          `[Shadow Daemon] WebSocket start failed (attempt ${attempt}) — retrying in ${Math.round(delay / 1000)}s:`,
+          err instanceof Error ? err.message : err
+        );
+        await sleep(delay);
+      }
+    }
   }
 
   async stop(): Promise<void> {

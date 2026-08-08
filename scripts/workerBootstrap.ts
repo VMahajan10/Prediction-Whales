@@ -18,7 +18,13 @@ function isTruthyEnv(value: string | undefined): boolean {
   return Boolean(value?.trim());
 }
 
-/** Generate the Prisma client (idempotent). Safe to run on every cloud worker boot. */
+/**
+ * Generate the Prisma client (idempotent). Safe to run on every cloud worker boot.
+ *
+ * Non-fatal: `build:worker` and `postinstall` already generate the client, so a
+ * failure here (no schema on disk, npx unreachable) must not crash-loop a worker
+ * that has a perfectly usable generated client.
+ */
 export function ensurePrismaClientGenerated(): void {
   if (process.env.SKIP_WORKER_PRISMA_GENERATE === "1") {
     console.log("[Worker] Skipping prisma generate (SKIP_WORKER_PRISMA_GENERATE=1)");
@@ -27,14 +33,24 @@ export function ensurePrismaClientGenerated(): void {
 
   const schemaPath = join(process.cwd(), "prisma", "schema.prisma");
   if (!existsSync(schemaPath)) {
-    throw new Error(`[Worker] Prisma schema not found at ${schemaPath}`);
+    console.warn(
+      `[Worker] Prisma schema not found at ${schemaPath} — using the client generated at build time`
+    );
+    return;
   }
 
   console.log("[Worker] Running prisma generate...");
-  execSync("npx prisma generate", {
-    stdio: "inherit",
-    env: process.env,
-  });
+  try {
+    execSync("npx prisma generate", {
+      stdio: "inherit",
+      env: process.env,
+    });
+  } catch (error) {
+    console.warn(
+      "[Worker] prisma generate failed — falling back to the client generated at build time:",
+      error instanceof Error ? error.message : error
+    );
+  }
 }
 
 export function collectWorkerEnvStatus(): WorkerEnvStatus {

@@ -139,7 +139,11 @@ export class PolymarketLiveSocket {
 
       const events = Array.isArray(parsed) ? parsed : [parsed];
       for (const event of events) {
-        void this.handleEvent(event as LastTradePriceEvent);
+        void this.handleEvent(event as LastTradePriceEvent).catch((error) => {
+          console.warn("[polymarketLiveSocket] trade handler failed", {
+            error: error instanceof Error ? error.message : error,
+          });
+        });
       }
     };
 
