@@ -19,4 +19,6 @@ export interface FeedTrade {
   /** Polymarket CLOB token id (YES leg) for pipeline EV lookup. */
   assetId?: string;
   isBlockTrade?: boolean;
+  /** Trade-level EV % (+3.0 = +3%) when known at ingest or from DB. */
+  netEvPercent?: number | null;
 }

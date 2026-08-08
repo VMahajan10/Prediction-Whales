@@ -15,7 +15,7 @@ import {
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import { resolveKalshiMarkets } from "@/lib/kalshiTitleResolver";
 import { kalshiFetch } from "@/lib/kalshi/http";
-import { queueKalshiShadowTrade } from "@/lib/x-agent/kalshiShadowTrades";
+import { queueKalshiShadowTrade, serializeShadowPayload } from "@/lib/x-agent/kalshiShadowTrades";
 
 export interface KalshiRawTrade {
   trade_id: string;
@@ -32,8 +32,12 @@ export interface KalshiRawTrade {
 
 function shadowInputFromRaw(
   raw: KalshiRawTrade,
-  normalized: FeedTrade
+  normalized: FeedTrade,
+  netEvPercent?: number | null
 ): Parameters<typeof queueKalshiShadowTrade>[0] {
+  const basePayload = serializeShadowPayload(
+    raw as unknown as Record<string, unknown>
+  );
   return {
     tradeId: raw.trade_id,
     ticker: raw.ticker,
@@ -45,7 +49,17 @@ function shadowInputFromRaw(
     takerBookSide: raw.taker_book_side ?? null,
     isBlockTrade: raw.is_block_trade === true,
     usdNotional: normalized.usdNotional,
-    rawPayload: raw as unknown as Record<string, unknown>,
+    rawPayload: {
+      ...(basePayload ?? {}),
+      title: normalized.title,
+      outcome: normalized.outcome,
+      side: normalized.side,
+      selectionLabel: normalized.selectionLabel,
+      netEvPercent:
+        netEvPercent != null && Number.isFinite(netEvPercent)
+          ? netEvPercent
+          : undefined,
+    },
   };
 }
 
@@ -209,6 +223,11 @@ export async function fetchKalshiTrades(
     }
   }
 
+  console.log(
+    `[kalshi/trades] raw=${raws.length} normalized=${trades.length} stakeCandidates=${shadowCandidates.length}`
+  );
+
+  let shadowQueued = 0;
   if (shadowCandidates.length > 0) {
     const pipelineEvIndex = await resolveCachedKalshiPipelineEv(
       shadowCandidates.map((candidate) => candidate.normalized)
@@ -217,9 +236,33 @@ export async function fetchKalshiTrades(
     for (const { raw, normalized } of shadowCandidates) {
       const tradeEvPercent = kalshiTradeEvPercent(normalized, pipelineEvIndex);
       if (!meetsFeedTradeEvThreshold(tradeEvPercent)) continue;
-      queueKalshiShadowTrade(shadowInputFromRaw(raw, normalized));
+      queueKalshiShadowTrade(
+        shadowInputFromRaw(raw, normalized, tradeEvPercent)
+      );
+      shadowQueued += 1;
     }
   }
 
-  return trades;
+  if (shadowCandidates.length > 0) {
+    console.log(
+      `[kalshi/trades] evQualified=${shadowQueued} shadowQueued=${shadowQueued}`
+    );
+  }
+
+  const stakeQualified = trades.filter((trade) =>
+    meetsProductFeedStakeThreshold(trade.usdNotional)
+  );
+  const pipelineEvIndex =
+    stakeQualified.length > 0
+      ? await resolveCachedKalshiPipelineEv(stakeQualified)
+      : new Map<string, PipelineTradeEv>();
+
+  return trades.map((trade) => {
+    if (!meetsProductFeedStakeThreshold(trade.usdNotional)) return trade;
+    const netEvPercent = kalshiTradeEvPercent(trade, pipelineEvIndex);
+    return {
+      ...trade,
+      netEvPercent,
+    };
+  });
 }

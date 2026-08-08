@@ -10,17 +10,23 @@ export type RecentHydratedTrade = FeedTrade & {
 /** Map DB-seeded recent trades into whale-feed rows (client-safe). */
 export function recentTradeToWhale(trade: RecentHydratedTrade): WhaleTrade {
   if (trade.source === "kalshi") {
-    return kalshiFeedTradeToWhale({
-      id: trade.id,
-      title: trade.title,
-      outcome: trade.outcome,
-      side: trade.side,
-      price: trade.price,
-      usdNotional: trade.usdNotional,
-      timestamp: trade.timestamp,
-      ticker: trade.ticker,
-      selectionLabel: trade.selectionLabel,
-    });
+    return kalshiFeedTradeToWhale(
+      {
+        id: trade.id,
+        title: trade.title,
+        outcome: trade.outcome,
+        side: trade.side,
+        price: trade.price,
+        usdNotional: trade.usdNotional,
+        timestamp: trade.timestamp,
+        ticker: trade.ticker,
+        selectionLabel: trade.selectionLabel,
+      },
+      {
+        isLive: false,
+        netEvPercent: trade.netEvPercent ?? null,
+      }
+    );
   }
 
   const whale = tradeToWhale(

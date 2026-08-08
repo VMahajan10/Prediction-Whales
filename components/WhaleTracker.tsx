@@ -139,7 +139,7 @@ export default function WhaleTracker({
               ? "Loading recent whale trades…"
               : platformFilter === "kalshi"
                 ? kalshiOk
-                  ? `Watching for qualified Kalshi flow (+${MIN_FEED_TRADE_EV_PCT}% trade EV · ${formatProductFeedStakeLabel()}). Kalshi is anonymous market flow — live only, no history.`
+                  ? `Watching for qualified Kalshi flow (+${MIN_FEED_TRADE_EV_PCT}% trade EV · ${formatProductFeedStakeLabel()}).`
                   : "Kalshi feed unavailable — retrying…"
                 : connected || kalshiOk
                   ? `Watching for qualified whale trades (+${MIN_FEED_TRADE_EV_PCT}% trade EV · ${formatProductFeedStakeLabel()})…`

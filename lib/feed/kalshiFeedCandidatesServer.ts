@@ -12,7 +12,11 @@ export async function collectKalshiFeedCandidates(
   minTs?: number
 ): Promise<FeedTrade[]> {
   const trades = await fetchKalshiTrades(minTs);
-  return trades.filter((trade) =>
+  const stakeQualified = trades.filter((trade) =>
     meetsProductFeedStakeThreshold(trade.usdNotional)
   );
+  console.log(
+    `[kalshi/feed] candidates stakeQualified=${stakeQualified.length} total=${trades.length}`
+  );
+  return stakeQualified;
 }

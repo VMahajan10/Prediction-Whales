@@ -227,6 +227,7 @@ export function persistKalshiShadowTradeFromWhale(trade: WhaleTrade): void {
       side: trade.side,
       detectedAt: trade.detectedAt,
       isLive: trade.isLive,
+      netEvPercent: tradeEvPercent,
     },
   });
 }

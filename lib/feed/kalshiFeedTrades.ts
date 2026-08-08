@@ -23,6 +23,7 @@ export interface KalshiFeedTradeInput {
   timestamp: number;
   ticker?: string;
   selectionLabel?: string;
+  netEvPercent?: number | null;
 }
 
 /**
@@ -31,7 +32,11 @@ export interface KalshiFeedTradeInput {
  * Audit.md). `proxyWallet` and `whaleIdentity` stay unset by design.
  */
 export function kalshiFeedTradeToWhale(
-  trade: KalshiFeedTradeInput
+  trade: KalshiFeedTradeInput,
+  options?: {
+    isLive?: boolean;
+    netEvPercent?: number | null;
+  }
 ): WhaleTrade {
   const whale = tradeToWhale(
     {
@@ -46,19 +51,21 @@ export function kalshiFeedTradeToWhale(
     },
     {
       detectedAt: trade.timestamp * 1000,
-      isLive: true,
+      isLive: options?.isLive ?? true,
       usdNotional: trade.usdNotional,
       source: "kalshi",
       ticker: trade.ticker,
     }
   );
 
+  const netEvPercent = options?.netEvPercent ?? null;
+
   return {
     ...whale,
     platform: "KALSHI",
     selectionLabel: trade.selectionLabel,
-    averageEv: null,
-    netEvPercent: null,
+    averageEv: netEvPercent,
+    netEvPercent,
     grossEvPercent: null,
   };
 }
