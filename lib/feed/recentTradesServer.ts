@@ -38,9 +38,8 @@ import {
 initGlobalLocalEvCache();
 
 export const RECENT_TRADES_LIMIT = 50;
-/** Per-venue historical fallback when the 1-hour window is empty. */
-const VENUE_FALLBACK_LIMIT = 20;
-const RECENT_TRADES_HOUR_MS = 60 * 60 * 1000;
+/** Balanced per-venue hydration — always fetch without a time window. */
+const VENUE_HYDRATION_LIMIT = 25;
 
 /** Raised when a per-source DB read fails — collected into `degraded` instead of silent []. */
 export class RecentTradesReadError extends Error {
@@ -543,70 +542,59 @@ export async function fetchRecentFeedTrades(options?: {
   if (!isDatabaseEnabled()) return { trades: [], degraded: [] };
 
   const degraded: string[] = [];
-  const oneHourAgo = new Date(Date.now() - RECENT_TRADES_HOUR_MS);
-
-  let pmHour: RecentFeedTrade[] = [];
-  let kalshiHour: RecentFeedTrade[] = [];
-
-  try {
-    pmHour = await fetchRecentPolymarketTrades({
-      since: oneHourAgo,
-      limit: RECENT_TRADES_LIMIT,
+  const [pmResult, kalshiResult] = await Promise.all([
+    fetchRecentPolymarketTrades({
+      limit: VENUE_HYDRATION_LIMIT,
       categoryFilter,
-    });
-  } catch (error) {
-    degraded.push(
-      error instanceof RecentTradesReadError ? error.source : "polymarket"
-    );
-    console.error(error);
-  }
-
-  try {
-    kalshiHour = await fetchRecentKalshiTrades({
-      since: oneHourAgo,
-      limit: RECENT_TRADES_LIMIT,
+    }).then(
+      (trades) => ({ ok: true as const, trades }),
+      (error) => ({ ok: false as const, error })
+    ),
+    fetchRecentKalshiTrades({
+      limit: VENUE_HYDRATION_LIMIT,
       categoryFilter,
-    });
-  } catch (error) {
+    }).then(
+      (trades) => ({ ok: true as const, trades }),
+      (error) => ({ ok: false as const, error })
+    ),
+  ]);
+
+  let polymarket: RecentFeedTrade[] = [];
+  let kalshi: RecentFeedTrade[] = [];
+
+  if (pmResult.ok) {
+    polymarket = pmResult.trades;
+    if (polymarket.length === 0) {
+      console.warn(
+        "[recentTrades] Polymarket query returned 0 qualifying trades — check feed_trades ingestion/schema"
+      );
+    }
+  } else {
     degraded.push(
-      error instanceof RecentTradesReadError ? error.source : "kalshi"
+      pmResult.error instanceof RecentTradesReadError
+        ? pmResult.error.source
+        : "polymarket"
     );
-    console.error(error);
+    console.error(pmResult.error);
   }
 
-  if (pmHour.length === 0) {
-    try {
-      pmHour = await fetchRecentPolymarketTrades({
-        limit: VENUE_FALLBACK_LIMIT,
-        categoryFilter,
-      });
-    } catch (error) {
-      if (!degraded.includes("polymarket")) {
-        degraded.push(
-          error instanceof RecentTradesReadError ? error.source : "polymarket"
-        );
-      }
-      console.error(error);
+  if (kalshiResult.ok) {
+    kalshi = kalshiResult.trades;
+    if (kalshi.length === 0) {
+      console.warn(
+        "[recentTrades] Kalshi query returned 0 qualifying trades — check kalshi_shadow_trades ingestion/schema"
+      );
     }
+  } else {
+    degraded.push(
+      kalshiResult.error instanceof RecentTradesReadError
+        ? kalshiResult.error.source
+        : "kalshi"
+    );
+    console.error(kalshiResult.error);
   }
 
-  if (kalshiHour.length === 0) {
-    try {
-      kalshiHour = await fetchRecentKalshiTrades({
-        limit: VENUE_FALLBACK_LIMIT,
-        categoryFilter,
-      });
-    } catch (error) {
-      if (!degraded.includes("kalshi")) {
-        degraded.push(
-          error instanceof RecentTradesReadError ? error.source : "kalshi"
-        );
-      }
-      console.error(error);
-    }
-  }
-
-  const results = combineRecentTrades(pmHour, kalshiHour, RECENT_TRADES_LIMIT);
+  const results = combineRecentTrades(polymarket, kalshi, RECENT_TRADES_LIMIT);
 
   return {
     trades: applyRecentCategoryFilter(results, categoryFilter).map(
