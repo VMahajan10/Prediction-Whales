@@ -135,18 +135,28 @@ export type LiveFeedQualificationTrade = Pick<
   | "tradeEvPercent"
 >;
 
-/** USD notional for Polymarket REST trades (shares × price). */
+/** USD notional for Polymarket REST trades (shares × price, or shares × price_cents / 100). */
 export function resolvePolymarketTradeNotionalUsd(trade: {
   price: number;
   size: number;
 }): number {
   const { price, size } = trade;
   if (!Number.isFinite(size) || size <= 0) return 0;
-  if (Number.isFinite(price) && price > 0 && price <= 1) {
+  if (!Number.isFinite(price) || price <= 0) return 0;
+
+  // Decimal contract price (0–1): shares × price
+  if (price <= 1) {
     const notional = price * size;
-    if (Number.isFinite(notional) && notional > 0) return notional;
+    return Number.isFinite(notional) && notional > 0 ? notional : 0;
   }
-  return size;
+
+  // Cents-style (1–100): shares × price_cents / 100
+  if (price <= 100) {
+    const notional = (price / 100) * size;
+    return Number.isFinite(notional) && notional > 0 ? notional : 0;
+  }
+
+  return 0;
 }
 
 /** Product feed stake floor — flat $500 regardless of market category. */

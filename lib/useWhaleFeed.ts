@@ -53,8 +53,8 @@ import {
 const KALSHI_FEED_ENABLED = true;
 
 /** API seed target — matches `/api/trades/recent` limit. */
-export const WHALE_FEED_SEED_LIMIT = 20;
-/** Live websocket buffer cap — larger than seed so incoming trades accumulate. */
+export const WHALE_FEED_SEED_LIMIT = 50;
+/** Live websocket buffer cap — prepend new trades, trim to this size. */
 export const WHALE_FEED_LIVE_MAX = 50;
 
 const BACKFILL_TIMEOUT_MS = 15_000;
@@ -373,7 +373,9 @@ export function useWhaleFeed() {
           const seeded = await fetchRecentSeedTrades(abort.signal);
           if (abort.signal.aborted) return;
           if (seeded.length > 0) {
-            const hydrated = seeded.sort(byDetectedDesc);
+            const hydrated = seeded
+              .sort(byDetectedDesc)
+              .slice(0, WHALE_FEED_SEED_LIMIT);
             setWhaleBuffer((prev) => prependWhaleBuffer(prev, hydrated));
             for (const w of hydrated) {
               whaleBufferSeen.current.add(whaleKey(w));

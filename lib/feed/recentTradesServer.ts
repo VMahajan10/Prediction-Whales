@@ -14,6 +14,7 @@ import {
 } from "@/lib/feed/kalshiFeedTrades";
 import {
   meetsFeedTradeEvThreshold,
+  meetsProductFeedStakeThreshold,
   MIN_FEED_TRADE_EV_PCT,
   MIN_PRODUCT_FEED_STAKE_USD,
   resolvePolymarketTradeNotionalUsd,
@@ -36,9 +37,10 @@ import {
 
 initGlobalLocalEvCache();
 
-export const RECENT_TRADES_LIMIT = 20;
+export const RECENT_TRADES_LIMIT = 50;
+/** Per-venue historical fallback when the 1-hour window is empty. */
+const VENUE_FALLBACK_LIMIT = 20;
 const RECENT_TRADES_HOUR_MS = 60 * 60 * 1000;
-const POLYMARKET_FALLBACK_READ_LIMIT = 40;
 
 /** Raised when a per-source DB read fails — collected into `degraded` instead of silent []. */
 export class RecentTradesReadError extends Error {
@@ -56,9 +58,35 @@ export class RecentTradesReadError extends Error {
 }
 
 export type FetchRecentFeedTradesResult = {
-  trades: RecentFeedTrade[];
+  trades: NormalizedRecentFeedTrade[];
   degraded: string[];
 };
+
+export type NormalizedRecentFeedTrade = RecentFeedTrade & {
+  venue: "POLYMARKET" | "KALSHI";
+  stake_notional: number;
+  /** Decimal EV (+3.0% → 0.03). */
+  ev: number | null;
+  traded_at: string;
+};
+
+function evPercentToDecimal(evPercent: number | null | undefined): number | null {
+  if (evPercent == null || !Number.isFinite(evPercent)) return null;
+  return evPercent / 100;
+}
+
+export function normalizeRecentFeedTrade(
+  trade: RecentFeedTrade
+): NormalizedRecentFeedTrade {
+  const venue = trade.source === "kalshi" ? "KALSHI" : "POLYMARKET";
+  return {
+    ...trade,
+    venue,
+    stake_notional: trade.usdNotional,
+    ev: evPercentToDecimal(trade.netEvPercent),
+    traded_at: new Date(trade.timestamp * 1000).toISOString(),
+  };
+}
 
 export type { RecentFeedCategoryFilter } from "@/lib/constants/categories";
 
@@ -170,6 +198,7 @@ function polymarketPayloadToFeedTrade(
 
   const usdNotional = resolvePolymarketTradeNotionalUsd({ price, size });
   if (usdNotional <= 0) return null;
+  if (!meetsProductFeedStakeThreshold(usdNotional)) return null;
 
   const netEvPercent =
     averageEv != null && Number.isFinite(averageEv)
@@ -545,19 +574,10 @@ export async function fetchRecentFeedTrades(options?: {
     console.error(error);
   }
 
-  let results = combineRecentTrades(pmHour, kalshiHour, RECENT_TRADES_LIMIT);
-
-  if (results.length < RECENT_TRADES_LIMIT) {
-    const excludeKeys = new Set(results.map(recentTradeDedupeKey));
-    const need = RECENT_TRADES_LIMIT - results.length;
-
-    let pmFallback: RecentFeedTrade[] = [];
-    let kalshiFallback: RecentFeedTrade[] = [];
-
+  if (pmHour.length === 0) {
     try {
-      pmFallback = await fetchRecentPolymarketTrades({
-        limit: need + POLYMARKET_FALLBACK_READ_LIMIT,
-        excludeKeys,
+      pmHour = await fetchRecentPolymarketTrades({
+        limit: VENUE_FALLBACK_LIMIT,
         categoryFilter,
       });
     } catch (error) {
@@ -568,11 +588,12 @@ export async function fetchRecentFeedTrades(options?: {
       }
       console.error(error);
     }
+  }
 
+  if (kalshiHour.length === 0) {
     try {
-      kalshiFallback = await fetchRecentKalshiTrades({
-        limit: need,
-        excludeKeys,
+      kalshiHour = await fetchRecentKalshiTrades({
+        limit: VENUE_FALLBACK_LIMIT,
         categoryFilter,
       });
     } catch (error) {
@@ -583,18 +604,14 @@ export async function fetchRecentFeedTrades(options?: {
       }
       console.error(error);
     }
-
-    results = dedupeRecentTrades([
-      ...results,
-      ...pmFallback,
-      ...kalshiFallback,
-    ])
-      .sort((a, b) => b.timestamp - a.timestamp)
-      .slice(0, RECENT_TRADES_LIMIT);
   }
 
+  const results = combineRecentTrades(pmHour, kalshiHour, RECENT_TRADES_LIMIT);
+
   return {
-    trades: applyRecentCategoryFilter(results, categoryFilter),
+    trades: applyRecentCategoryFilter(results, categoryFilter).map(
+      normalizeRecentFeedTrade
+    ),
     degraded,
   };
 }

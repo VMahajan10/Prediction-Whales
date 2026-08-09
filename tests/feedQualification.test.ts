@@ -286,6 +286,18 @@ describe("feedGate", () => {
       tradeEvPercent: MIN_FEED_TRADE_EV_PCT,
     }, { logRejection: false })).toBe(true);
   });
+
+  it("computes Polymarket notional from cents-style price", () => {
+    expect(resolvePolymarketTradeNotionalUsd({ price: 50, size: 1000 })).toBe(
+      500
+    );
+  });
+
+  it("does not treat raw token count as USD when price is out of range", () => {
+    expect(resolvePolymarketTradeNotionalUsd({ price: 500, size: 1000 })).toBe(
+      0
+    );
+  });
 });
 
 describe("feedMetrics", () => {

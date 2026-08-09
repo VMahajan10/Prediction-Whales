@@ -7,8 +7,25 @@ export type RecentHydratedTrade = FeedTrade & {
   netEvPercent?: number | null;
 };
 
+function resolveHydratedStakeNotional(trade: RecentHydratedTrade): number {
+  return trade.stake_notional ?? trade.usdNotional;
+}
+
+function resolveHydratedEvPercent(trade: RecentHydratedTrade): number | null {
+  if (trade.netEvPercent != null && Number.isFinite(trade.netEvPercent)) {
+    return trade.netEvPercent;
+  }
+  if (trade.ev != null && Number.isFinite(trade.ev)) {
+    return trade.ev * 100;
+  }
+  return null;
+}
+
 /** Map DB-seeded recent trades into whale-feed rows (client-safe). */
 export function recentTradeToWhale(trade: RecentHydratedTrade): WhaleTrade {
+  const stakeNotional = resolveHydratedStakeNotional(trade);
+  const netEvPercent = resolveHydratedEvPercent(trade);
+
   if (trade.source === "kalshi") {
     return kalshiFeedTradeToWhale(
       {
@@ -17,7 +34,7 @@ export function recentTradeToWhale(trade: RecentHydratedTrade): WhaleTrade {
         outcome: trade.outcome,
         side: trade.side,
         price: trade.price,
-        usdNotional: trade.usdNotional,
+        usdNotional: stakeNotional,
         timestamp: trade.timestamp,
         ticker: trade.ticker,
         selectionLabel: trade.selectionLabel,
@@ -25,7 +42,7 @@ export function recentTradeToWhale(trade: RecentHydratedTrade): WhaleTrade {
       },
       {
         isLive: false,
-        netEvPercent: trade.netEvPercent ?? null,
+        netEvPercent,
       }
     );
   }
@@ -46,17 +63,17 @@ export function recentTradeToWhale(trade: RecentHydratedTrade): WhaleTrade {
     {
       detectedAt: trade.timestamp * 1000,
       isLive: false,
-      usdNotional: trade.usdNotional,
+      usdNotional: stakeNotional,
       source: "polymarket",
     }
   );
 
   const marketTranslation = translateWhaleTradeMarket(whale) ?? undefined;
-  const netEvPercent = trade.netEvPercent ?? null;
 
   return {
     ...whale,
     platform: "POLYMARKET",
+    usdNotional: stakeNotional,
     marketTranslation,
     netEvPercent,
     averageEv: netEvPercent,
