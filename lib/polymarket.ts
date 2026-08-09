@@ -876,26 +876,37 @@ export async function fetchWhaleBackfill(): Promise<TradeSummary[]> {
   return (data as DataTrade[]).map((trade, i) => normalizeTrade(trade, i));
 }
 
-export async function fetchTokenRegistry(): Promise<TokenRegistry> {
-  const url = `${GAMMA_API_BASE}/markets?limit=100&active=true&closed=false&order=volume24hr&ascending=false`;
-  const res = await fetch(url, {
-    headers: { Accept: "application/json" },
-    next: { revalidate: 60 },
-  });
+export async function fetchTokenRegistry(options?: {
+  maxMarkets?: number;
+}): Promise<TokenRegistry> {
+  const REGISTRY_PAGE_SIZE = 500;
+  const REGISTRY_MAX_MARKETS = options?.maxMarkets ?? 5_000;
+  const all: GammaMarket[] = [];
 
-  if (!res.ok) {
-    throw new Error(`Gamma API error: ${res.status} ${res.statusText}`);
-  }
+  for (let offset = 0; offset < REGISTRY_MAX_MARKETS; offset += REGISTRY_PAGE_SIZE) {
+    const url =
+      `${GAMMA_API_BASE}/markets?limit=${REGISTRY_PAGE_SIZE}&offset=${offset}` +
+      `&active=true&closed=false&order=volume24hr&ascending=false`;
+    const res = await fetch(url, {
+      headers: { Accept: "application/json" },
+      next: { revalidate: 60 },
+    });
 
-  const data: unknown = await res.json();
-  if (!Array.isArray(data)) {
-    throw new Error("Gamma API returned invalid markets payload");
+    if (!res.ok) {
+      if (all.length > 0) break;
+      throw new Error(`Gamma API error: ${res.status} ${res.statusText}`);
+    }
+
+    const page: unknown = await res.json();
+    if (!Array.isArray(page)) break;
+    all.push(...(page as GammaMarket[]));
+    if (page.length < REGISTRY_PAGE_SIZE) break;
   }
 
   const tokenIds: string[] = [];
   const tokens: Record<string, TokenMarketMeta> = {};
 
-  for (const raw of data as GammaMarket[]) {
+  for (const raw of all) {
     const market = normalizeMarket(raw);
     const outcomes = parseJsonArray<string>(raw.outcomes);
     const ids = market.clobTokenIds;

@@ -168,34 +168,54 @@ function kalshiTradeEvPercent(
   return resolveFeedTradeEvPercent({ price: trade.price }, pipeline ?? null);
 }
 
+const KALSHI_TRADES_PAGE_SIZE = 1_000;
+const KALSHI_TRADES_MAX_PAGES = 20;
+
 export async function fetchKalshiTrades(
   minTs?: number
 ): Promise<FeedTrade[]> {
   const nowEpochSeconds = Math.floor(Date.now() / 1000);
-  const params = new URLSearchParams({ limit: "100" });
-  if (minTs != null && minTs > 0) {
-    params.set("min_ts", String(minTs));
+  const raws: KalshiRawTrade[] = [];
+  let cursor: string | undefined;
+
+  for (let page = 0; page < KALSHI_TRADES_MAX_PAGES; page += 1) {
+    const params = new URLSearchParams({
+      limit: String(KALSHI_TRADES_PAGE_SIZE),
+    });
+    if (minTs != null && minTs > 0) {
+      params.set("min_ts", String(minTs));
+    }
+    if (cursor) params.set("cursor", cursor);
+
+    const res = await kalshiFetch(`/markets/trades?${params}`, {
+      next: { revalidate: 0 },
+      label: "markets/trades",
+    });
+
+    if (!res.ok) {
+      if (raws.length > 0) break;
+      throw new Error(
+        `Kalshi trades API error: ${res.status} ${res.statusText}`
+      );
+    }
+
+    const data = (await res.json()) as {
+      trades?: KalshiRawTrade[];
+      cursor?: string;
+    };
+    if (!Array.isArray(data?.trades) || data.trades.length === 0) break;
+
+    raws.push(...data.trades);
+    cursor = data.cursor?.trim() || undefined;
+    if (!cursor) break;
   }
 
-  const res = await kalshiFetch(`/markets/trades?${params}`, {
-    next: { revalidate: 0 },
-    label: "markets/trades",
-  });
+  if (raws.length === 0) return [];
 
-  if (!res.ok) {
-    throw new Error(`Kalshi trades API error: ${res.status} ${res.statusText}`);
-  }
+  console.log(
+    `[kalshi/trades] fetched=${raws.length} pages<=${KALSHI_TRADES_MAX_PAGES}`
+  );
 
-  const data: unknown = await res.json();
-  if (
-    !data ||
-    typeof data !== "object" ||
-    !Array.isArray((data as { trades?: unknown }).trades)
-  ) {
-    return [];
-  }
-
-  const raws = (data as { trades: KalshiRawTrade[] }).trades;
   const tickers = raws.map((raw) => raw.ticker).filter(Boolean);
   const marketCache = await resolveKalshiMarkets(tickers);
   const trades: FeedTrade[] = [];

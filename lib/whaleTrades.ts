@@ -82,7 +82,7 @@ export function tradeToWhale(
     usdNotional: usd,
     detectedAt: opts.detectedAt ?? trade.timestamp * 1000,
     isLive: opts.isLive ?? false,
-    size: usd,
+    size: trade.size,
     ticker: opts.ticker,
   };
 }

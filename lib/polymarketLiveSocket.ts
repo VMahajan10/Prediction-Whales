@@ -5,6 +5,8 @@ import type { SocketTrade } from "@/lib/types/socket";
 export type { SocketTrade } from "@/lib/types/socket";
 
 const WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market";
+const REGISTRY_REFRESH_MS = 10 * 60 * 1000;
+const MAX_SEEN_HASHES = 50_000;
 
 interface TokenRegistry {
   tokenIds: string[];
@@ -46,6 +48,7 @@ export class PolymarketLiveSocket {
   private ws: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
+  private registryTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectAttempts = 0;
   private stopped = false;
 
@@ -81,10 +84,18 @@ export class PolymarketLiveSocket {
     }
 
     this.connect();
+
+    this.registryTimer = setInterval(() => {
+      void this.refreshRegistry();
+    }, REGISTRY_REFRESH_MS);
   }
 
   stop(): void {
     this.stopped = true;
+    if (this.registryTimer) {
+      clearInterval(this.registryTimer);
+      this.registryTimer = null;
+    }
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -97,6 +108,31 @@ export class PolymarketLiveSocket {
       this.ws.onclose = null;
       this.ws.close();
       this.ws = null;
+    }
+  }
+
+  private async refreshRegistry(): Promise<void> {
+    if (this.stopped) return;
+    try {
+      const next = await fetchTokenRegistry();
+      if (next.tokenIds.length === 0) return;
+
+      const added = next.tokenIds.filter((id) => !this.registry.tokens[id]);
+      this.registry = next;
+      if (added.length === 0) return;
+
+      if (this.ws?.readyState === WebSocket.OPEN) {
+        this.ws.send(
+          JSON.stringify({ type: "market", assets_ids: next.tokenIds })
+        );
+      }
+      console.log(
+        `[polymarketLiveSocket] registry refreshed — +${added.length} tokens (${next.tokenIds.length} total)`
+      );
+    } catch (error) {
+      console.warn("[polymarketLiveSocket] registry refresh failed", {
+        error: error instanceof Error ? error.message : error,
+      });
     }
   }
 
@@ -180,6 +216,14 @@ export class PolymarketLiveSocket {
     if (!Number.isFinite(usdNotional) || usdNotional <= 0) return;
 
     this.seenHashes.add(hash);
+    if (this.seenHashes.size > MAX_SEEN_HASHES) {
+      const excess = this.seenHashes.size - MAX_SEEN_HASHES;
+      let removed = 0;
+      for (const key of this.seenHashes) {
+        this.seenHashes.delete(key);
+        if (++removed >= excess) break;
+      }
+    }
 
     const meta = raw.asset_id ? this.registry.tokens[raw.asset_id] : undefined;
     const trade: SocketTrade = {

@@ -9,11 +9,21 @@ import {
   writePipelineMeta,
 } from "@/lib/evPipeline/redisCache";
 import { resolveWalletForTrade } from "@/lib/resolveWhaleWallet";
-import { MIN_PRODUCT_FEED_STAKE_USD } from "@/lib/feedQualification";
+import {
+  MIN_RAW_INGESTION_STAKE_USD,
+  meetsFeedTradeEvThreshold,
+} from "@/lib/feedQualification";
+import { recordFeedTradeHistory } from "@/lib/feed/feedTradeHistory";
+import { coalesceDisplayEvPercent } from "@/lib/evPipeline/tradeEvRecord";
+import { ensureFullyComputedTradeEv } from "@/lib/evPipeline/resolveTradeEv";
+import { pipelineEvLookupKey } from "@/lib/evPipeline/types";
 import { tradeToWhale } from "@/lib/whaleTrades";
 import { processWhaleTradeForXAgent } from "@/lib/x-agent/enqueueWhaleTrade";
 import { flushAllBatchedNeonWrites } from "@/lib/x-agent/batchedNeonWrites";
-import { passesShadowProductFeedGate } from "@/lib/x-agent/shadowTradeQualification";
+import {
+  passesShadowProductFeedGate,
+  socketTradeToEvInput,
+} from "@/lib/x-agent/shadowTradeQualification";
 import {
   printGateSummaryBox,
   RollingGateMatrixTracker,
@@ -62,7 +72,7 @@ export async function socketTradeToWhale(trade: SocketTrade) {
       side: trade.side,
       outcome: trade.outcome,
       price: trade.price,
-      size: trade.usdNotional,
+      size: trade.size,
       timestamp: trade.timestamp,
       transactionHash: trade.transactionHash,
       assetId: trade.assetId,
@@ -102,7 +112,7 @@ export function parseShadowDaemonOptionsFromEnv(): ShadowDaemonOptions {
     minUsdNotional:
       Number.isFinite(minUsd) && minUsd >= 0
         ? minUsd
-        : MIN_PRODUCT_FEED_STAKE_USD,
+        : MIN_RAW_INGESTION_STAKE_USD,
   };
 }
 
@@ -198,7 +208,7 @@ export class ShadowCronDaemon {
     this.stopping = false;
     const socket = new PolymarketLiveSocket({
       minUsdNotional:
-        this.options.minUsdNotional ?? MIN_PRODUCT_FEED_STAKE_USD,
+        this.options.minUsdNotional ?? MIN_RAW_INGESTION_STAKE_USD,
       onTrade: async (trade) => {
         if (this.stopping) return;
         this.stats.tradesObserved += 1;
@@ -275,6 +285,7 @@ export class ShadowCronDaemon {
         if (!await passesShadowProductFeedGate(trade)) continue;
 
         const whale = await socketTradeToWhale(trade);
+        await this.persistFeedTrade(trade, whale);
         await processWhaleTradeForXAgent(whale, this.rolling);
         this.stats.tradesProcessed += 1;
       } catch (err) {
@@ -296,6 +307,49 @@ export class ShadowCronDaemon {
     if (this.pending.length > 0 && !this.stopping) {
       void this.drainQueue();
     }
+  }
+
+  /** Live socket trades must reach feed_trades — /api/feed alone is browser-gated. */
+  private async persistFeedTrade(
+    trade: SocketTrade,
+    whale: Awaited<ReturnType<typeof socketTradeToWhale>>
+  ): Promise<void> {
+    const evInput = socketTradeToEvInput(trade);
+    const lookupKey = evInput ? pipelineEvLookupKey(evInput) : null;
+    if (!evInput || !lookupKey) return;
+
+    const pipeline = await ensureFullyComputedTradeEv(
+      lookupKey,
+      evInput,
+      null,
+      { cacheOnly: true }
+    );
+    const evPercent = coalesceDisplayEvPercent(pipeline);
+    if (!meetsFeedTradeEvThreshold(evPercent)) return;
+
+    await recordFeedTradeHistory([
+      {
+        id: trade.id,
+        transactionHash: trade.transactionHash,
+        proxyWallet: whale.proxyWallet,
+        title: trade.title,
+        timestamp: trade.timestamp,
+        stakeAmountUsd: trade.usdNotional,
+        averageEvPercent: evPercent!,
+        payload: {
+          id: trade.id,
+          title: trade.title,
+          outcome: trade.outcome,
+          side: trade.side,
+          price: trade.price,
+          size: trade.size,
+          timestamp: trade.timestamp,
+          transactionHash: trade.transactionHash,
+          slug: trade.slug,
+          assetId: trade.assetId,
+        },
+      },
+    ]);
   }
 }
 

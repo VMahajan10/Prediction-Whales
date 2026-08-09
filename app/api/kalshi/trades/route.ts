@@ -1,5 +1,6 @@
 import { collectKalshiFeedCandidates } from "@/lib/feed/kalshiFeedCandidatesServer";
 import { recordKalshiFeedMetrics } from "@/lib/feedQualificationServer";
+import { flushKalshiShadowTradesNow } from "@/lib/x-agent/kalshiShadowTrades";
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -35,6 +36,9 @@ export async function GET(request: Request) {
       Number.isFinite(minTs) ? minTs : undefined
     );
     recordKalshiFeedMetrics(detected.length);
+
+    // Queued during fetchKalshiTrades — must land before serverless freeze.
+    await flushKalshiShadowTradesNow();
 
     /**
      * Anonymous market flow — no wallet attribution, so these are gated on

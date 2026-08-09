@@ -168,7 +168,18 @@ export async function flushKalshiShadowTradeBatch(): Promise<void> {
     await db
       .insert(kalshiShadowTrades)
       .values(rows.map((row) => shadowInsertValues(row)))
-      .onConflictDoNothing({ target: kalshiShadowTrades.tradeId });
+      .onConflictDoUpdate({
+        target: kalshiShadowTrades.tradeId,
+        set: {
+          usdNotional: sql`excluded.usd_notional`,
+          category: sql`coalesce(excluded.category, ${kalshiShadowTrades.category})`,
+          rawPayload: sql`
+            CASE WHEN excluded.raw_payload ->> 'netEvPercent' IS NOT NULL
+                 THEN excluded.raw_payload
+                 ELSE ${kalshiShadowTrades.rawPayload}
+            END`,
+        },
+      });
   } catch (error) {
     const details = formatShadowInsertError(error);
     const causeMessage = readErrorCauseMessage(error);
@@ -177,6 +188,18 @@ export async function flushKalshiShadowTradeBatch(): Promise<void> {
       details
     );
   }
+}
+
+/**
+ * Serverless functions freeze after the response, so the 20s batch timer never
+ * fires. Request-scoped callers must flush inline before returning.
+ */
+export async function flushKalshiShadowTradesNow(): Promise<void> {
+  if (shadowFlushTimer) {
+    clearTimeout(shadowFlushTimer);
+    shadowFlushTimer = null;
+  }
+  await flushKalshiShadowTradeBatch();
 }
 
 /**

@@ -602,15 +602,8 @@ function shouldPersistGateRejectionToDb(
     return false;
   }
 
-  switch (reason) {
-    case "BELOW_STAKE_FLOOR":
-    case "STAKE_TOO_LOW":
-    case "LOW_EV":
-    case FAILED_TRADE_EV_REASON:
-      return false;
-    default:
-      return true;
-  }
+  // EV/stake rejections above the product-feed floor are worth measuring.
+  return true;
 }
 
 async function logGateFailure(
