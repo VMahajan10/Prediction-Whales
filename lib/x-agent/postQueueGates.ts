@@ -237,6 +237,49 @@ function passUnverifiedWhaleCredibilityGate(
   return { passed: true, unverifiedWhale: true };
 }
 
+function passAnonymousWalletCredibilityGate(
+  tradeId: string
+): PostQueueCredibilityGateResult {
+  gateLog(
+    tradeId,
+    "[Pass: Credibility] Anonymous/unattributed wallet — credibility gate bypassed"
+  );
+  return { passed: true, unverifiedWhale: true };
+}
+
+/**
+ * Skip resolved-bets credibility for trades whose wallet could not be attributed
+ * on-chain (zero address) or high-stake unindexed wallets (>= $1k).
+ */
+export function shouldBypassResolvedBetsForUnattributedWallet(input: {
+  walletAddress?: string | null;
+  stakeNotional?: number;
+  whaleNotInRegistry?: boolean;
+}): boolean {
+  if (
+    input.walletAddress != null &&
+    isAnonymousWalletAddress(input.walletAddress)
+  ) {
+    return true;
+  }
+
+  return (
+    Boolean(input.whaleNotInRegistry) &&
+    Number.isFinite(input.stakeNotional) &&
+    input.stakeNotional! >= UNVERIFIED_WHALE_STAKE_FLOOR_USD
+  );
+}
+
+/** Full credibility bypass — only for unattributed zero-address wallets. */
+export function shouldBypassCredibilityForUnattributedWallet(input: {
+  walletAddress?: string | null;
+}): boolean {
+  return (
+    input.walletAddress != null &&
+    isAnonymousWalletAddress(input.walletAddress)
+  );
+}
+
 /** Strict resolved-bets floor — no shadow or unindexed bypass. */
 export function evaluateResolvedBetsCredibilityFloor(input: {
   tradeId: string;
@@ -247,6 +290,24 @@ export function evaluateResolvedBetsCredibilityFloor(input: {
   whaleNotInRegistry?: boolean;
   whale?: WhaleRegistry | null;
 }): PostQueueCredibilityGateResult {
+  if (
+    shouldBypassResolvedBetsForUnattributedWallet({
+      walletAddress: input.walletAddress,
+      stakeNotional: input.stakeNotional,
+      whaleNotInRegistry: input.whaleNotInRegistry,
+    })
+  ) {
+    if (isAnonymousWalletAddress(input.walletAddress)) {
+      return passAnonymousWalletCredibilityGate(input.tradeId);
+    }
+
+    gateLog(
+      input.tradeId,
+      `[Pass: Credibility] Unindexed wallet — resolved-bets check bypassed (stake >= ${formatStake(UNVERIFIED_WHALE_STAKE_FLOOR_USD)})`
+    );
+    return { passed: true, unverifiedWhale: true };
+  }
+
   if (meetsFeedResolvedBetsThreshold(input.resolvedBetCount)) {
     return { passed: true };
   }
@@ -479,6 +540,10 @@ export function evaluatePostQueueCredibilityGate(
       `[Fail: Credibility] Stake (${formatStake(stake)}) < ${formatStake(CREDIBILITY_CONFIG.MIN_STAKE_USD)} threshold`
     );
     return { passed: false, reason: STAKE_TOO_LOW };
+  }
+
+  if (shouldBypassCredibilityForUnattributedWallet(input)) {
+    return passAnonymousWalletCredibilityGate(input.tradeId);
   }
 
   const resolvedBetCount = input.resolvedBetCount ?? null;

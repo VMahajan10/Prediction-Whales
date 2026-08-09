@@ -199,7 +199,56 @@ describe("postQueueGates", () => {
     }
   });
 
-  it("rejects high-stake unindexed wallets with zero resolved bets in production", () => {
+  it("passes anonymous wallets without resolved bets", () => {
+    const result = withStrictCredibilityGates(() =>
+      evaluatePostQueueCredibilityGate({
+        tradeId: "trade-anonymous",
+        walletAddress: "0x0000000000000000000000000000000000000000",
+        stakeNotional: MIN_STAKE_THRESHOLD,
+        walletAvgEv: null,
+        resolvedBetCount: 0,
+      })
+    );
+
+    expect(result.passed).toBe(true);
+    expect(result.unverifiedWhale).toBe(true);
+  });
+
+  it("bypasses resolved bets for high-stake unindexed wallets in production", () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousShadow = process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
+    const previousUnindexed = process.env.ALLOW_UNINDEXED_WALLETS;
+    process.env.NODE_ENV = "production";
+    process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW = "false";
+    process.env.ALLOW_UNINDEXED_WALLETS = "false";
+
+    try {
+      const result = evaluateResolvedBetsCredibilityFloor({
+        tradeId: "trade-prod-unindexed",
+        walletAddress: "0xabc123",
+        stakeNotional: UNVERIFIED_WHALE_STAKE_FLOOR_USD,
+        resolvedBetCount: 0,
+        whaleNotInRegistry: true,
+      });
+
+      expect(result.passed).toBe(true);
+      expect(result.unverifiedWhale).toBe(true);
+    } finally {
+      process.env.NODE_ENV = previousNodeEnv;
+      if (previousShadow === undefined) {
+        delete process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
+      } else {
+        process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW = previousShadow;
+      }
+      if (previousUnindexed === undefined) {
+        delete process.env.ALLOW_UNINDEXED_WALLETS;
+      } else {
+        process.env.ALLOW_UNINDEXED_WALLETS = previousUnindexed;
+      }
+    }
+  });
+
+  it("rejects high-stake wallets with zero resolved bets when indexed", () => {
     const previousNodeEnv = process.env.NODE_ENV;
     const previousShadow = process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
     const previousUnindexed = process.env.ALLOW_UNINDEXED_WALLETS;
@@ -213,6 +262,7 @@ describe("postQueueGates", () => {
         stakeNotional: SHADOW_UNREGISTERED_STAKE_BYPASS_USD,
         walletAvgEv: null,
         resolvedBetCount: 0,
+        whaleNotInRegistry: false,
       });
 
       expect(result.passed).toBe(false);
@@ -290,6 +340,18 @@ describe("postQueueGates", () => {
         process.env.ALLOW_UNINDEXED_WALLETS = previousUnindexed;
       }
     }
+  });
+
+  it("bypasses resolved bets for anonymous wallets", () => {
+    const result = evaluateResolvedBetsCredibilityFloor({
+      tradeId: "trade-anonymous-zero",
+      walletAddress: "0x0000000000000000000000000000000000000000",
+      resolvedBetCount: 0,
+      stakeNotional: MIN_STAKE_THRESHOLD,
+    });
+
+    expect(result.passed).toBe(true);
+    expect(result.unverifiedWhale).toBe(true);
   });
 
   it("logs and rejects wallets with zero resolved bets after hydration", () => {

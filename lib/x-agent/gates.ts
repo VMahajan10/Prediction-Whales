@@ -315,12 +315,12 @@ function logGateMatrix(
     if (matrix.passesCredibility) {
       gateLog(
         trade.tradeId,
-        "[Pass: Credibility] Anonymous wallet passed resolved-bets floor"
+        "[Pass: Credibility] Anonymous/unattributed wallet — credibility gate bypassed"
       );
     } else {
       gateLog(
         trade.tradeId,
-        `[Fail: Credibility] Wallet ${trade.walletAddress} has 0 resolved bets (< ${CREDIBILITY_CONFIG.MIN_RESOLVED_BETS})`
+        `[Fail: Credibility] Anonymous wallet failed post-queue credibility checks`
       );
     }
   } else if (matrix.passesCredibility && whale) {
@@ -391,6 +391,7 @@ export function evaluateTradeGateMatrix(
   const passesStake = trade.stakeNotional >= stakeFloor.floorUsd;
   const passesCredibility = evaluatePostQueueCredibilityGate({
     tradeId: trade.tradeId,
+    walletAddress: trade.walletAddress,
     stakeNotional: trade.stakeNotional,
     walletAvgEv: whale?.avgEv ?? null,
     resolvedBetCount: isAnonymousWalletAddress(trade.walletAddress)

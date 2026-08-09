@@ -217,7 +217,12 @@ export async function processWhaleTradeForXAgent(
       stakeNotional: payload.stakeNotional,
     });
 
-  if (!deferCredibilityForUnverifiedWhale) {
+  if (anonymousTrade) {
+    console.log(
+      `[Gate] tradeId=${payload.tradeId} [Pass: Credibility] Anonymous/unattributed wallet — credibility gate bypassed`
+    );
+    unverifiedWhale = true;
+  } else if (!deferCredibilityForUnverifiedWhale) {
     const resolvedBetsFloor = evaluateResolvedBetsCredibilityFloor({
       tradeId: payload.tradeId,
       walletAddress,

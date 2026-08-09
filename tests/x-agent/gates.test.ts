@@ -237,7 +237,7 @@ describe("evaluateTradeGateMatrix", () => {
     expect(matrix.passesAll).toBe(false);
   });
 
-  it("fails credibility for anonymous zero-address trades below unindexed bypass", () => {
+  it("bypasses credibility for anonymous zero-address trades", () => {
     const matrix = withStrictCredibilityGates(() =>
       evaluateTradeGateMatrix({
         trade: makeTrade({
@@ -250,13 +250,12 @@ describe("evaluateTradeGateMatrix", () => {
       })
     );
 
-    expect(matrix.passesCredibility).toBe(false);
+    expect(matrix.passesCredibility).toBe(true);
     expect(matrix.passesStake).toBe(true);
-    expect(matrix.passesAll).toBe(false);
-    expect(matrix.primaryFailureReason).toBe("BELOW_RESOLVED_BETS");
+    expect(matrix.passesAll).toBe(true);
   });
 
-  it("rejects anonymous high-stake trades with zero resolved bets", () => {
+  it("passes anonymous high-stake trades without resolved bets", () => {
     const result = withStrictCredibilityGates(() =>
       evaluateWalletCredibilityPreGate(
         makeTrade({
@@ -267,8 +266,7 @@ describe("evaluateTradeGateMatrix", () => {
       )
     );
 
-    expect(result.passed).toBe(false);
-    expect(result.reason).toBe("BELOW_RESOLVED_BETS");
+    expect(result.passed).toBe(true);
   });
 
   it("applies the macro/political stake tier", () => {
@@ -358,7 +356,7 @@ describe("evaluateTradeEligibility", () => {
     });
   });
 
-  it("rejects anonymous trades with zero resolved history below unindexed bypass", async () => {
+  it("passes anonymous trades without resolved history", async () => {
     const result = await withStrictCredibilityGates(() =>
       evaluateTradeEligibility(
         makeTrade({
@@ -372,10 +370,9 @@ describe("evaluateTradeEligibility", () => {
       )
     );
 
-    expect(result.matrix.passesCredibility).toBe(false);
+    expect(result.matrix.passesCredibility).toBe(true);
     expect(result.matrix.passesStake).toBe(true);
-    expect(result.eligible).toBe(false);
-    expect(result.reason).toBe("BELOW_RESOLVED_BETS");
+    expect(result.eligible).toBe(true);
   });
 
   it("rejects wallets below the resolved-bets floor without hydration bypass", async () => {
