@@ -22,8 +22,12 @@ export function isTelegramConfigured(): boolean {
   );
 }
 
-function escapeTelegramMarkdown(text: string): string {
-  return text.replace(/([_*`[\]])/g, "\\$1");
+/** Escape dynamic text for Telegram HTML parse_mode. */
+function escapeTelegramHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 function formatStakeUsd(stakeNotional: number): string {
@@ -36,24 +40,24 @@ function formatEvLabel(evPercent: number | null): string {
   return `${sign}${evPercent.toFixed(1)}%`;
 }
 
-/** Markdown body for a high-conviction whale trade review alert. */
+/** HTML body for a high-conviction whale trade review alert. */
 export function buildTelegramTradeAlertMessage(
   input: TradeTelegramAlertInput
 ): string {
-  const reviewUrl = buildReviewPageUrl(input.queueId);
-  const whale = escapeTelegramMarkdown(input.whaleName.trim() || "Unknown");
-  const market = escapeTelegramMarkdown(input.marketTitle.trim() || "Unknown");
-  const stake = formatStakeUsd(input.stakeNotional);
-  const ev = escapeTelegramMarkdown(formatEvLabel(input.evPercent));
+  const reviewUrl = escapeTelegramHtml(buildReviewPageUrl(input.queueId));
+  const whale = escapeTelegramHtml(input.whaleName.trim() || "Unknown");
+  const market = escapeTelegramHtml(input.marketTitle.trim() || "Unknown");
+  const stake = escapeTelegramHtml(formatStakeUsd(input.stakeNotional));
+  const ev = escapeTelegramHtml(formatEvLabel(input.evPercent));
 
   return [
-    "🐋 *Whale Alert*",
+    "🐋 <b>Whale Alert</b>",
     "",
-    `*Whale:* ${whale}`,
-    `*Stake:* ${stake}`,
-    `*Market:* ${market}`,
-    `*EV:* ${ev}`,
-    `*Link:* ${reviewUrl}`,
+    `<b>Whale:</b> ${whale}`,
+    `<b>Stake:</b> ${stake}`,
+    `<b>Market:</b> ${market}`,
+    `<b>EV:</b> ${ev}`,
+    `<b>Link:</b> ${reviewUrl}`,
   ].join("\n");
 }
 
@@ -84,15 +88,20 @@ export async function sendTelegramAlert(
       body: JSON.stringify({
         chat_id: chatId,
         text: message,
-        parse_mode: "Markdown",
+        parse_mode: "HTML",
       }),
       timeoutMs: 12_000,
     });
 
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
+    const body = (await response.json().catch(() => null)) as {
+      ok?: boolean;
+      description?: string;
+    } | null;
+
+    if (!response.ok || !body?.ok) {
+      const detail = body?.description ?? "";
       throw new Error(
-        `HTTP ${response.status}${body ? `: ${body.slice(0, 200)}` : ""}`
+        `HTTP ${response.status}${detail ? `: ${String(detail).slice(0, 200)}` : ""}`
       );
     }
 

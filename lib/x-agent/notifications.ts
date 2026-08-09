@@ -153,5 +153,13 @@ export async function dispatchAdminReviewAlert(
     postAdminEndpoint(process.env.X_AGENT_ADMIN_EMAIL_URL, payload, "email"),
   ]);
 
+  for (const [label, result] of Object.entries({ webhook, sms, email })) {
+    if (!result.ok && !result.skipped) {
+      console.error(
+        `[x-agent/notifications] ${label} alert failed queueId=${queueItem.id}: ${result.error ?? "unknown"}`
+      );
+    }
+  }
+
   return { webhook, sms, email };
 }

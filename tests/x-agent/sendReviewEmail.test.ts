@@ -3,7 +3,6 @@ import {
   buildQueueActionUrl,
   buildReviewEmailHtml,
   buildReviewPageUrl,
-  DEFAULT_REVIEW_NOTIFICATION_EMAIL,
   parseReviewEmailRecipients,
   resolveReviewEmailRecipients,
 } from "@/lib/email/sendReviewEmail";
@@ -101,7 +100,7 @@ describe("sendReviewEmail", () => {
     }
   });
 
-  it("falls back to the default notification email when env is unset", () => {
+  it("resolves no recipients when env is unset", () => {
     const keys = [
       "REVIEW_RECIPIENT_EMAILS",
       "NOTIFICATION_EMAIL",
@@ -117,9 +116,7 @@ describe("sendReviewEmail", () => {
       delete process.env[key];
     }
 
-    expect(resolveReviewEmailRecipients()).toEqual([
-      DEFAULT_REVIEW_NOTIFICATION_EMAIL,
-    ]);
+    expect(resolveReviewEmailRecipients()).toEqual([]);
 
     for (const key of keys) {
       if (previous[key] === undefined) {

@@ -24,7 +24,7 @@ describe("telegram notifications", () => {
     expect(isTelegramConfigured()).toBe(false);
   });
 
-  it("builds a Markdown trade alert with whale, stake, market, EV, and link", () => {
+  it("builds an HTML trade alert with whale, stake, market, EV, and link", () => {
     process.env.NEXT_PUBLIC_APP_URL = "https://marketpulse.example.com";
 
     const message = buildTelegramTradeAlertMessage({
@@ -35,28 +35,46 @@ describe("telegram notifications", () => {
       queueId: "queue-tg-1",
     });
 
-    expect(message).toContain("*Whale:* DeepWallet");
-    expect(message).toContain("*Stake:* $25,000");
-    expect(message).toContain("*Market:* Fed cut rates in September");
-    expect(message).toContain("*EV:* +4.2%");
+    expect(message).toContain("<b>Whale:</b> DeepWallet");
+    expect(message).toContain("<b>Stake:</b> $25,000");
+    expect(message).toContain("<b>Market:</b> Fed cut rates in September");
+    expect(message).toContain("<b>EV:</b> +4.2%");
     expect(message).toContain(
       "https://marketpulse.example.com/review/queue-tg-1"
     );
   });
 
-  it("escapes Markdown characters in whale and market names", () => {
+  it("escapes HTML characters in whale and market names", () => {
     process.env.NEXT_PUBLIC_APP_URL = "https://marketpulse.example.com";
+
+    const message = buildTelegramTradeAlertMessage({
+      whaleName: "Whale<One> & Co",
+      stakeNotional: 10_000,
+      marketTitle: "Will S&P 500 close > 6000?",
+      evPercent: 2.5,
+      queueId: "queue-tg-2",
+    });
+
+    expect(message).toContain("Whale&lt;One&gt; &amp; Co");
+    expect(message).toContain("Will S&amp;P 500 close &gt; 6000?");
+  });
+
+  it("leaves Markdown metacharacters untouched under HTML parse mode", () => {
+    process.env.NEXT_PUBLIC_APP_URL = "https://marketpulse_preview.example.com";
 
     const message = buildTelegramTradeAlertMessage({
       whaleName: "Whale_*One",
       stakeNotional: 10_000,
       marketTitle: "Will [Team A] win?",
       evPercent: 2.5,
-      queueId: "queue-tg-2",
+      queueId: "queue-tg-3",
     });
 
-    expect(message).toContain("Whale\\_\\*One");
-    expect(message).toContain("Will \\[Team A\\] win?");
+    expect(message).toContain("Whale_*One");
+    expect(message).toContain("Will [Team A] win?");
+    expect(message).toContain(
+      "https://marketpulse_preview.example.com/review/queue-tg-3"
+    );
   });
 
   it("falls back to production URL for review links", () => {

@@ -540,7 +540,11 @@ export async function processWhaleTradeForXAgent(
     );
   }
 
-  if (isTelegramConfigured()) {
+  if (!isTelegramConfigured()) {
+    logStdout(
+      "⏭ [Queue Telegram] Skipped — TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID not configured"
+    );
+  } else {
     try {
       logStdout("📲 [Queue Telegram] Dispatching trade alert");
       const telegramRes = await sendTradeTelegramAlert({

@@ -32,9 +32,6 @@ export interface SendEmailNotificationOptions {
   plainTextOnly?: boolean;
 }
 
-/** Used when NOTIFICATION_EMAIL / REVIEW_RECIPIENT_EMAILS are unset. */
-export const DEFAULT_REVIEW_NOTIFICATION_EMAIL = "reviews@marketpulse.app";
-
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -200,10 +197,9 @@ function getReviewEmailRecipients(): string[] {
     process.env.NOTIFICATION_EMAIL?.trim() ||
     process.env.REVIEW_EMAIL_TO?.trim() ||
     process.env.EMAIL_REVIEW_TO?.trim() ||
-    process.env.X_AGENT_REVIEW_EMAIL_TO?.trim() ||
-    DEFAULT_REVIEW_NOTIFICATION_EMAIL;
+    process.env.X_AGENT_REVIEW_EMAIL_TO?.trim();
 
-  return [single.toLowerCase()];
+  return single ? [single.toLowerCase()] : [];
 }
 
 /** Resolved notification inboxes from env (REVIEW_RECIPIENT_EMAILS, NOTIFICATION_EMAIL, etc.). */
@@ -213,23 +209,19 @@ export function resolveReviewEmailRecipients(): string[] {
 
 /** Effective notification target for queue logs (never undefined). */
 export function getEffectiveNotificationEmailForLog(): string {
-  return (
-    process.env.NOTIFICATION_EMAIL?.trim() ||
-    process.env.REVIEW_RECIPIENT_EMAILS?.trim() ||
-    DEFAULT_REVIEW_NOTIFICATION_EMAIL
-  );
+  const recipients = getReviewEmailRecipients();
+  return recipients.length > 0 ? recipients.join(", ") : "(not configured)";
 }
 
 /** Log review-email env at worker startup (after preload-env). */
 export function logReviewEmailEnvAtStartup(): void {
   console.log(
     "⚙️ [Env Check] NOTIFICATION_EMAIL =",
-    process.env.NOTIFICATION_EMAIL?.trim() || DEFAULT_REVIEW_NOTIFICATION_EMAIL
+    process.env.NOTIFICATION_EMAIL?.trim() || "(not set)"
   );
   console.log(
     "⚙️ [Env Check] REVIEW_RECIPIENT_EMAILS =",
-    process.env.REVIEW_RECIPIENT_EMAILS?.trim() ||
-      DEFAULT_REVIEW_NOTIFICATION_EMAIL
+    process.env.REVIEW_RECIPIENT_EMAILS?.trim() || "(not set)"
   );
   console.log(
     "⚙️ [Env Check] EMAIL_FROM =",
