@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { passesRawIngestionSocketStakeGate } from "@/lib/feedSocketGateClient";
+import { resolvePolymarketTradeNotionalUsd } from "@/lib/feedQualification";
 import type { SocketTrade } from "@/lib/types/socket";
 import type { TokenMarketMeta } from "@/lib/polymarket";
 
@@ -57,7 +58,10 @@ export function usePolymarketSocket(maxTrades = 50) {
 
       const price = parseFloat(raw.price ?? "0");
       const shares = parseFloat(raw.size ?? "0");
-      const usdNotional = price * shares;
+      const usdNotional = resolvePolymarketTradeNotionalUsd({
+        price,
+        size: shares,
+      });
       if (!Number.isFinite(usdNotional) || usdNotional <= 0) return;
 
       seenHashes.current.add(hash);

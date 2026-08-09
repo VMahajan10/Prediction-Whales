@@ -13,8 +13,8 @@ export const NEON_BATCH_FLUSH_INTERVAL_MS = KALSHI_SHADOW_FLUSH_INTERVAL_MS;
 
 type PendingGateLog = {
   tradeId: string;
-  gatePassed: false;
-  rejectionReason: GateRejectionReason;
+  gatePassed: boolean;
+  rejectionReason?: GateRejectionReason;
   payload: TradePayload;
 };
 
@@ -44,6 +44,18 @@ export function queueGateLogRejection(
   scheduleGateLogFlush();
 }
 
+/** Audit row when a trade clears all gates and enters x_post_queue. */
+export function queueGateLogSuccess(trade: TradePayload): void {
+  if (!isDatabaseEnabled()) return;
+
+  pendingGateLogs.push({
+    tradeId: trade.tradeId,
+    gatePassed: true,
+    payload: trade,
+  });
+  scheduleGateLogFlush();
+}
+
 export async function flushGateLogBatch(): Promise<void> {
   if (!isDatabaseEnabled() || pendingGateLogs.length === 0) return;
 
@@ -54,7 +66,7 @@ export async function flushGateLogBatch(): Promise<void> {
       batch.map((row) => ({
         tradeId: row.tradeId,
         gatePassed: row.gatePassed,
-        rejectionReason: row.rejectionReason,
+        rejectionReason: row.rejectionReason ?? null,
         payload: row.payload,
       }))
     );

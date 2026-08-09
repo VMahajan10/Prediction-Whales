@@ -1,5 +1,8 @@
 import { fetchTokenRegistry, type TokenMarketMeta } from "@/lib/polymarket";
-import { MIN_RAW_INGESTION_STAKE_USD } from "@/lib/feedQualification";
+import {
+  MIN_RAW_INGESTION_STAKE_USD,
+  resolvePolymarketTradeNotionalUsd,
+} from "@/lib/feedQualification";
 import type { SocketTrade } from "@/lib/types/socket";
 
 export type { SocketTrade } from "@/lib/types/socket";
@@ -212,7 +215,10 @@ export class PolymarketLiveSocket {
 
     const price = parseFloat(raw.price ?? "0");
     const shares = parseFloat(raw.size ?? "0");
-    const usdNotional = price * shares;
+    const usdNotional = resolvePolymarketTradeNotionalUsd({
+      price,
+      size: shares,
+    });
     if (!Number.isFinite(usdNotional) || usdNotional <= 0) return;
 
     this.seenHashes.add(hash);

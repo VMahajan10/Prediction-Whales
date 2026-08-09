@@ -125,6 +125,8 @@ export interface PreGateShortCircuitResult {
   reason?: GateRejectionReason;
   failedStep?: PreGateStep;
   translation?: { side: string; marketPlain: string };
+  /** Populated when failedStep is trade_ev — used for gate-drop logging. */
+  tradeEvPercent?: number | null;
 }
 
 export const MIN_RESOLVED_BETS = MIN_WALLET_RESOLVED_BETS;
@@ -136,6 +138,62 @@ export const MAX_TRADE_AGE_MS = 30 * 60 * 1000;
 
 function gateLog(tradeId: string, message: string): void {
   console.log(`[Gate] tradeId=${tradeId} ${message}`);
+}
+
+export function formatTradeVenueLabel(
+  source: TradePayload["source"]
+): "POLYMARKET" | "KALSHI" {
+  return source === "kalshi" ? "KALSHI" : "POLYMARKET";
+}
+
+/** Standardized gate-drop line for shadow cron / worker logs. */
+export function logGateDrop(
+  trade: Pick<TradePayload, "source" | "stakeNotional" | "slug" | "eventSlug">,
+  reason: string
+): void {
+  const venue = formatTradeVenueLabel(trade.source);
+  console.log(`[Gate Drop] Venue: ${venue} | Reason: ${reason}`);
+}
+
+function formatGateDropReason(
+  trade: TradePayload,
+  reason: GateRejectionReason,
+  context?: { tradeEvPercent?: number | null; stakeFloorUsd?: number }
+): string {
+  switch (reason) {
+    case "BELOW_STAKE_FLOOR":
+    case "STAKE_TOO_LOW": {
+      const floor =
+        context?.stakeFloorUsd ?? resolveTradeStakeFloor(trade).floorUsd;
+      return `Stake $${Math.round(trade.stakeNotional)} < $${Math.round(floor)}`;
+    }
+    case FAILED_TRADE_EV_REASON:
+    case "LOW_EV": {
+      const ev = context?.tradeEvPercent;
+      if (ev == null || !Number.isFinite(ev)) {
+        return "EV unavailable (< +3%)";
+      }
+      const sign = ev >= 0 ? "+" : "";
+      return `EV ${sign}${ev.toFixed(1)}% < +3%`;
+    }
+    case "ILLEGIBLE_MARKET":
+      if (!trade.slug?.trim() && !trade.eventSlug?.trim()) {
+        return "Missing Category or Slug";
+      }
+      return "Market cannot be translated";
+    case "STALE_TRADE":
+      return "Trade older than 30m freshness window";
+    case "BELOW_RESOLVED_BETS":
+      return "Wallet below resolved-bets floor";
+    case "BELOW_EV_THRESHOLD":
+      return "Wallet avg EV below floor";
+    case "KALSHI_PUBLIC_POSTING_DISABLED":
+      return "Kalshi public posting disabled";
+    case "RECENT_MARKET_POST":
+      return "Active x_post_queue row exists for whale-market pair";
+    default:
+      return reason;
+  }
 }
 
 function resolveTradeStakeFloor(trade: TradePayload) {
@@ -560,6 +618,7 @@ export function evaluateTradeEvPreGate(
     passed: false,
     reason: FAILED_TRADE_EV_REASON,
     failedStep: "trade_ev",
+    tradeEvPercent,
   };
 }
 
@@ -570,6 +629,16 @@ export async function handlePreGateRejection(
   whale?: WhaleRegistry | null
 ): Promise<void> {
   if (!result.reason) return;
+
+  const tradeEvPercent =
+    result.tradeEvPercent ?? options?.tradeEvPercent ?? null;
+  logGateDrop(
+    trade,
+    formatGateDropReason(trade, result.reason, {
+      tradeEvPercent,
+      stakeFloorUsd: resolveTradeStakeFloor(trade).floorUsd,
+    })
+  );
 
   const metricsCollector = resolveGateMetricsCollector(options?.metrics);
   if (metricsCollector) {
@@ -674,6 +743,13 @@ export async function evaluateTradeEligibility(
     const reason =
       matrix.primaryFailureReason ??
       resolvePrimaryFailureReason(matrix, whale);
+    logGateDrop(
+      trade,
+      formatGateDropReason(trade, reason, {
+        tradeEvPercent: options?.tradeEvPercent ?? null,
+        stakeFloorUsd: matrix.stakeFloorUsd,
+      })
+    );
     await logGateFailure(trade, reason);
     return { eligible: false, reason, matrix };
   }

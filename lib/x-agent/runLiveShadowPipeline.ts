@@ -11,7 +11,7 @@ import {
 import { processWhaleTradeForXAgent } from "@/lib/x-agent/enqueueWhaleTrade";
 import { flushAllBatchedNeonWrites } from "@/lib/x-agent/batchedNeonWrites";
 import { MIN_PRODUCT_FEED_STAKE_USD } from "@/lib/feedQualification";
-import { passesShadowProductFeedGate } from "@/lib/x-agent/shadowTradeQualification";
+import { passesShadowIngestionStakeGate } from "@/lib/x-agent/shadowTradeQualification";
 import {
   createGateSummary,
 } from "@/lib/x-agent/gateMetrics";
@@ -120,7 +120,7 @@ export async function runXAgentLiveShadowPipeline(
       if (!trade) break;
 
       try {
-        if (!await passesShadowProductFeedGate(trade)) continue;
+        if (!passesShadowIngestionStakeGate(trade)) continue;
 
         const whale = await socketTradeToWhale(trade);
         await processWhaleTradeForXAgent(whale, gateSummary);

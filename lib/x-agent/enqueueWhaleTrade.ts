@@ -36,6 +36,7 @@ import {
   recordQueuedSuccess,
 } from "@/lib/x-agent/gateMetrics";
 import { dispatchAdminReviewAlert } from "@/lib/x-agent/notifications";
+import { queueGateLogSuccess } from "@/lib/x-agent/batchedNeonWrites";
 import {
   sendEmailNotification,
   getEffectiveNotificationEmailForLog,
@@ -309,8 +310,8 @@ export async function processWhaleTradeForXAgent(
   if (!evGate.passed) {
     await handlePreGateRejection(
       payload,
-      evGate,
-      metricsOptions,
+      { ...evGate, tradeEvPercent },
+      { ...metricsOptions, tradeEvPercent },
       whaleForGates
     );
     return;
@@ -502,6 +503,7 @@ export async function processWhaleTradeForXAgent(
   }
 
   logPostQueueIngestionSuccess(payload.tradeId, pricedPayload.stakeNotional);
+  queueGateLogSuccess(pricedPayload);
   console.log(
     `[Gate] tradeId=${payload.tradeId} [Pass: Queue] Trade entered x_post_queue with status PENDING_REVIEW (id=${insertedRecord.id})`
   );
