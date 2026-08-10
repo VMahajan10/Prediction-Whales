@@ -38,6 +38,10 @@ import {
 import { dispatchAdminReviewAlert } from "@/lib/x-agent/notifications";
 import { queueGateLogSuccess } from "@/lib/x-agent/batchedNeonWrites";
 import {
+  ensureXPostQueueSchemaOnce,
+  isPrismaMissingColumnError,
+} from "@/lib/x-agent/ensureXPostQueueSchema";
+import {
   sendEmailNotification,
   getEffectiveNotificationEmailForLog,
 } from "@/lib/email/sendReviewEmail";
@@ -471,29 +475,39 @@ export async function processWhaleTradeForXAgent(
     ? applyUnverifiedWhaleQueueTag(baseVariantId)
     : baseVariantId;
 
+  const queueInsertData = {
+    id: randomUUID(),
+    walletAddress,
+    tradeId: pricedPayload.tradeId,
+    templateFamily: family,
+    variantId,
+    evGloss,
+    copyText,
+    marketSlug: pricedPayload.marketSlug,
+    side: translation.side,
+    entryCents: pricedPayload.entryCents,
+    nowCents: pricedPayload.nowCents,
+    stakeNotional: pricedPayload.stakeNotional,
+    status: "PENDING_REVIEW" as const,
+    reviewToken: randomUUID(),
+  };
+
   let queued: Awaited<ReturnType<typeof prisma.xPostQueue.create>>;
   try {
-    queued = await prisma.xPostQueue.create({
-      data: {
-        id: randomUUID(),
-        walletAddress,
-        tradeId: pricedPayload.tradeId,
-        templateFamily: family,
-        variantId,
-        evGloss,
-        copyText,
-        marketSlug: pricedPayload.marketSlug,
-        side: translation.side,
-        entryCents: pricedPayload.entryCents,
-        nowCents: pricedPayload.nowCents,
-        stakeNotional: pricedPayload.stakeNotional,
-        status: "PENDING_REVIEW",
-        reviewToken: randomUUID(),
-      },
-    });
+    await ensureXPostQueueSchemaOnce(prisma);
+    queued = await prisma.xPostQueue.create({ data: queueInsertData });
   } catch (error) {
-    logStderr("[DB WRITE ERROR]", error);
-    throw error;
+    if (isPrismaMissingColumnError(error)) {
+      console.warn(
+        "[x-agent/enqueue] x_post_queue schema drift detected — applying column patches and retrying insert",
+        error instanceof Error ? error.message : error
+      );
+      await ensureXPostQueueSchemaOnce(prisma);
+      queued = await prisma.xPostQueue.create({ data: queueInsertData });
+    } else {
+      logStderr("[DB WRITE ERROR]", error);
+      throw error;
+    }
   }
 
   const insertedRecord = queued;

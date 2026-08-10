@@ -33,7 +33,8 @@ import {
   runXAgentBackfillShadowPipeline,
   type XAgentShadowPipelineResult,
 } from "../lib/x-agent/runShadowPipeline";
-import { disconnectPrisma, getPrisma } from "../lib/prisma";
+import { getPrisma, disconnectPrisma } from "../lib/prisma";
+import { ensureXPostQueueSchemaOnce } from "../lib/x-agent/ensureXPostQueueSchema";
 import { runCronPublisher } from "../lib/x-agent/cronPublisher";
 import {
   isXPublisherSchedulerActive,
@@ -312,6 +313,21 @@ async function main(): Promise<void> {
   loadEnvFiles();
   logReviewEmailEnvAtStartup();
   bootstrapCloudWorker();
+
+  const prisma = getPrisma();
+  if (prisma) {
+    try {
+      await ensureXPostQueueSchemaOnce(prisma);
+      console.log(
+        `[${formatTimestamp()}] [Shadow Cron] x_post_queue schema patches applied`
+      );
+    } catch (error) {
+      console.warn(
+        `[${formatTimestamp()}] [Shadow Cron] x_post_queue schema patch failed (enqueue will retry):`,
+        error instanceof Error ? error.message : error
+      );
+    }
+  }
 
   const mode = resolveShadowMode();
   if (mode === "daemon") {

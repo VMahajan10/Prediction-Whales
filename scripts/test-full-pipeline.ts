@@ -17,6 +17,7 @@ import {
   sendReviewEmail,
 } from "@/lib/email/sendReviewEmail";
 import { disconnectPrisma, getPrisma, isPrismaEnabled } from "@/lib/prisma";
+import { ensureXPostQueueSchema } from "@/lib/x-agent/ensureXPostQueueSchema";
 import { selectAndRenderPostTemplate } from "@/lib/templates/postTemplates";
 import { fetchLastTemplateFamily } from "@/lib/templates/queueHelpers";
 import {
@@ -86,18 +87,7 @@ function makeTradePayload(tradeId: string): TradePayload {
 async function ensureVariantIdColumn(
   prisma: NonNullable<ReturnType<typeof getPrisma>>
 ): Promise<void> {
-  await prisma.$executeRawUnsafe(
-    `ALTER TABLE "x_post_queue" ADD COLUMN IF NOT EXISTS "variant_id" text`
-  );
-  await prisma.$executeRawUnsafe(
-    `ALTER TABLE "x_post_queue" ADD COLUMN IF NOT EXISTS "ev_gloss" text`
-  );
-  await prisma.$executeRawUnsafe(
-    `ALTER TABLE "x_post_queue" ADD COLUMN IF NOT EXISTS "x_media_id" text`
-  );
-  await prisma.$executeRawUnsafe(
-    `ALTER TABLE "x_post_queue" ADD COLUMN IF NOT EXISTS "receipt_media_url" text`
-  );
+  await ensureXPostQueueSchema(prisma);
 }
 
 async function main(): Promise<void> {
