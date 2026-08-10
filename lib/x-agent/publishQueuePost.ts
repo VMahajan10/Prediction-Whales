@@ -4,20 +4,13 @@ import {
   isTwitterCredentialsConfigured,
   resolveTwitterCredentials,
 } from "@/lib/twitter/credentials";
-import {
-  generateWhaleReceiptPng,
-  resolveWhaleReceiptData,
-} from "@/lib/x-agent/generateWhaleReceiptPng";
 import { POST_STATUS } from "@/lib/x-agent/postStatus";
 import {
   parseTwitterPublishError,
   recordPublishFailure,
 } from "@/lib/x-agent/publishRetry";
 import { updateQueueById } from "@/lib/x-agent/reviewDb";
-import {
-  sendPublicTelegramPost,
-  type PublicTelegramPostMedia,
-} from "@/lib/services/publicTelegramService";
+import { sendPublicTelegramPost } from "@/lib/services/publicTelegramService";
 
 const LOG_PREFIX = "[publishScheduledQueueItem]";
 
@@ -25,7 +18,6 @@ export interface PublishQueuePostResult {
   ok: boolean;
   skipped?: boolean;
   tweetId?: string;
-  mediaId?: string;
   telegramMessageId?: string;
   telegramError?: string;
   error?: string;
@@ -41,59 +33,9 @@ export function isTwitterPublishingConfigured(): boolean {
   return isTwitterCredentialsConfigured();
 }
 
-async function buildReceiptPng(item: XPostQueue): Promise<Buffer | null> {
-  try {
-    const receiptData = await resolveWhaleReceiptData(item);
-    return await generateWhaleReceiptPng(receiptData);
-  } catch (error) {
-    console.warn(
-      `${LOG_PREFIX} Receipt PNG generation failed for queue id=${item.id} — text-only fallback`,
-      error instanceof Error ? error.message : error
-    );
-    return null;
-  }
-}
-
-function resolveTelegramMedia(
-  item: XPostQueue,
-  receiptPng: Buffer | null
-): PublicTelegramPostMedia | undefined {
-  if (receiptPng) {
-    return { buffer: receiptPng, filename: "whale-receipt.png" };
-  }
-  if (item.receiptMediaUrl?.trim()) {
-    return { url: item.receiptMediaUrl.trim() };
-  }
-  return undefined;
-}
-
-async function uploadReceiptMedia(
-  client: TwitterApi,
-  item: XPostQueue,
-  receiptPng: Buffer | null
-): Promise<string | null> {
-  if (item.xMediaId?.trim()) {
-    return item.xMediaId.trim();
-  }
-
-  if (!receiptPng) return null;
-
-  try {
-    return await client.v1.uploadMedia(receiptPng, { type: "png" });
-  } catch (error) {
-    console.warn(
-      `${LOG_PREFIX} Receipt upload failed for queue id=${item.id} — posting text only`,
-      error instanceof Error ? error.message : error
-    );
-    return null;
-  }
-}
-
-/** Post copy + optional receipt to X only. */
+/** Post template copy to X — text only, no media attachments. */
 async function publishToX(
-  item: XPostQueue,
-  text: string,
-  receiptPng: Buffer | null
+  text: string
 ): Promise<PublishQueuePostResult> {
   const credentialCheck = resolveTwitterCredentials();
   if (!credentialCheck.ok) {
@@ -112,17 +54,8 @@ async function publishToX(
   });
 
   try {
-    const mediaId = await uploadReceiptMedia(client, item, receiptPng);
-
-    const response =
-      mediaId != null
-        ? await client.readWrite.v2.tweet(text, {
-            media: { media_ids: [mediaId] },
-          })
-        : await client.readWrite.v2.tweet(text);
-
-    const { data } = response;
-    return { ok: true, tweetId: data.id, mediaId: mediaId ?? undefined };
+    const { data } = await client.readWrite.v2.tweet(text);
+    return { ok: true, tweetId: data.id };
   } catch (error) {
     const classified = parseTwitterPublishError(error);
     console.error(
@@ -174,8 +107,8 @@ async function handlePublishFailure(
 
 /**
  * Dual-publish a scheduled queue item to X and the public Telegram channel.
- * Runs both in parallel; X success is required to mark PUBLISHED.
- * Telegram failure is logged but does not block X publish.
+ * Both channels receive plain template text only — no image or media attachments.
+ * X success is required to mark PUBLISHED; Telegram failure is logged but non-blocking.
  */
 export async function publishScheduledQueueItem(
   item: XPostQueue
@@ -195,12 +128,9 @@ export async function publishScheduledQueueItem(
     };
   }
 
-  const receiptPng = await buildReceiptPng(item);
-  const telegramMedia = resolveTelegramMedia(item, receiptPng);
-
   const [xOutcome, telegramOutcome] = await Promise.allSettled([
-    publishToX(item, text, receiptPng),
-    sendPublicTelegramPost(text, telegramMedia),
+    publishToX(text),
+    sendPublicTelegramPost(text),
   ]);
 
   const xResult: PublishQueuePostResult =
@@ -267,7 +197,7 @@ export async function publishScheduledQueueItem(
   await updateQueueById(item.id, {
     status: POST_STATUS.PUBLISHED,
     xTweetId: xResult.tweetId,
-    xMediaId: xResult.mediaId ?? null,
+    xMediaId: null,
     publicTelegramMessageId: telegramResult.messageId ?? null,
     dispatchedAt: new Date(),
     publishRetryCount: 0,
@@ -277,7 +207,6 @@ export async function publishScheduledQueueItem(
   return {
     ok: true,
     tweetId: xResult.tweetId,
-    mediaId: xResult.mediaId,
     telegramMessageId: telegramResult.messageId,
     telegramError: telegramResult.sent ? undefined : telegramResult.error,
   };

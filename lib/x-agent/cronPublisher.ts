@@ -110,7 +110,7 @@ export async function runCronPublisher(): Promise<CronPublisherResult> {
       if (publish.ok) {
         result.published += 1;
         console.log(
-          `${LOG_PREFIX} ✅ Published id=${item.id} status=PUBLISHED xTweetId=${publish.tweetId ?? "n/a"} xMediaId=${publish.mediaId ?? "n/a"} telegramMessageId=${publish.telegramMessageId ?? "n/a"}`
+          `${LOG_PREFIX} ✅ Published id=${item.id} status=PUBLISHED xTweetId=${publish.tweetId ?? "n/a"} telegramMessageId=${publish.telegramMessageId ?? "n/a"}`
         );
         continue;
       }
