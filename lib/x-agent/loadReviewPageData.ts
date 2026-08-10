@@ -5,11 +5,8 @@ import { isDatabaseEnabled } from "@/lib/crossmarket/store/db";
 import { getRandomScheduledTime } from "@/lib/x-agent/reviewSchedule";
 import { findQueueById } from "@/lib/x-agent/reviewDb";
 import { formatReviewDecisionBadge } from "@/lib/x-agent/reviewDecision";
-import {
-  findWhaleByWallet,
-  formatWalletPseudonym,
-  isAnonymousWalletAddress,
-} from "@/lib/x-agent/whaleRegistryDb";
+import { isAnonymousWalletAddress } from "@/lib/x-agent/whaleRegistryDb";
+import { getWhaleAlias } from "@/lib/x-agent/getWhaleAlias";
 import { formatWhaleDisplayLabel } from "@/lib/x-agent/whaleDisplay";
 import { logReviewRouteEnvStatus } from "@/lib/serverEnv";
 import {
@@ -68,21 +65,16 @@ export async function loadReviewPageData(
     let whaleName = formatWhaleDisplayLabel(item.walletAddress);
     try {
       if (!isAnonymousWalletAddress(item.walletAddress)) {
-        const whale = await findWhaleByWallet(item.walletAddress);
-        whaleName = formatWhaleDisplayLabel(
-          item.walletAddress,
-          whale?.pseudonym ?? formatWalletPseudonym(item.walletAddress)
-        );
+        whaleName =
+          (await getWhaleAlias(item.walletAddress)) ??
+          formatWhaleDisplayLabel(item.walletAddress);
       }
     } catch (whaleError) {
       console.warn(
         "[review/[id]] Whale registry lookup failed:",
         whaleError instanceof Error ? whaleError.message : whaleError
       );
-      whaleName = formatWhaleDisplayLabel(
-        item.walletAddress,
-        formatWalletPseudonym(item.walletAddress)
-      );
+      whaleName = formatWhaleDisplayLabel(item.walletAddress);
     }
 
     let evPercent: number | null = null;

@@ -21,3 +21,5 @@ export {
   formatExplicitNoOutcome,
   MAX_TEMPLATE_SIDE_LENGTH,
 } from "@/lib/x-agent/sideSanitizer";
+
+export { getWhaleAlias, needsGeneratedWhalePseudonym } from "@/lib/x-agent/getWhaleAlias";

@@ -114,7 +114,17 @@ export function isUsableCustomWhaleName(
 }
 
 export function generateDeterministicWhalePseudonym(walletAddress: string): string {
-  const hash = hashWalletAddress(walletAddress);
+  const normalized = normalizeWallet(walletAddress);
+  if (
+    !normalized ||
+    isAnonymousWalletAddress(normalized) ||
+    normalized === "unknown" ||
+    normalized === "anonymous"
+  ) {
+    return "Anonymous Observer";
+  }
+
+  const hash = hashWalletAddress(normalized);
   const adjective = WHALE_ADJECTIVES[hash % WHALE_ADJECTIVES.length];
   const noun =
     WHALE_NOUNS[Math.floor(hash / WHALE_ADJECTIVES.length) % WHALE_NOUNS.length];

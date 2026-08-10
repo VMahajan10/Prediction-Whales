@@ -63,6 +63,7 @@ import {
   persistLastEvGloss,
 } from "@/lib/x-agent/evGlossStore";
 import { formatWhaleDisplayLabel } from "@/lib/x-agent/whaleDisplay";
+import { getWhaleAlias } from "@/lib/x-agent/getWhaleAlias";
 import {
   ANONYMOUS_WALLET_ADDRESS,
   ensureWhaleInRegistry,
@@ -412,10 +413,10 @@ export async function processWhaleTradeForXAgent(
     return;
   }
 
-  const whaleLabel = formatWhaleDisplayLabel(
-    walletAddress,
-    whaleRegistry.whale.pseudonym
-  );
+  const whaleLabel = anonymousTrade
+    ? formatWhaleDisplayLabel(walletAddress)
+    : (await getWhaleAlias(walletAddress)) ??
+      formatWhaleDisplayLabel(walletAddress);
 
   let marketContext: string | null = null;
   try {

@@ -10,6 +10,7 @@ import { formatPriceCents, formatStakeCompact } from "@/lib/whaleDetails";
 import { resolveFeedTradeEvDisplay } from "@/lib/feedTradeEv";
 import {
   formatWhaleWinRatePercent,
+  isAnonymousWalletAddress,
   sanitizeWhaleDisplayName,
 } from "@/lib/whaleIdentityResolver";
 import type { WhaleTrade } from "@/lib/whaleTrades";
@@ -39,7 +40,16 @@ function resolveFeedWhaleIdentity(trade: WhaleTrade) {
     };
   }
 
-  const wallet = trade.proxyWallet ?? "unknown";
+  const wallet = trade.proxyWallet?.trim();
+  if (!wallet || isAnonymousWalletAddress(wallet)) {
+    return {
+      pseudonym: "Anonymous Observer",
+      initials: "AO",
+      winRate: null,
+      anonymous: true as const,
+    };
+  }
+
   const identity = trade.whaleIdentity;
   const pseudonym = sanitizeWhaleDisplayName(
     identity?.pseudonym ?? null,

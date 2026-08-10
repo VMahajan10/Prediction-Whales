@@ -3,7 +3,9 @@ import "server-only";
 import type { WhaleRegistry } from "@/lib/crossmarket/store/schema";
 import {
   ANONYMOUS_WALLET_ADDRESS,
+  generateDeterministicWhalePseudonym,
   isAnonymousWalletAddress,
+  isUsableCustomWhaleName,
 } from "@/lib/whaleIdentityResolver";
 import { getPrisma, isPrismaEnabled } from "@/lib/prisma";
 
@@ -19,6 +21,19 @@ export function formatWalletPseudonym(wallet: string): string {
   const normalized = normalizeWalletAddress(wallet);
   if (normalized.length < 12) return normalized;
   return `${normalized.slice(0, 6)}…${normalized.slice(-4)}`;
+}
+
+export function resolveDeterministicWhalePseudonym(wallet: string): string {
+  return generateDeterministicWhalePseudonym(normalizeWalletAddress(wallet));
+}
+
+export function isRegistryPseudonymUnlabelled(
+  walletAddress: string,
+  pseudonym?: string | null
+): boolean {
+  if (!pseudonym?.trim()) return true;
+  if (!isUsableCustomWhaleName(pseudonym, walletAddress)) return true;
+  return pseudonym.trim() === formatWalletPseudonym(walletAddress);
 }
 
 export async function findWhaleByWallet(
@@ -79,6 +94,9 @@ export async function upsertWhaleRegistry(input: {
     return await prisma.whaleRegistry.upsert({
       where: { walletAddress: address },
       update: {
+        ...(input.pseudonym != null && input.pseudonym.trim()
+          ? { pseudonym: input.pseudonym.trim() }
+          : {}),
         ...(input.resolvedBetsCount != null
           ? { resolvedBetsCount: input.resolvedBetsCount }
           : {}),
@@ -90,7 +108,8 @@ export async function upsertWhaleRegistry(input: {
       },
       create: {
         walletAddress: address,
-        pseudonym: input.pseudonym ?? formatWalletPseudonym(address),
+        pseudonym:
+          input.pseudonym?.trim() || resolveDeterministicWhalePseudonym(address),
         resolvedBetsCount: input.resolvedBetsCount ?? 0,
         avgEv: input.avgEv ?? 0,
         winRate: input.winRate ?? 0,
@@ -116,12 +135,28 @@ export async function ensureWhaleInRegistry(
 ): Promise<{ whale: WhaleRegistry; created: boolean } | null> {
   const existing = await findWhaleByWallet(walletAddress);
   if (existing) {
+    if (isRegistryPseudonymUnlabelled(walletAddress, existing.pseudonym)) {
+      const upgraded = await upsertWhaleRegistry({
+        walletAddress,
+        pseudonym: resolveDeterministicWhalePseudonym(walletAddress),
+        resolvedBetsCount: existing.resolvedBetsCount,
+        avgEv: existing.avgEv,
+        winRate: existing.winRate,
+        avgStakeNotional: existing.avgStakeNotional,
+      });
+      if (upgraded) {
+        return { whale: upgraded, created: false };
+      }
+    }
     return { whale: existing, created: false };
   }
 
   const whale = await upsertWhaleRegistry({
     walletAddress,
-    pseudonym: hints?.pseudonym,
+    pseudonym:
+      hints?.pseudonym && isUsableCustomWhaleName(hints.pseudonym, walletAddress)
+        ? hints.pseudonym
+        : resolveDeterministicWhalePseudonym(walletAddress),
     avgEv: hints?.avgEv,
     avgStakeNotional: hints?.avgStakeNotional,
     resolvedBetsCount: hints?.resolvedBetsCount,
