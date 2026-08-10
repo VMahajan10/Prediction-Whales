@@ -32,11 +32,13 @@ function pipeline(
 }
 
 describe("resolveXAgentQueueEvPercent", () => {
-  it("passes +2.4% EV through unchanged", () => {
+  it("passes pipeline EV through unchanged", () => {
     expect(resolveXAgentQueueEvPercent(pipeline({ netEvPercent: 2.4 }))).toBe(
       2.4
     );
-    expect(meetsXAgentTradeEvGate(2.4)).toBe(true);
+    expect(resolveXAgentQueueEvPercent(pipeline({ netEvPercent: 4.2 }))).toBe(
+      4.2
+    );
   });
 
   it("rejects negative EV without neutralization", () => {
@@ -56,8 +58,10 @@ describe("resolveXAgentQueueEvPercent", () => {
     expect(meetsXAgentTradeEvGate(null)).toBe(false);
   });
 
-  it("requires at least +0.1% EV to pass", () => {
-    expect(meetsXAgentTradeEvGate(0.09)).toBe(false);
-    expect(meetsXAgentTradeEvGate(0.1)).toBe(true);
+  it("requires at least +3.0% EV to pass", () => {
+    expect(meetsXAgentTradeEvGate(2.9)).toBe(false);
+    expect(meetsXAgentTradeEvGate(2.4)).toBe(false);
+    expect(meetsXAgentTradeEvGate(3.0)).toBe(true);
+    expect(meetsXAgentTradeEvGate(4.2)).toBe(true);
   });
 });

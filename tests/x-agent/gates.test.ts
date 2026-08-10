@@ -165,17 +165,17 @@ describe("evaluateWalletCredibilityPreGate", () => {
 });
 
 describe("evaluateTradeEvPreGate", () => {
-  it("fails when live trade EV is below +0.1%", () => {
+  it("fails when live trade EV is below +3.0%", () => {
     expect(evaluateTradeEvPreGate(-0.1).passed).toBe(false);
     expect(evaluateTradeEvPreGate(-0.1).reason).toBe(FAILED_TRADE_EV_REASON);
     expect(evaluateTradeEvPreGate(0).passed).toBe(false);
-    expect(evaluateTradeEvPreGate(0.09).passed).toBe(false);
+    expect(evaluateTradeEvPreGate(2.9).passed).toBe(false);
   });
 
-  it("passes at or above +0.1% floor", () => {
-    expect(evaluateTradeEvPreGate(0.1).passed).toBe(true);
-    expect(evaluateTradeEvPreGate(2.4).passed).toBe(true);
-    expect(evaluateTradeEvPreGate(2.9).passed).toBe(true);
+  it("passes at or above +3.0% floor", () => {
+    expect(evaluateTradeEvPreGate(3.0).passed).toBe(true);
+    expect(evaluateTradeEvPreGate(3.5).passed).toBe(true);
+    expect(evaluateTradeEvPreGate(5.0).passed).toBe(true);
   });
 
   it("fails whale-tier negative or neutral EV without bypass", () => {

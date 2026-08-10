@@ -11,18 +11,18 @@ import {
 } from "@/lib/x-agent/stakeFloor";
 import { CREDIBILITY_CONFIG } from "@/lib/feedQualification";
 
-/** X-agent post-queue EV floor (+0.1%) — feed UI keeps MIN_FEED_TRADE_EV_PCT at +3%. */
-export const HIGH_EV_TRADE_THRESHOLD_PCT = 0.1;
+/** X-agent post-queue EV floor (+3.0%) — aligned with MIN_FEED_TRADE_EV_PCT. */
+export const HIGH_EV_TRADE_THRESHOLD_PCT = 3.0;
 
-/** Minimum live trade EV as decimal for x_post_queue (0.001 = +0.1%). */
+/** Minimum live trade EV as decimal for x_post_queue (0.03 = +3.0%). */
 export const MIN_TRADE_EV_DECIMAL = HIGH_EV_TRADE_THRESHOLD_PCT / 100;
 
 /** Human-readable post-queue rejection when live trade EV is below the floor. */
 export const FAILED_TRADE_EV_REASON =
-  "Failed Trade EV (< +0.1%)" as const;
+  "Failed Trade EV (< +3.0%)" as const;
 
 /** Gate-drop log line when trade EV is below {@link HIGH_EV_TRADE_THRESHOLD_PCT}. */
-export const X_AGENT_EV_GATE_DROP_LABEL = "EV < +0.1% min requirement" as const;
+export const X_AGENT_EV_GATE_DROP_LABEL = "EV < +3.0% min requirement" as const;
 
 /** OpenAI / ensemble timeout for x-agent enqueue EV resolution (ms). */
 export const X_AGENT_ENSEMBLE_LLM_TIMEOUT_MS = 5000;
