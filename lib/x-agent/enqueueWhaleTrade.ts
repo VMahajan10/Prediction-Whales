@@ -52,7 +52,7 @@ import {
 } from "@/lib/notifications/telegram";
 import { isVerboseXAgentLoggingEnabled } from "@/lib/x-agent/verboseLogging";
 import { logStderr, logStdout } from "@/lib/utils";
-import { selectPostTemplate } from "@/lib/templates/postTemplates";
+import { selectPostTemplate } from "@/lib/x-agent/templateEngine";
 import {
   fetchLastTemplateFamily,
   hasActiveWhaleMarketQueueItem,
@@ -583,6 +583,7 @@ export async function processWhaleTradeForXAgent(
         marketTitle: translation.marketPlain,
         evPercent: tradeEvPercent,
         queueId: insertedRecord.id,
+        draftCopy: copyText,
       });
       if (telegramRes.sent) {
         logStdout("✅ [Queue Telegram Success]");

@@ -1,5 +1,5 @@
 /**
- * @deprecated Import from `@/lib/templates/postTemplates` instead.
+ * @deprecated Import from `@/lib/x-agent/templateEngine` instead.
  * Re-exported for backward compatibility with existing x-agent imports.
  */
 import {
@@ -9,7 +9,7 @@ import {
   TEMPLATE_FAMILIES,
   type PostTemplateInputs,
   type TemplateFamily,
-} from "@/lib/templates/postTemplates";
+} from "@/lib/x-agent/templateEngine";
 
 export {
   TEMPLATE_FAMILIES,

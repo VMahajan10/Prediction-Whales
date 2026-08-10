@@ -13,6 +13,8 @@ export interface TradeTelegramAlertInput {
   marketTitle: string;
   evPercent: number | null;
   queueId: string;
+  /** Rendered V1–V8 draft from the Templates.md engine. */
+  draftCopy?: string;
 }
 
 export function isTelegramConfigured(): boolean {
@@ -49,9 +51,12 @@ export function buildTelegramTradeAlertMessage(
   const market = escapeTelegramHtml(input.marketTitle.trim() || "Unknown");
   const stake = escapeTelegramHtml(formatStakeUsd(input.stakeNotional));
   const ev = escapeTelegramHtml(formatEvLabel(input.evPercent));
+  const draft = escapeTelegramHtml(
+    input.draftCopy?.trim() || "Draft ready for review"
+  );
 
   return [
-    "🐋 <b>Whale Alert</b>",
+    draft,
     "",
     `<b>Whale:</b> ${whale}`,
     `<b>Stake:</b> ${stake}`,

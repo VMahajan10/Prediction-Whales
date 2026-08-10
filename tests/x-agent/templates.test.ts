@@ -46,11 +46,17 @@ const SCENARIOS: Array<{
   },
   {
     name: "contrarian",
-    inputs: baseInputs({ postedCount30d: 0, entry: 35 }),
+    inputs: baseInputs({ postedCount30d: 0, entry: 35, now: 42 }),
   },
   {
     name: "conviction",
-    inputs: baseInputs({ postedCount30d: 0, entry: 52, now: 52 }),
+    inputs: baseInputs({
+      postedCount30d: 0,
+      entry: 52,
+      now: undefined,
+      stakeNotional: 52_000,
+      avgStakeNotional: 20_000,
+    }),
     lastFamilyUsed: "V7",
   },
   {

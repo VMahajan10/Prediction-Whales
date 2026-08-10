@@ -1,31 +1,27 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildEvParenthetical,
-  buildTraderAvgEvClause,
-  formatTradeEvLabel,
-  formatTraderAvgEvLabel,
   getEligibleTemplateFamilies,
+  PostTemplateError,
   sanitizePostDraft,
   selectPostTemplate,
   selectResolutionReceiptTemplate,
   TEMPLATE_FAMILIES,
 } from "@/lib/templates/postTemplates";
 
-function baseInputs(
-  overrides: Record<string, unknown> = {}
-) {
+function baseInputs(overrides: Record<string, unknown> = {}) {
   return {
     whale: "DeepWallet",
-    side: "buy yes",
+    side: "Zhizhen Zhang",
     entry: 35,
     now: 42,
     avg_ev: 0.08,
-    marketPlain: "China invade Taiwan",
-    stakeNotional: 30_000,
+    marketPlain: "to win the Round of 16 match",
+    stakeNotional: 52_000,
     avgStakeNotional: 20_000,
     postedCount30d: 3,
-    resolvedBetsCount: 512,
-    winRate: 0.61,
+    resolvedBetsCount: 1_240,
+    winRate: 0.68,
+    category: "Champions League",
     ...overrides,
   };
 }
@@ -63,6 +59,160 @@ describe("selectPostTemplate", () => {
     expect(selection.variantId.startsWith("V8-")).toBe(true);
   });
 
+  it("prioritizes V5 → V7 → V3 → V4 → V6 for live trades", () => {
+    expect(
+      getEligibleTemplateFamilies(
+        baseInputs({
+          entry: 35,
+          now: 42,
+          stakeNotional: 52_000,
+          avgStakeNotional: 20_000,
+          postedCount30d: 3,
+        })
+      )[0]
+    ).toBe("V5");
+
+    expect(
+      getEligibleTemplateFamilies(
+        baseInputs({
+          entry: 52,
+          now: 52,
+          stakeNotional: 52_000,
+          avgStakeNotional: 20_000,
+          postedCount30d: 0,
+        })
+      )[0]
+    ).toBe("V7");
+
+    expect(
+      getEligibleTemplateFamilies(
+        baseInputs({
+          entry: 52,
+          now: 58,
+          stakeNotional: 30_000,
+          avgStakeNotional: 20_000,
+          postedCount30d: 0,
+        })
+      )[0]
+    ).toBe("V3");
+
+    expect(
+      getEligibleTemplateFamilies(
+        baseInputs({
+          entry: 52,
+          now: undefined,
+          stakeNotional: 52_000,
+          avgStakeNotional: 20_000,
+          postedCount30d: 0,
+        })
+      )[0]
+    ).toBe("V4");
+
+    expect(
+      getEligibleTemplateFamilies(
+        baseInputs({
+          entry: 52,
+          now: undefined,
+          stakeNotional: 30_000,
+          avgStakeNotional: 20_000,
+          postedCount30d: 3,
+          category: "CA politics",
+        })
+      )[0]
+    ).toBe("V6");
+  });
+
+  it("formats slots per Templates.md schema", () => {
+    // V5-a includes stake, entry, now, and win_rate.
+    let draft: string | null = null;
+    for (let seed = 0; seed < 40; seed += 1) {
+      const selection = selectPostTemplate(
+        baseInputs({
+          entry: 35,
+          now: 42,
+          stakeNotional: 52_000,
+          avgStakeNotional: 8_000,
+          agoMinutes: 8,
+          postedCount30d: 0,
+          avg_ev: 0.12,
+          winRate: 0.68,
+          resolvedBetsCount: 1_240,
+        }),
+        { lastTemplateFamily: "V7", random: () => seed / 40 }
+      );
+      if (selection.variantId === "V5-a") {
+        draft = selection.renderedDraft;
+        break;
+      }
+    }
+
+    expect(draft).not.toBeNull();
+    expect(draft).toMatch(/\$52K/);
+    expect(draft).toMatch(/35¢/);
+    expect(draft).toMatch(/42¢/);
+    expect(draft).not.toMatch(/¢¢/);
+    expect(draft).toMatch(/68%/);
+    expect(draft).not.toMatch(/%%/);
+
+    const conviction = selectPostTemplate(
+      baseInputs({
+        entry: 64,
+        now: undefined,
+        stakeNotional: 52_000,
+        avgStakeNotional: 8_000,
+        postedCount30d: 0,
+      }),
+      { lastTemplateFamily: "V2", random: () => 0 }
+    );
+    expect(conviction.templateFamily).toBe("V4");
+    expect(conviction.renderedDraft).toMatch(/~\$8K/);
+  });
+
+  it("never prints avg_ev without a gloss", () => {
+    const selection = selectPostTemplate(
+      baseInputs({
+        entry: 52,
+        now: undefined,
+        postedCount30d: 0,
+        avgStakeNotional: undefined,
+        avg_ev: 0.12,
+      }),
+      { random: () => 0 }
+    );
+
+    if (selection.renderedDraft.includes("+12%")) {
+      expect(selection.renderedDraft).toContain(selection.evGloss);
+    }
+  });
+
+  it("fails closed when required slots are missing", () => {
+    expect(() =>
+      selectPostTemplate(
+        baseInputs({
+          whale: "",
+        })
+      )
+    ).toThrow(PostTemplateError);
+
+    expect(() =>
+      selectPostTemplate(
+        baseInputs({
+          whale: "0xabc12345deadbeef",
+        })
+      )
+    ).toThrow(/whale\(named\)/);
+
+    expect(() =>
+      selectPostTemplate(
+        baseInputs({
+          avg_ev: undefined,
+          winRate: undefined,
+          resolvedBetsCount: undefined,
+        })
+      )
+    ).toThrow(/credibility/);
+  });
+
   it("sanitizes URLs and siren emojis", () => {
     const dirty = sanitizePostDraft(
       "🚨 Check https://evil.com now #WhaleTracker #crypto"
@@ -89,42 +239,18 @@ describe("selectPostTemplate", () => {
     );
   });
 
-  it("formats Trade EV and Trader Avg EV labels distinctly", () => {
-    expect(formatTradeEvLabel(5.2)).toBe("Trade EV: +5.2%");
-    expect(formatTraderAvgEvLabel(0.08)).toBe("Trader Avg EV: +8%");
-    expect(
-      buildTraderAvgEvClause({ avg_ev: 0.08, resolvedBetsCount: 512 })
-    ).toBe("Trader Avg EV: +8% over 512 bets");
-    expect(
-      buildTraderAvgEvClause({ avg_ev: 0.08, resolvedBetsCount: 99 })
-    ).toBeNull();
-    expect(
-      buildEvParenthetical({
-        tradeEvLabel: "Trade EV: +5.2%",
-        traderAvgEvClause: "Trader Avg EV: +8% over 512 bets",
-      })
-    ).toBe(
-      "(Trade EV: +5.2% · Trader Avg EV: +8% over 512 bets)"
-    );
-    expect(
-      buildEvParenthetical({
-        tradeEvLabel: "Trade EV: +5.2%",
-        traderAvgEvClause: null,
-      })
-    ).toBe("(Trade EV: +5.2%)");
-  });
-
-  it("renders V5-b with explicit trade and trader EV labels", () => {
+  it("renders strict V5-b copy with gloss-bound AVG EV", () => {
     let v5bDraft: string | null = null;
+    let gloss: string | null = null;
     for (let seed = 0; seed < 50; seed += 1) {
       const selection = selectPostTemplate(
         baseInputs({
           entry: 35,
-          now: undefined,
+          now: 42,
           postedCount30d: 0,
           avgStakeNotional: undefined,
-          tradeEvPercent: 5.2,
-          resolvedBetsCount: 512,
+          resolvedBetsCount: 1_240,
+          avg_ev: 0.12,
         }),
         {
           lastTemplateFamily: "V6",
@@ -133,41 +259,16 @@ describe("selectPostTemplate", () => {
       );
       if (selection.templateFamily === "V5" && selection.variantId === "V5-b") {
         v5bDraft = selection.renderedDraft;
+        gloss = selection.evGloss;
         break;
       }
     }
 
     expect(v5bDraft).not.toBeNull();
-    expect(v5bDraft).toMatch(
-      /^The crowd has this at \d+¢\. A whale took .+ with \$[\d.,kM]+ \(Trade EV: \+5\.2% · Trader Avg EV: \+8% over 512 bets\)\./
-    );
-  });
-
-  it("omits Trader Avg EV from V5-b when resolved bets are below 100", () => {
-    let v5bDraft: string | null = null;
-    for (let seed = 0; seed < 50; seed += 1) {
-      const selection = selectPostTemplate(
-        baseInputs({
-          entry: 35,
-          now: undefined,
-          postedCount30d: 0,
-          avgStakeNotional: undefined,
-          tradeEvPercent: 4,
-          resolvedBetsCount: 50,
-        }),
-        {
-          lastTemplateFamily: "V6",
-          random: () => seed / 50,
-        }
-      );
-      if (selection.templateFamily === "V5" && selection.variantId === "V5-b") {
-        v5bDraft = selection.renderedDraft;
-        break;
-      }
-    }
-
-    expect(v5bDraft).not.toBeNull();
-    expect(v5bDraft).toContain("(Trade EV: +4%)");
+    expect(v5bDraft).toContain("The crowd has this at 42¢.");
+    expect(v5bDraft).toContain("+12% AVG EV");
+    expect(v5bDraft).toContain(gloss!);
+    expect(v5bDraft).not.toContain("Trade EV");
     expect(v5bDraft).not.toContain("Trader Avg EV");
   });
 });

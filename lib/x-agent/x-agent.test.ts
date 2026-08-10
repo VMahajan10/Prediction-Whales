@@ -97,15 +97,18 @@ const contrarian = generateXPostCopy(
     whale: "DeepWallet",
     side: "buy yes",
     entry: 35,
+    now: 42,
     avg_ev: 0.08,
     marketPlain: "China invade Taiwan",
     stakeNotional: 30_000,
     postedCount30d: 0,
+    resolvedBetsCount: 512,
+    winRate: 0.61,
   },
   undefined,
   () => 0
 );
-assert.equal(contrarian.family, "V5", "entry below 40c selects V5");
+assert.equal(contrarian.family, "V5", "entry below 40c with moved line selects V5");
 assert.ok(!contrarian.copyText.includes("🚨"));
 assert.ok(!contrarian.copyText.includes("http"));
 
@@ -120,12 +123,17 @@ const moved = generateXPostCopy(
     stakeNotional: 30_000,
     avgStakeNotional: 20_000,
     postedCount30d: 3,
+    resolvedBetsCount: 512,
+    winRate: 0.61,
   },
   "V6"
 );
-assert.equal(moved.family, "V3", "line move picks V3 when V6 excluded");
+assert.equal(moved.family, "V3", "line move picks V3 when V5/V7 ineligible and V6 excluded");
 assert.ok(
-  moved.copyText.includes("Now: 58¢") || moved.copyText.includes("already"),
+  moved.copyText.includes("58¢") &&
+    (moved.copyText.includes("Now:") ||
+      moved.copyText.includes("already") ||
+      moved.copyText.includes("now")),
   "line move copy references current price"
 );
 

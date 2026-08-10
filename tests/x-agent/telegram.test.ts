@@ -24,7 +24,7 @@ describe("telegram notifications", () => {
     expect(isTelegramConfigured()).toBe(false);
   });
 
-  it("builds an HTML trade alert with whale, stake, market, EV, and link", () => {
+  it("builds an HTML trade alert with draft lead-in, whale, stake, market, EV, and link", () => {
     process.env.NEXT_PUBLIC_APP_URL = "https://marketpulse.example.com";
 
     const message = buildTelegramTradeAlertMessage({
@@ -33,8 +33,13 @@ describe("telegram notifications", () => {
       marketTitle: "Fed cut rates in September",
       evPercent: 4.2,
       queueId: "queue-tg-1",
+      draftCopy:
+        "DeepWallet just put $25K on Fed cut at 64¢. Their record: 68% across 1,240 resolved bets.",
     });
 
+    expect(message.startsWith("DeepWallet just put $25K")).toBe(true);
+    expect(message).not.toContain("🚨");
+    expect(message).not.toContain("WHALE ALERT");
     expect(message).toContain("<b>Whale:</b> DeepWallet");
     expect(message).toContain("<b>Stake:</b> $25,000");
     expect(message).toContain("<b>Market:</b> Fed cut rates in September");
