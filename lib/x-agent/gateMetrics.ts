@@ -9,17 +9,26 @@ import {
   formatStakeFloorSummaryLabel,
   STAKE_FLOOR_DEFAULT_USD,
 } from "@/lib/x-agent/stakeFloor";
-import { CREDIBILITY_CONFIG, MIN_FEED_TRADE_EV_PCT } from "@/lib/feedQualification";
+import { CREDIBILITY_CONFIG } from "@/lib/feedQualification";
 
-/** Minimum live trade EV as display percent (+3.0%). */
-export const HIGH_EV_TRADE_THRESHOLD_PCT = MIN_FEED_TRADE_EV_PCT;
+/** X-agent post-queue EV floor (+0.0%) — feed UI keeps MIN_FEED_TRADE_EV_PCT at +3%. */
+export const HIGH_EV_TRADE_THRESHOLD_PCT = 0;
 
-/** Minimum live trade EV as decimal (trade.ev >= 0.03). */
+/** Minimum live trade EV as decimal for x_post_queue (0.0 = 0%). */
 export const MIN_TRADE_EV_DECIMAL = HIGH_EV_TRADE_THRESHOLD_PCT / 100;
 
 /** Human-readable post-queue rejection when live trade EV is below the floor. */
 export const FAILED_TRADE_EV_REASON =
-  "Failed Trade EV (< +3.0%)" as const;
+  "Failed Trade EV (< +0.0%)" as const;
+
+/** Stake tier: clamp timeout/degraded baselines to neutral 0% EV. */
+export const X_AGENT_NEUTRAL_EV_STAKE_USD = 1000;
+
+/** Stake tier: bypass the live trade EV gate entirely. */
+export const X_AGENT_EV_BYPASS_STAKE_USD = 5000;
+
+/** OpenAI / ensemble timeout for x-agent enqueue EV resolution (ms). */
+export const X_AGENT_ENSEMBLE_LLM_TIMEOUT_MS = 5000;
 
 /** Minimum USD stake for feed qualification and credibility gate (whale notional). */
 export const MIN_STAKE_THRESHOLD = CREDIBILITY_CONFIG.MIN_STAKE_USD;

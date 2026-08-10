@@ -165,16 +165,22 @@ describe("evaluateWalletCredibilityPreGate", () => {
 });
 
 describe("evaluateTradeEvPreGate", () => {
-  it("fails when live trade EV is below +3%", () => {
-    expect(evaluateTradeEvPreGate(-0.1).passed).toBe(false);
-    expect(evaluateTradeEvPreGate(0).passed).toBe(false);
-    expect(evaluateTradeEvPreGate(2.9).passed).toBe(false);
-    expect(evaluateTradeEvPreGate(2.9).reason).toBe(FAILED_TRADE_EV_REASON);
+  it("fails when live trade EV is below 0% for sub-neutral stakes", () => {
+    expect(evaluateTradeEvPreGate(-0.1, undefined, { stakeNotional: 600 }).passed).toBe(false);
+    expect(evaluateTradeEvPreGate(-0.1, undefined, { stakeNotional: 600 }).reason).toBe(
+      FAILED_TRADE_EV_REASON
+    );
   });
 
-  it("passes when live trade EV meets the +3% floor", () => {
-    expect(evaluateTradeEvPreGate(3.0).passed).toBe(true);
-    expect(evaluateTradeEvPreGate(5.0).passed).toBe(true);
+  it("passes at 0% floor and for positive EV", () => {
+    expect(evaluateTradeEvPreGate(0, undefined, { stakeNotional: 600 }).passed).toBe(true);
+    expect(evaluateTradeEvPreGate(2.4, undefined, { stakeNotional: 600 }).passed).toBe(true);
+    expect(evaluateTradeEvPreGate(2.9, undefined, { stakeNotional: 600 }).passed).toBe(true);
+  });
+
+  it("passes whale-tier neutralized EV", () => {
+    expect(evaluateTradeEvPreGate(0, undefined, { stakeNotional: 9_600 }).passed).toBe(true);
+    expect(evaluateTradeEvPreGate(-0.5, undefined, { stakeNotional: 5_000 }).passed).toBe(true);
   });
 });
 
@@ -208,11 +214,11 @@ describe("evaluateTradeGateMatrix", () => {
     const belowTradeEvFloor = evaluateTradeGateMatrix({
       trade: makeTrade(),
       whale: makeWhale({ resolvedBetsCount: 600, avgEv: 0.04 }),
-      tradeEvPercent: 2.0,
+      tradeEvPercent: -1.0,
     });
     expect(belowTradeEvFloor.passesEv).toBe(false);
     expect(belowTradeEvFloor.passesCredibility).toBe(true);
-    expect(belowTradeEvFloor.tradeEvDecimal).toBe(0.02);
+    expect(belowTradeEvFloor.tradeEvDecimal).toBe(-0.01);
   });
 
   it("records independent failures across multiple gates", () => {

@@ -17,7 +17,6 @@ import {
 import {
   FAILED_TRADE_EV_REASON,
   HIGH_EV_TRADE_THRESHOLD_PCT,
-  MIN_TRADE_EV_DECIMAL,
   MIN_WALLET_AVG_EV_DECIMAL,
   MIN_WALLET_AVG_EV_THRESHOLD_PCT,
   MIN_WALLET_RESOLVED_BETS,
@@ -27,6 +26,9 @@ import {
   type GateMetricsCollector,
   resolveGateMetricsCollector,
 } from "@/lib/x-agent/gateMetrics";
+import {
+  meetsXAgentTradeEvGate,
+} from "@/lib/x-agent/xAgentTradeEv";
 import {
   formatStakeFloorTierLabel,
   resolveStakeFloorUsd,
@@ -385,8 +387,10 @@ export function evaluateTradeGateMatrix(
   const walletAvgEv = whale?.avgEv ?? null;
 
   const passesSource = isPostQueueSourceAllowed(trade.source);
-  const passesEv =
-    tradeEvDecimal != null && tradeEvDecimal >= MIN_TRADE_EV_DECIMAL;
+  const passesEv = meetsXAgentTradeEvGate(
+    tradeEvPercent,
+    trade.stakeNotional
+  );
   const stakeFloor = resolveTradeStakeFloor(trade);
   const passesStake = trade.stakeNotional >= stakeFloor.floorUsd;
   const passesCredibility = evaluatePostQueueCredibilityGate({
@@ -595,11 +599,11 @@ export function evaluateWalletCredibilityPreGate(
 /** Step 6 — live trade EV gate (runs only after OpenAI / p_true pipeline). */
 export function evaluateTradeEvPreGate(
   tradeEvPercent: number | null,
-  tradeId?: string
+  tradeId?: string,
+  options?: { stakeNotional?: number }
 ): PreGateShortCircuitResult {
-  const tradeEvDecimal = tradeEvPercentToDecimal(tradeEvPercent);
-  const passesEv =
-    tradeEvDecimal != null && tradeEvDecimal >= MIN_TRADE_EV_DECIMAL;
+  const stakeNotional = options?.stakeNotional ?? 0;
+  const passesEv = meetsXAgentTradeEvGate(tradeEvPercent, stakeNotional);
 
   if (passesEv) {
     const message = `[Pass: Trade EV] Live trade EV (${formatTradeEvPct(tradeEvPercent ?? 0)}) >= +${HIGH_EV_TRADE_THRESHOLD_PCT.toFixed(1)}% min requirement`;

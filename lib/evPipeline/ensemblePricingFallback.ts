@@ -27,7 +27,7 @@ export interface EnsemblePricingResult {
 }
 
 /** Hard cap for live OpenAI ensemble on interactive / API paths. */
-export const ENSEMBLE_LLM_TIMEOUT_MS = 2500;
+export const ENSEMBLE_LLM_TIMEOUT_MS = 5000;
 
 const MEMORY_CACHE_TTL_MS = 15 * 60 * 1000;
 const MEMORY_NEGATIVE_TTL_MS = 60 * 1000;

@@ -15,8 +15,8 @@ import {
 
 const MANIFOLD_API = "https://api.manifold.markets";
 /** Per-page request cap; overall fetch is bounded by MANIFOLD_SPORTS_TIMEOUT_MS. */
-const FETCH_TIMEOUT_MS = 3000;
-export const MANIFOLD_SPORTS_TIMEOUT_MS = 3000;
+const FETCH_TIMEOUT_MS = 5000;
+export const MANIFOLD_SPORTS_TIMEOUT_MS = 5000;
 const PAGE_LIMIT = 100;
 const MAX_PAGES = 20;
 

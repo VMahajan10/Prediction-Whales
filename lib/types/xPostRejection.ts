@@ -12,6 +12,7 @@ export const X_POST_REJECTION_REASONS = [
   "DUPLICATE_TRADE",
   "RECENT_MARKET_POST",
   "Failed Trade EV (< +3.0%)",
+  "Failed Trade EV (< +0.0%)",
 ] as const;
 
 export type XPostRejectionReason = (typeof X_POST_REJECTION_REASONS)[number];

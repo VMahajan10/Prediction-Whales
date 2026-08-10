@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import "server-only";
 
 import type { XPostQueue } from "@/lib/crossmarket/store/schema";
-import { coalesceDisplayEvPercent } from "@/lib/evPipeline/tradeEvRecord";
 import { ensureFullyComputedTradeEv } from "@/lib/evPipeline/resolveTradeEv";
 import {
   pipelineEvLookupKey,
@@ -29,12 +28,14 @@ import {
   shouldDeferCredibilityForUnverifiedWhale,
 } from "@/lib/x-agent/postQueueGates";
 import {
-  type GateSummary,
-  type GateMetricsCollector,
   HIGH_EV_TRADE_THRESHOLD_PCT,
-  resolveGateMetricsCollector,
   recordQueuedSuccess,
+  resolveGateMetricsCollector,
+  type GateMetricsCollector,
+  type GateSummary,
+  X_AGENT_ENSEMBLE_LLM_TIMEOUT_MS,
 } from "@/lib/x-agent/gateMetrics";
+import { resolveXAgentQueueEvPercent } from "@/lib/x-agent/xAgentTradeEv";
 import { dispatchAdminReviewAlert } from "@/lib/x-agent/notifications";
 import { queueGateLogSuccess } from "@/lib/x-agent/batchedNeonWrites";
 import {
@@ -310,12 +311,19 @@ export async function processWhaleTradeForXAgent(
   let tradeEvPercent: number | null = null;
   let pipelinePmMid: number | null = null;
   if (evInput && lookupKey) {
-    const pipelineEv = await ensureFullyComputedTradeEv(lookupKey, evInput);
-    tradeEvPercent = coalesceDisplayEvPercent(pipelineEv);
+    const pipelineEv = await ensureFullyComputedTradeEv(lookupKey, evInput, null, {
+      ensembleLlmTimeoutMs: X_AGENT_ENSEMBLE_LLM_TIMEOUT_MS,
+    });
+    tradeEvPercent = resolveXAgentQueueEvPercent(
+      pipelineEv,
+      payload.stakeNotional
+    );
     pipelinePmMid = pipelineEv.pMarket ?? null;
   }
 
-  const evGate = evaluateTradeEvPreGate(tradeEvPercent, payload.tradeId);
+  const evGate = evaluateTradeEvPreGate(tradeEvPercent, payload.tradeId, {
+    stakeNotional: payload.stakeNotional,
+  });
   if (!evGate.passed) {
     await handlePreGateRejection(
       payload,
