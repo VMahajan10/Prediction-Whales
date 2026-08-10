@@ -17,6 +17,7 @@ import {
 import {
   FAILED_TRADE_EV_REASON,
   HIGH_EV_TRADE_THRESHOLD_PCT,
+  X_AGENT_EV_GATE_DROP_LABEL,
   MIN_WALLET_AVG_EV_DECIMAL,
   MIN_WALLET_AVG_EV_THRESHOLD_PCT,
   MIN_WALLET_RESOLVED_BETS,
@@ -173,10 +174,13 @@ function formatGateDropReason(
     case "LOW_EV": {
       const ev = context?.tradeEvPercent;
       if (ev == null || !Number.isFinite(ev)) {
-        return "EV unavailable (< +3%)";
+        return `EV unavailable (< +${HIGH_EV_TRADE_THRESHOLD_PCT.toFixed(1)}% min requirement)`;
+      }
+      if (ev < HIGH_EV_TRADE_THRESHOLD_PCT) {
+        return X_AGENT_EV_GATE_DROP_LABEL;
       }
       const sign = ev >= 0 ? "+" : "";
-      return `EV ${sign}${ev.toFixed(1)}% < +3%`;
+      return `EV ${sign}${ev.toFixed(1)}% < +${HIGH_EV_TRADE_THRESHOLD_PCT.toFixed(1)}%`;
     }
     case "ILLEGIBLE_MARKET":
       if (!trade.slug?.trim() && !trade.eventSlug?.trim()) {
@@ -387,10 +391,7 @@ export function evaluateTradeGateMatrix(
   const walletAvgEv = whale?.avgEv ?? null;
 
   const passesSource = isPostQueueSourceAllowed(trade.source);
-  const passesEv = meetsXAgentTradeEvGate(
-    tradeEvPercent,
-    trade.stakeNotional
-  );
+  const passesEv = meetsXAgentTradeEvGate(tradeEvPercent);
   const stakeFloor = resolveTradeStakeFloor(trade);
   const passesStake = trade.stakeNotional >= stakeFloor.floorUsd;
   const passesCredibility = evaluatePostQueueCredibilityGate({
@@ -599,11 +600,9 @@ export function evaluateWalletCredibilityPreGate(
 /** Step 6 — live trade EV gate (runs only after OpenAI / p_true pipeline). */
 export function evaluateTradeEvPreGate(
   tradeEvPercent: number | null,
-  tradeId?: string,
-  options?: { stakeNotional?: number }
+  tradeId?: string
 ): PreGateShortCircuitResult {
-  const stakeNotional = options?.stakeNotional ?? 0;
-  const passesEv = meetsXAgentTradeEvGate(tradeEvPercent, stakeNotional);
+  const passesEv = meetsXAgentTradeEvGate(tradeEvPercent);
 
   if (passesEv) {
     const message = `[Pass: Trade EV] Live trade EV (${formatTradeEvPct(tradeEvPercent ?? 0)}) >= +${HIGH_EV_TRADE_THRESHOLD_PCT.toFixed(1)}% min requirement`;

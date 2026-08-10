@@ -32,32 +32,32 @@ function pipeline(
 }
 
 describe("resolveXAgentQueueEvPercent", () => {
-  it("passes +2.4% EV at default 0% floor without stake tiers", () => {
-    expect(
-      resolveXAgentQueueEvPercent(pipeline({ netEvPercent: 2.4 }), 600)
-    ).toBe(2.4);
-    expect(meetsXAgentTradeEvGate(2.4, 600)).toBe(true);
+  it("passes +2.4% EV through unchanged", () => {
+    expect(resolveXAgentQueueEvPercent(pipeline({ netEvPercent: 2.4 }))).toBe(
+      2.4
+    );
+    expect(meetsXAgentTradeEvGate(2.4)).toBe(true);
   });
 
-  it("neutralizes small negative EV for stakes >= $1,000", () => {
+  it("rejects negative EV without neutralization", () => {
     expect(
-      resolveXAgentQueueEvPercent(pipeline({ netEvPercent: -0.5 }), 2_000)
-    ).toBe(0);
-    expect(meetsXAgentTradeEvGate(0, 9_600)).toBe(true);
-    expect(meetsXAgentTradeEvGate(-0.5, 9_600)).toBe(true);
+      resolveXAgentQueueEvPercent(pipeline({ netEvPercent: -0.6 }))
+    ).toBe(-0.6);
+    expect(meetsXAgentTradeEvGate(-0.6)).toBe(false);
+    expect(meetsXAgentTradeEvGate(0)).toBe(false);
   });
 
-  it("neutralizes timeout payloads for whale stakes", () => {
+  it("returns null for timeout payloads so the EV gate drops the trade", () => {
     expect(
       resolveXAgentQueueEvPercent(
-        pipeline({ status: "timeout", netEvPercent: null }),
-        2_000
+        pipeline({ status: "timeout", netEvPercent: null })
       )
-    ).toBe(0);
+    ).toBeNull();
+    expect(meetsXAgentTradeEvGate(null)).toBe(false);
   });
 
-  it("bypasses EV gate for stakes >= $5,000", () => {
-    expect(meetsXAgentTradeEvGate(null, 5_000)).toBe(true);
-    expect(meetsXAgentTradeEvGate(-1, 5_000)).toBe(true);
+  it("requires at least +0.1% EV to pass", () => {
+    expect(meetsXAgentTradeEvGate(0.09)).toBe(false);
+    expect(meetsXAgentTradeEvGate(0.1)).toBe(true);
   });
 });

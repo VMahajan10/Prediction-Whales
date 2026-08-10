@@ -314,16 +314,11 @@ export async function processWhaleTradeForXAgent(
     const pipelineEv = await ensureFullyComputedTradeEv(lookupKey, evInput, null, {
       ensembleLlmTimeoutMs: X_AGENT_ENSEMBLE_LLM_TIMEOUT_MS,
     });
-    tradeEvPercent = resolveXAgentQueueEvPercent(
-      pipelineEv,
-      payload.stakeNotional
-    );
+    tradeEvPercent = resolveXAgentQueueEvPercent(pipelineEv);
     pipelinePmMid = pipelineEv.pMarket ?? null;
   }
 
-  const evGate = evaluateTradeEvPreGate(tradeEvPercent, payload.tradeId, {
-    stakeNotional: payload.stakeNotional,
-  });
+  const evGate = evaluateTradeEvPreGate(tradeEvPercent, payload.tradeId);
   if (!evGate.passed) {
     await handlePreGateRejection(
       payload,

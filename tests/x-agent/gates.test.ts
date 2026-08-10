@@ -165,22 +165,23 @@ describe("evaluateWalletCredibilityPreGate", () => {
 });
 
 describe("evaluateTradeEvPreGate", () => {
-  it("fails when live trade EV is below 0% for sub-neutral stakes", () => {
-    expect(evaluateTradeEvPreGate(-0.1, undefined, { stakeNotional: 600 }).passed).toBe(false);
-    expect(evaluateTradeEvPreGate(-0.1, undefined, { stakeNotional: 600 }).reason).toBe(
-      FAILED_TRADE_EV_REASON
-    );
+  it("fails when live trade EV is below +0.1%", () => {
+    expect(evaluateTradeEvPreGate(-0.1).passed).toBe(false);
+    expect(evaluateTradeEvPreGate(-0.1).reason).toBe(FAILED_TRADE_EV_REASON);
+    expect(evaluateTradeEvPreGate(0).passed).toBe(false);
+    expect(evaluateTradeEvPreGate(0.09).passed).toBe(false);
   });
 
-  it("passes at 0% floor and for positive EV", () => {
-    expect(evaluateTradeEvPreGate(0, undefined, { stakeNotional: 600 }).passed).toBe(true);
-    expect(evaluateTradeEvPreGate(2.4, undefined, { stakeNotional: 600 }).passed).toBe(true);
-    expect(evaluateTradeEvPreGate(2.9, undefined, { stakeNotional: 600 }).passed).toBe(true);
+  it("passes at or above +0.1% floor", () => {
+    expect(evaluateTradeEvPreGate(0.1).passed).toBe(true);
+    expect(evaluateTradeEvPreGate(2.4).passed).toBe(true);
+    expect(evaluateTradeEvPreGate(2.9).passed).toBe(true);
   });
 
-  it("passes whale-tier neutralized EV", () => {
-    expect(evaluateTradeEvPreGate(0, undefined, { stakeNotional: 9_600 }).passed).toBe(true);
-    expect(evaluateTradeEvPreGate(-0.5, undefined, { stakeNotional: 5_000 }).passed).toBe(true);
+  it("fails whale-tier negative or neutral EV without bypass", () => {
+    expect(evaluateTradeEvPreGate(0).passed).toBe(false);
+    expect(evaluateTradeEvPreGate(-0.5).passed).toBe(false);
+    expect(evaluateTradeEvPreGate(null).passed).toBe(false);
   });
 });
 
