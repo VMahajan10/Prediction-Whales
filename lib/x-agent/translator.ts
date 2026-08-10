@@ -5,6 +5,11 @@ import {
   pmCodeToCountryNames,
 } from "@/lib/sportsTeamMatch";
 import { normalizePmTeamCode } from "@/lib/teamCodes";
+import { translateMarketPositionWithFallback } from "@/lib/marketTranslator";
+import {
+  formatExplicitNoOutcome,
+  sanitizeTemplateSide,
+} from "@/lib/x-agent/sideSanitizer";
 
 export interface RawPolymarketTrade {
   source: "polymarket" | "kalshi";
@@ -63,7 +68,7 @@ function humanizeOutcomeLabel(outcome: string): string | null {
   return trimmed;
 }
 
-function humanizeMarketPlain(
+export function humanizeMarketPlain(
   title: string,
   slug?: string | null
 ): string | null {
@@ -92,32 +97,60 @@ function humanizeMarketPlain(
   return cleaned || null;
 }
 
-function formatTranslatedSide(
-  trade: RawPolymarketTrade,
-  outcomeLabel: string
-): string {
-  const verb = trade.side === "BUY" ? "bought" : "sold";
-  if (BINARY_OUTCOMES.has(outcomeLabel.toLowerCase())) {
-    return `${verb} ${outcomeLabel.toLowerCase()}`;
+function resolveNamedSideFromTranslation(
+  trade: RawPolymarketTrade
+): string | null {
+  const { translation, usedFallback } = translateMarketPositionWithFallback(
+    {
+      title: trade.title,
+      slug: trade.slug ?? trade.eventSlug,
+      eventSlug: trade.eventSlug,
+    },
+    {
+      outcome: trade.outcome,
+      side: trade.side,
+    }
+  );
+
+  if (usedFallback) {
+    return null;
   }
-  return `${verb} ${outcomeLabel}`;
+
+  return sanitizeTemplateSide(translation.sideName);
 }
 
 /**
- * Map a Polymarket whale trade to plain-language market + side copy.
- * Returns null when the trade cannot be expressed with named entities.
+ * Map a Polymarket whale trade to plain-language market + named side copy.
+ * Returns null when the trade cannot be expressed with a clean named outcome.
  */
 export function translateMarketAndSide(
   trade: RawPolymarketTrade
 ): { side: string; marketPlain: string } | null {
   if (trade.source !== "polymarket") return null;
 
-  const outcomeLabel = humanizeOutcomeLabel(trade.outcome);
   const marketPlain = humanizeMarketPlain(trade.title, trade.slug ?? trade.eventSlug);
-  if (!outcomeLabel || !marketPlain) return null;
+  if (!marketPlain) return null;
 
-  return {
-    side: formatTranslatedSide(trade, outcomeLabel),
-    marketPlain,
-  };
+  const namedSide = resolveNamedSideFromTranslation(trade);
+  if (namedSide) {
+    return { side: namedSide, marketPlain };
+  }
+
+  const outcomeLabel = humanizeOutcomeLabel(trade.outcome);
+  if (!outcomeLabel) return null;
+
+  if (BINARY_OUTCOMES.has(outcomeLabel.toLowerCase())) {
+    if (outcomeLabel.toLowerCase() === "no") {
+      const subject = marketPlain.replace(/\s+vs\s+.+$/i, "").trim();
+      return formatExplicitNoOutcome(subject)
+        ? { side: formatExplicitNoOutcome(subject)!, marketPlain }
+        : null;
+    }
+    return null;
+  }
+
+  const side = sanitizeTemplateSide(outcomeLabel);
+  if (!side) return null;
+
+  return { side, marketPlain };
 }

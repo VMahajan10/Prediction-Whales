@@ -49,7 +49,7 @@ assert.deepEqual(
     side: "BUY",
   }),
   {
-    side: "bought yes",
+    side: "China invade Taiwan",
     marketPlain: "China invade Taiwan",
   }
 );
@@ -62,7 +62,7 @@ assert.equal(
     side: "BUY",
     slug: "fifwc-prt-esp-2026-07-22-prt",
   })?.side,
-  "bought Portugal",
+  "Portugal",
   "PM team codes map to country names"
 );
 

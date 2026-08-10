@@ -5,6 +5,8 @@ import {
   selectEvGloss,
   type EvGloss,
 } from "@/constants/evGlosses";
+import { CREDIBILITY_CONFIG } from "@/lib/feedQualification";
+import { sanitizeTemplateSide } from "@/lib/x-agent/sideSanitizer";
 
 export const TEMPLATE_FAMILIES = [
   "V1",
@@ -123,16 +125,34 @@ interface RenderContext {
   context: string | null;
 }
 
+const MIN_TEMPLATE_RESOLVED_BETS = Math.min(
+  10,
+  CREDIBILITY_CONFIG.MIN_RESOLVED_BETS
+);
+
+function resolvedBetCount(data: PostTemplateInputs): number {
+  return data.resolvedBetsCount != null && Number.isFinite(data.resolvedBetsCount)
+    ? data.resolvedBetsCount
+    : 0;
+}
+
+function hasCredibleTrackRecord(data: PostTemplateInputs): boolean {
+  return resolvedBetCount(data) >= MIN_TEMPLATE_RESOLVED_BETS;
+}
+
 function hasAvgEv(data: PostTemplateInputs): boolean {
-  return data.avg_ev != null && Number.isFinite(data.avg_ev);
+  return (
+    hasCredibleTrackRecord(data) &&
+    data.avg_ev != null &&
+    Number.isFinite(data.avg_ev)
+  );
 }
 
 function hasWinRateCredibility(data: PostTemplateInputs): boolean {
   return (
+    hasCredibleTrackRecord(data) &&
     data.winRate != null &&
-    Number.isFinite(data.winRate) &&
-    data.resolvedBetsCount != null &&
-    Number.isFinite(data.resolvedBetsCount)
+    Number.isFinite(data.winRate)
   );
 }
 
@@ -140,12 +160,19 @@ function assertRequiredBaseSlots(data: PostTemplateInputs): void {
   const missing: string[] = [];
   if (!data.whale?.trim()) missing.push("whale");
   else if (RAW_WALLET_RE.test(data.whale.trim())) missing.push("whale(named)");
-  if (!data.side?.trim()) missing.push("side");
+
+  const side = sanitizeTemplateSide(data.side);
+  if (!side) missing.push("side(named)");
+
   if (!Number.isFinite(data.entry)) missing.push("entry");
   if (!Number.isFinite(data.stakeNotional)) missing.push("stakeNotional");
-  if (!hasAvgEv(data) && !hasWinRateCredibility(data)) {
-    missing.push("credibility(avg_ev|win_rate+resolved)");
+
+  if (!hasCredibleTrackRecord(data)) {
+    missing.push(`resolved(>=${MIN_TEMPLATE_RESOLVED_BETS})`);
+  } else if (!hasAvgEv(data) && !hasWinRateCredibility(data)) {
+    missing.push("credibility(avg_ev|win_rate)");
   }
+
   if (missing.length > 0) {
     throw new PostTemplateError(
       `Missing required template slots: ${missing.join(", ")}`
@@ -198,7 +225,7 @@ function buildRenderContext(
 
   const ctx: RenderContext = {
     whale: data.whale.trim(),
-    side: data.side.trim(),
+    side: sanitizeTemplateSide(data.side) ?? data.side.trim(),
     category,
     entry: formatCents(data.entry),
     now:

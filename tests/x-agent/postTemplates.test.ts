@@ -210,7 +210,7 @@ describe("selectPostTemplate", () => {
           resolvedBetsCount: undefined,
         })
       )
-    ).toThrow(/credibility/);
+    ).toThrow(/resolved/);
   });
 
   it("sanitizes URLs and siren emojis", () => {
@@ -270,5 +270,27 @@ describe("selectPostTemplate", () => {
     expect(v5bDraft).toContain(gloss!);
     expect(v5bDraft).not.toContain("Trade EV");
     expect(v5bDraft).not.toContain("Trader Avg EV");
+  });
+
+  it("fails closed when resolved bets are below the template floor", () => {
+    expect(() =>
+      selectPostTemplate(
+        baseInputs({
+          resolvedBetsCount: 0,
+          avg_ev: 0,
+          winRate: undefined,
+        })
+      )
+    ).toThrow(/resolved/);
+  });
+
+  it("fails closed on unsanitized side copy", () => {
+    expect(() =>
+      selectPostTemplate(
+        baseInputs({
+          side: "bought no. San Diego FC is competing in a match",
+        })
+      )
+    ).toThrow(/side\(named\)/);
   });
 });

@@ -15,6 +15,7 @@ import {
   shouldApplyUnverifiedWhaleCredibilityBypass,
   shouldDeferCredibilityForUnverifiedWhale,
   STAKE_TOO_LOW,
+  UNTRANSLATABLE_MARKET,
   UNVERIFIED_WHALE_MIN_TRADE_EV_DECIMAL,
   UNVERIFIED_WHALE_QUEUE_TAG,
   UNVERIFIED_WHALE_STAKE_FLOOR_USD,
@@ -365,19 +366,15 @@ describe("postQueueGates", () => {
     expect(result.reason).toBe(BELOW_RESOLVED_BETS);
   });
 
-  it("uses title/outcome fallback instead of failing market translation", () => {
+  it("fails closed when only fallback translation is available", () => {
     const result = evaluatePostQueueMarketTranslationGate({
       tradeId: "trade-fallback-translation",
       market: { title: "Obscure prop market without mapping?" },
       position: { outcome: "Yes", side: "BUY" },
     });
 
-    expect(result.passed).toBe(true);
-    expect(result.translation).toEqual({
-      backingLabel: "bought yes",
-      sideName: "Obscure prop market without mapping",
-      exitByLabel: undefined,
-    });
+    expect(result.passed).toBe(false);
+    expect(result.reason).toBe(UNTRANSLATABLE_MARKET);
   });
 
   it("defers credibility for high-stake wallets missing from registry", () => {

@@ -9,7 +9,7 @@ import { selectPostTemplate } from "@/lib/templates/postTemplates";
 function baseInputs(overrides: Record<string, unknown> = {}) {
   return {
     whale: "DeepWallet",
-    side: "bought yes",
+    side: "Zhizhen Zhang",
     entry: 35,
     now: 42,
     avg_ev: 0.08,

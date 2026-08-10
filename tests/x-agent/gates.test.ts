@@ -141,7 +141,7 @@ describe("evaluateDeterministicPreGates", () => {
 
     expect(result.passed).toBe(true);
     expect(result.translation).toEqual({
-      side: "bought yes",
+      side: "China invade Taiwan",
       marketPlain: "China invade Taiwan",
     });
   });
@@ -299,7 +299,7 @@ describe("evaluateTradeGateMatrix", () => {
 
     expect(matrix.passesAll).toBe(true);
     expect(matrix.translation).toEqual({
-      side: "bought yes",
+      side: "China invade Taiwan",
       marketPlain: "China invade Taiwan",
     });
   });
@@ -358,7 +358,7 @@ describe("evaluateTradeEligibility", () => {
 
     expect(result.eligible).toBe(true);
     expect(result.translation).toEqual({
-      side: "bought yes",
+      side: "China invade Taiwan",
       marketPlain: "China invade Taiwan",
     });
   });

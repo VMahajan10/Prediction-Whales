@@ -422,31 +422,10 @@ export function evaluateTradeGateMatrix(
       : whale?.resolvedBetsCount ?? null,
   }).passed;
 
-  const marketTranslationGate = evaluatePostQueueMarketTranslationGate({
-    tradeId: trade.tradeId,
-    market: {
-      title: trade.title,
-      slug: trade.slug,
-      eventSlug: trade.eventSlug,
-    },
-    position: {
-      outcome: trade.outcome,
-      side: trade.side,
-    },
-  });
-  const legacyTranslation =
-    passesSource && translateMarketAndSide(toRawPolymarketTrade(trade));
-  const translation =
-    legacyTranslation ??
-    (marketTranslationGate.translation
-      ? {
-          side: marketTranslationGate.translation.backingLabel,
-          marketPlain: marketTranslationGate.translation.sideName,
-        }
-      : null);
-  const passesAlignment = Boolean(
-    passesSource && marketTranslationGate.passed && translation
-  );
+  const translation = passesSource
+    ? translateMarketAndSide(toRawPolymarketTrade(trade))
+    : null;
+  const passesAlignment = Boolean(passesSource && translation);
 
   const tradeAgeMs = nowMs - tradeTimestampMs(trade.timestamp);
   const passesFreshness = tradeAgeMs <= MAX_TRADE_AGE_MS;
@@ -533,10 +512,11 @@ export function evaluateDeterministicPreGates(
       side: trade.side,
     },
   });
-  if (!marketTranslationGate.passed || !marketTranslationGate.translation) {
+  const translation = translateMarketAndSide(toRawPolymarketTrade(trade));
+  if (!marketTranslationGate.passed || !translation) {
     gateLog(
       trade.tradeId,
-      "[Fail: Alignment] Market position cannot be translated for feed display"
+      "[Fail: Alignment] Market position cannot be translated to a named side"
     );
     return {
       passed: false,
@@ -545,11 +525,6 @@ export function evaluateDeterministicPreGates(
     };
   }
 
-  const legacyTranslation = translateMarketAndSide(toRawPolymarketTrade(trade));
-  const translation = legacyTranslation ?? {
-    side: marketTranslationGate.translation.backingLabel,
-    marketPlain: marketTranslationGate.translation.sideName,
-  };
   gateLog(
     trade.tradeId,
     `[Pass: Alignment] Translated to "${translation.side}" on "${translation.marketPlain}"`

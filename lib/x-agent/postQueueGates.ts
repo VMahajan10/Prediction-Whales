@@ -19,6 +19,7 @@ import type {
   TranslatableMarket,
 } from "@/lib/marketTranslator";
 import { translateMarketPositionWithFallback } from "@/lib/marketTranslator";
+import { sanitizeTemplateSide } from "@/lib/x-agent/sideSanitizer";
 import type { WhaleRegistry } from "@/lib/crossmarket/store/schema";
 import {
   coalesceHydratedWhale,
@@ -644,23 +645,43 @@ export function evaluatePostQueueMarketTranslationGate(
     input.position
   );
 
-  if (input.tradeId) {
-    if (usedFallback) {
+  if (usedFallback) {
+    if (input.tradeId) {
       gateLog(
         input.tradeId,
-        `[Pass: Market Translation] Fallback — ${translation.backingLabel} on "${translation.sideName}"`
-      );
-    } else {
-      gateLog(
-        input.tradeId,
-        `[Pass: Market Translation] ${translation.backingLabel}${
-          translation.exitByLabel ? ` · ${translation.exitByLabel}` : ""
-        }`
+        `[Fail: Market Translation] Fallback — no named side for "${translation.sideName}"`
       );
     }
+    return { passed: false, reason: UNTRANSLATABLE_MARKET };
   }
 
-  return { passed: true, translation };
+  const sideName = sanitizeTemplateSide(translation.sideName);
+  if (!sideName) {
+    if (input.tradeId) {
+      gateLog(
+        input.tradeId,
+        `[Fail: Market Translation] Could not sanitize named side "${translation.sideName}"`
+      );
+    }
+    return { passed: false, reason: UNTRANSLATABLE_MARKET };
+  }
+
+  const sanitized = {
+    ...translation,
+    sideName,
+    backingLabel: `Backing ${sideName}`,
+  };
+
+  if (input.tradeId) {
+    gateLog(
+      input.tradeId,
+      `[Pass: Market Translation] ${sanitized.backingLabel}${
+        sanitized.exitByLabel ? ` · ${sanitized.exitByLabel}` : ""
+      }`
+    );
+  }
+
+  return { passed: true, translation: sanitized };
 }
 
 export function logPostQueueIngestionSuccess(

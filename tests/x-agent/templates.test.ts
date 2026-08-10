@@ -12,7 +12,7 @@ function baseInputs(
 ): TemplateSchemaInputs {
   return {
     whale: "DeepWallet",
-    side: "buy yes",
+    side: "Zhizhen Zhang",
     entry: 35,
     now: 42,
     avg_ev: 0.08,
