@@ -6,6 +6,7 @@ export const POST_STATUS = {
   DRAFT: "DRAFT",
   SCHEDULED: "SCHEDULED",
   PUBLISHED: "PUBLISHED",
+  FAILED: "FAILED",
 } as const;
 
 export type PostStatus = (typeof POST_STATUS)[keyof typeof POST_STATUS];

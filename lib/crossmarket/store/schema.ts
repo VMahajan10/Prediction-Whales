@@ -550,6 +550,10 @@ export const xPostQueue = pgTable(
       withTimezone: true,
       mode: "date",
     }),
+    /** Incremented on each failed X publish attempt. */
+    publishRetryCount: integer("publish_retry_count").notNull().default(0),
+    /** Last X/Telegram publish error (truncated). */
+    lastPublishError: text("last_publish_error"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .defaultNow()
       .notNull(),

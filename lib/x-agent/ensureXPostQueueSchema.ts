@@ -1,6 +1,8 @@
 import "server-only";
 
+import { sql } from "drizzle-orm";
 import type { PrismaClient } from "@prisma/client";
+import { getDb, isDatabaseEnabled } from "@/lib/crossmarket/store/db";
 
 /**
  * Idempotent DDL patches for x_post_queue — mirrors drizzle migrations when
@@ -12,7 +14,29 @@ const X_POST_QUEUE_SCHEMA_PATCHES = [
   `ALTER TABLE "x_post_queue" ADD COLUMN IF NOT EXISTS "x_media_id" text`,
   `ALTER TABLE "x_post_queue" ADD COLUMN IF NOT EXISTS "receipt_media_url" text`,
   `ALTER TABLE "x_post_queue" ADD COLUMN IF NOT EXISTS "public_telegram_message_id" text`,
+  `ALTER TABLE "x_post_queue" ADD COLUMN IF NOT EXISTS "publish_retry_count" integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE "x_post_queue" ADD COLUMN IF NOT EXISTS "last_publish_error" text`,
 ] as const;
+
+let drizzleSchemaEnsurePromise: Promise<void> | null = null;
+
+export async function ensureXPostQueueDrizzleSchemaOnce(): Promise<void> {
+  if (!isDatabaseEnabled()) return;
+
+  if (!drizzleSchemaEnsurePromise) {
+    drizzleSchemaEnsurePromise = (async () => {
+      const db = getDb();
+      for (const patch of X_POST_QUEUE_SCHEMA_PATCHES) {
+        await db.execute(sql.raw(patch));
+      }
+    })().catch((error) => {
+      drizzleSchemaEnsurePromise = null;
+      throw error;
+    });
+  }
+
+  await drizzleSchemaEnsurePromise;
+}
 
 let schemaEnsurePromise: Promise<void> | null = null;
 
@@ -33,8 +57,8 @@ export function isPrismaMissingColumnError(
 export async function ensureXPostQueueSchema(
   prisma: PrismaClient
 ): Promise<void> {
-  for (const sql of X_POST_QUEUE_SCHEMA_PATCHES) {
-    await prisma.$executeRawUnsafe(sql);
+  for (const patch of X_POST_QUEUE_SCHEMA_PATCHES) {
+    await prisma.$executeRawUnsafe(patch);
   }
 }
 

@@ -126,7 +126,17 @@ export async function runCronPublisher(): Promise<CronPublisherResult> {
       result.failed += 1;
       const error = publish.error ?? "Publish failed";
       result.errors.push({ id: item.id, error });
-      console.error(`${LOG_PREFIX} ❌ Failed id=${item.id}: ${error}`);
+      if (publish.rescheduledFor) {
+        console.warn(
+          `${LOG_PREFIX} ⏳ Rescheduled id=${item.id} until ${publish.rescheduledFor} (retry=${publish.retryCount ?? "?"})`
+        );
+      } else if (publish.failedPermanently) {
+        console.error(
+          `${LOG_PREFIX} 🛑 Permanently failed id=${item.id} after ${publish.retryCount ?? "?"} attempts`
+        );
+      } else {
+        console.error(`${LOG_PREFIX} ❌ Failed id=${item.id}: ${error}`);
+      }
     } catch (error) {
       result.failed += 1;
       const message = error instanceof Error ? error.message : String(error);

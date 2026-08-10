@@ -8,6 +8,7 @@ export const X_POST_QUEUE_STATUSES = [
   "SCHEDULED",
   "PUBLISHED",
   "DISPATCHED",
+  "FAILED",
   "EXPIRED",
 ] as const;
 

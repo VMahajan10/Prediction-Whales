@@ -7,6 +7,7 @@ import {
   type XPostQueue,
   type XPostQueueStatus,
 } from "@/lib/crossmarket/store/schema";
+import { ensureXPostQueueDrizzleSchemaOnce } from "@/lib/x-agent/ensureXPostQueueSchema";
 import { isPendingReviewStatus, PENDING_REVIEW_STATUSES } from "@/lib/x-agent/reviewDecision";
 import { getRandomScheduledTime } from "@/lib/x-agent/reviewSchedule";
 
@@ -101,12 +102,16 @@ export async function updateQueueById(
     xMediaId?: string | null;
     receiptMediaUrl?: string | null;
     publicTelegramMessageId?: string | null;
+    publishRetryCount?: number;
+    lastPublishError?: string | null;
     decidedBy?: string | null;
     decidedAt?: Date | null;
   }
 ): Promise<XPostQueue | null> {
   const trimmed = id.trim();
   if (!trimmed || !isDatabaseEnabled()) return null;
+
+  await ensureXPostQueueDrizzleSchemaOnce();
 
   const db = getDb();
   const [row] = await db
@@ -251,6 +256,8 @@ export async function listScheduledPostsReadyToPublish(
   limit = 20
 ): Promise<XPostQueue[]> {
   if (!isDatabaseEnabled()) return [];
+
+  await ensureXPostQueueDrizzleSchemaOnce();
 
   const db = getDb();
   const now = new Date();

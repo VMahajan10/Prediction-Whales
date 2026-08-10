@@ -195,6 +195,8 @@ model XPostQueue {
   decidedBy      String?   @map("decided_by")
   decidedAt      DateTime? @map("decided_at")
   dispatchedAt   DateTime? @map("dispatched_at")
+  publishRetryCount Int    @default(0) @map("publish_retry_count")
+  lastPublishError  String? @map("last_publish_error")
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @updatedAt @map("updated_at")
 

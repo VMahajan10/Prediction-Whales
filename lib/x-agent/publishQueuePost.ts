@@ -9,6 +9,10 @@ import {
   resolveWhaleReceiptData,
 } from "@/lib/x-agent/generateWhaleReceiptPng";
 import { POST_STATUS } from "@/lib/x-agent/postStatus";
+import {
+  parseTwitterPublishError,
+  recordPublishFailure,
+} from "@/lib/x-agent/publishRetry";
 import { updateQueueById } from "@/lib/x-agent/reviewDb";
 import {
   sendPublicTelegramPost,
@@ -25,6 +29,11 @@ export interface PublishQueuePostResult {
   telegramMessageId?: string;
   telegramError?: string;
   error?: string;
+  rateLimited?: boolean;
+  statusCode?: number;
+  retryCount?: number;
+  rescheduledFor?: string;
+  failedPermanently?: boolean;
 }
 
 /** True when all X API credentials are configured for scheduled publishing. */
@@ -115,10 +124,52 @@ async function publishToX(
     const { data } = response;
     return { ok: true, tweetId: data.id, mediaId: mediaId ?? undefined };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`${LOG_PREFIX} Twitter API error:`, message);
-    return { ok: false, error: message };
+    const classified = parseTwitterPublishError(error);
+    console.error(
+      `${LOG_PREFIX} Twitter API error (status=${classified.statusCode ?? "n/a"}):`,
+      classified.message
+    );
+    return {
+      ok: false,
+      error: classified.message,
+      rateLimited: classified.rateLimited,
+      statusCode: classified.statusCode,
+    };
   }
+}
+
+async function handlePublishFailure(
+  item: XPostQueue,
+  error: { message: string; rateLimited?: boolean; statusCode?: number }
+): Promise<PublishQueuePostResult> {
+  const classified = parseTwitterPublishError(error);
+  const outcome = await recordPublishFailure(item, classified);
+
+  if (outcome.action === "rescheduled") {
+    console.warn(
+      `${LOG_PREFIX} ⏳ Rescheduled id=${item.id} retry=${outcome.retryCount} scheduledFor=${outcome.scheduledFor.toISOString()}${classified.rateLimited ? " (rate limited)" : ""}`
+    );
+    return {
+      ok: false,
+      error: classified.message,
+      rateLimited: classified.rateLimited,
+      statusCode: classified.statusCode,
+      retryCount: outcome.retryCount,
+      rescheduledFor: outcome.scheduledFor.toISOString(),
+    };
+  }
+
+  console.error(
+    `${LOG_PREFIX} 🛑 Marked FAILED id=${item.id} after ${outcome.retryCount} publish attempts`
+  );
+  return {
+    ok: false,
+    error: classified.message,
+    rateLimited: classified.rateLimited,
+    statusCode: classified.statusCode,
+    retryCount: outcome.retryCount,
+    failedPermanently: true,
+  };
 }
 
 /**
@@ -131,7 +182,17 @@ export async function publishScheduledQueueItem(
 ): Promise<PublishQueuePostResult> {
   const text = item.copyText.trim();
   if (!text) {
-    return { ok: false, error: "Post copy is empty" };
+    const outcome = await recordPublishFailure(item, {
+      message: "Post copy is empty",
+      rateLimited: false,
+      retryable: false,
+    });
+    return {
+      ok: false,
+      error: "Post copy is empty",
+      failedPermanently: outcome.action === "failed",
+      retryCount: outcome.retryCount,
+    };
   }
 
   const receiptPng = await buildReceiptPng(item);
@@ -145,7 +206,10 @@ export async function publishScheduledQueueItem(
   const xResult: PublishQueuePostResult =
     xOutcome.status === "fulfilled"
       ? xOutcome.value
-      : { ok: false, error: String(xOutcome.reason) };
+      : {
+          ok: false,
+          error: String(xOutcome.reason),
+        };
 
   const telegramResult =
     telegramOutcome.status === "fulfilled"
@@ -156,7 +220,7 @@ export async function publishScheduledQueueItem(
     console.log(
       `${LOG_PREFIX} ✅ X published id=${item.id} xTweetId=${xResult.tweetId ?? "n/a"}`
     );
-  } else {
+  } else if (!xResult.skipped) {
     console.error(
       `${LOG_PREFIX} ❌ X failed id=${item.id}: ${xResult.error ?? "unknown"}`
     );
@@ -177,10 +241,24 @@ export async function publishScheduledQueueItem(
   }
 
   if (!xResult.ok) {
+    if (xResult.skipped) {
+      return {
+        ok: false,
+        skipped: true,
+        error: xResult.error,
+        telegramMessageId: telegramResult.messageId,
+        telegramError: telegramResult.error,
+      };
+    }
+
+    const failure = await handlePublishFailure(item, {
+      message: xResult.error ?? "Publish failed",
+      rateLimited: xResult.rateLimited,
+      statusCode: xResult.statusCode,
+    });
+
     return {
-      ok: false,
-      skipped: xResult.skipped,
-      error: xResult.error,
+      ...failure,
       telegramMessageId: telegramResult.messageId,
       telegramError: telegramResult.error,
     };
@@ -192,6 +270,8 @@ export async function publishScheduledQueueItem(
     xMediaId: xResult.mediaId ?? null,
     publicTelegramMessageId: telegramResult.messageId ?? null,
     dispatchedAt: new Date(),
+    publishRetryCount: 0,
+    lastPublishError: null,
   });
 
   return {

@@ -56,5 +56,9 @@ export function formatReviewDecisionBadge(
     return when ? `Expired · ${when}` : "Expired";
   }
 
+  if (status === "FAILED") {
+    return when ? `Publish failed · ${when}` : "Publish failed";
+  }
+
   return `Finalized (${status.replace(/_/g, " ")}) by ${who}`;
 }
