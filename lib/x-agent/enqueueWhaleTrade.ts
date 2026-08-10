@@ -50,6 +50,7 @@ import {
   isTelegramConfigured,
   sendTradeTelegramAlert,
 } from "@/lib/notifications/telegram";
+import { isVerboseXAgentLoggingEnabled } from "@/lib/x-agent/verboseLogging";
 import { logStderr, logStdout } from "@/lib/utils";
 import { selectPostTemplate } from "@/lib/templates/postTemplates";
 import {
@@ -72,6 +73,7 @@ import {
 export { HIGH_EV_TRADE_THRESHOLD_PCT } from "@/lib/x-agent/gateMetrics";
 
 function logEnqueueSkip(trade: WhaleTrade, message: string): void {
+  if (!isVerboseXAgentLoggingEnabled()) return;
   console.log(message);
 }
 
@@ -223,9 +225,11 @@ export async function processWhaleTradeForXAgent(
     });
 
   if (anonymousTrade) {
-    console.log(
-      `[Gate] tradeId=${payload.tradeId} [Pass: Credibility] Anonymous/unattributed wallet — credibility gate bypassed`
-    );
+    if (isVerboseXAgentLoggingEnabled()) {
+      console.log(
+        `[Gate] tradeId=${payload.tradeId} [Pass: Credibility] Anonymous/unattributed wallet — credibility gate bypassed`
+      );
+    }
     unverifiedWhale = true;
   } else if (!deferCredibilityForUnverifiedWhale) {
     const resolvedBetsFloor = evaluateResolvedBetsCredibilityFloor({
@@ -300,9 +304,11 @@ export async function processWhaleTradeForXAgent(
     );
     return;
   }
-  console.log(
-    `[Gate] tradeId=${payload.tradeId} [Pass: Dedupe] No active x_post_queue row for whale-market pair`
-  );
+  if (isVerboseXAgentLoggingEnabled()) {
+    console.log(
+      `[Gate] tradeId=${payload.tradeId} [Pass: Dedupe] No active x_post_queue row for whale-market pair`
+    );
+  }
 
   // Step 6: trade EV via p_true / sentiment pipeline (OpenAI — only after steps 1–5).
   const evInput = whaleToEvInput(trade);

@@ -9,6 +9,7 @@ import {
   formatStakeFloorSummaryLabel,
   STAKE_FLOOR_DEFAULT_USD,
 } from "@/lib/x-agent/stakeFloor";
+import { isVerboseXAgentLoggingEnabled } from "@/lib/x-agent/verboseLogging";
 import { CREDIBILITY_CONFIG } from "@/lib/feedQualification";
 
 /** X-agent post-queue EV floor (+3.0%) — aligned with MIN_FEED_TRADE_EV_PCT. */
@@ -345,6 +346,8 @@ export function printGateSummaryBox(
   metrics: GateSummary,
   options?: { rollingWindow?: number }
 ): void {
+  if (!isVerboseXAgentLoggingEnabled()) return;
+
   const total = metrics.totalEvaluated;
   const stakeFloorSummaryLabel = formatStakeFloorSummaryLabelForBox();
   const tradeEvLabel = `+${HIGH_EV_TRADE_THRESHOLD_PCT}%`;

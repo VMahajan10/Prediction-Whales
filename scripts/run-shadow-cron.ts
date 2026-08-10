@@ -40,6 +40,7 @@ import {
   isXPublisherSchedulerActive,
   resolveXPublisherIntervalMs,
 } from "../lib/x-agent/xPublisherScheduler";
+import { isVerboseXAgentLoggingEnabled } from "../lib/x-agent/verboseLogging";
 
 const PENDING_QUEUE_STATUSES = [
   "PENDING",
@@ -145,6 +146,8 @@ async function shutdown(signal: string, exitCode = 0): Promise<void> {
 }
 
 function startHeartbeat(): void {
+  if (!isVerboseXAgentLoggingEnabled()) return;
+
   heartbeatTicker = setInterval(() => {
     if (!daemon) return;
     const stats = daemon.stats;
@@ -161,27 +164,48 @@ function startKeepAlive(): void {
   }, KEEP_ALIVE_INTERVAL_MS);
 }
 
+function isEmptyPublisherTickResult(result: {
+  scanned: number;
+  published: number;
+  failed: number;
+  skipped: number;
+}): boolean {
+  return (
+    result.scanned === 0 &&
+    result.published === 0 &&
+    result.failed === 0 &&
+    result.skipped === 0
+  );
+}
+
 /** Publish SCHEDULED x_post_queue rows whose scheduledAt has elapsed. */
 async function runScheduledXPublisherTick(): Promise<void> {
   if (scheduledPublisherRunning) {
-    console.log(
-      `[${formatTimestamp()}] [Shadow Cron] [X Publisher] tick skipped — prior run still in progress`
-    );
+    if (isVerboseXAgentLoggingEnabled()) {
+      console.log(
+        `[${formatTimestamp()}] [Shadow Cron] [X Publisher] tick skipped — prior run still in progress`
+      );
+    }
     return;
   }
 
   scheduledPublisherRunning = true;
   const startedAt = Date.now();
+  const verbose = isVerboseXAgentLoggingEnabled();
 
-  console.log(
-    `[${formatTimestamp()}] [Shadow Cron] [X Publisher] tick started`
-  );
+  if (verbose) {
+    console.log(
+      `[${formatTimestamp()}] [Shadow Cron] [X Publisher] tick started`
+    );
+  }
 
   try {
     const result = await runCronPublisher();
-    console.log(
-      `[${formatTimestamp()}] [Shadow Cron] [X Publisher] tick complete | duration=${formatDuration(Date.now() - startedAt)} | scanned=${result.scanned} published=${result.published} failed=${result.failed} skipped=${result.skipped}`
-    );
+    if (verbose || !isEmptyPublisherTickResult(result)) {
+      console.log(
+        `[${formatTimestamp()}] [Shadow Cron] [X Publisher] tick complete | duration=${formatDuration(Date.now() - startedAt)} | scanned=${result.scanned} published=${result.published} failed=${result.failed} skipped=${result.skipped}`
+      );
+    }
   } catch (error) {
     console.error(
       `[${formatTimestamp()}] [Shadow Cron] [X Publisher] tick failed:`,

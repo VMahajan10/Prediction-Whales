@@ -12,6 +12,7 @@ import {
   MIN_TRADE_EV_DECIMAL,
   MIN_AVG_EV_THRESHOLD_PCT,
 } from "@/lib/x-agent/gateMetrics";
+import { isVerboseXAgentLoggingEnabled } from "@/lib/x-agent/verboseLogging";
 import type {
   MarketPosition,
   MarketPositionTranslation,
@@ -482,6 +483,7 @@ export interface PostQueueMarketTranslationGateResult {
 }
 
 function gateLog(tradeId: string, message: string): void {
+  if (!isVerboseXAgentLoggingEnabled()) return;
   console.log(`[Gate] tradeId=${tradeId} ${message}`);
 }
 
@@ -496,7 +498,9 @@ export function logPostQueueSourceSkip(tradeId?: string): void {
     gateLog(tradeId, message);
     return;
   }
-  console.log(message);
+  if (isVerboseXAgentLoggingEnabled()) {
+    console.log(message);
+  }
 }
 
 /** Returns true only for Polymarket-sourced trades when Kalshi posting is disabled. */

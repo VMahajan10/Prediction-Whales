@@ -52,6 +52,7 @@ import {
   BELOW_EV_THRESHOLD,
 } from "@/lib/x-agent/postQueueGates";
 import { isAnonymousWalletAddress } from "@/lib/x-agent/whaleRegistryDb";
+import { isVerboseXAgentLoggingEnabled } from "@/lib/x-agent/verboseLogging";
 
 export {
   KALSHI_PUBLIC_POSTING_DISABLED,
@@ -139,7 +140,12 @@ export const MIN_AVG_EV = MIN_WALLET_AVG_EV_DECIMAL;
 export const MIN_STAKE_NOTIONAL = STAKE_FLOOR_USD;
 export const MAX_TRADE_AGE_MS = 30 * 60 * 1000;
 
-function gateLog(tradeId: string, message: string): void {
+function gateLog(
+  tradeId: string,
+  message: string,
+  options?: { always?: boolean }
+): void {
+  if (!options?.always && !isVerboseXAgentLoggingEnabled()) return;
   console.log(`[Gate] tradeId=${tradeId} ${message}`);
 }
 
@@ -154,6 +160,7 @@ export function logGateDrop(
   trade: Pick<TradePayload, "source" | "stakeNotional" | "slug" | "eventSlug">,
   reason: string
 ): void {
+  if (!isVerboseXAgentLoggingEnabled()) return;
   const venue = formatTradeVenueLabel(trade.source);
   console.log(`[Gate Drop] Venue: ${venue} | Reason: ${reason}`);
 }
@@ -292,6 +299,17 @@ function logGateMatrix(
   matrix: TradeGateMatrix,
   nowMs: number
 ): void {
+  if (!isVerboseXAgentLoggingEnabled()) {
+    if (matrix.passesAll) {
+      gateLog(
+        trade.tradeId,
+        "[Pass: All Gates] Trade eligible for x_post_queue",
+        { always: true }
+      );
+    }
+    return;
+  }
+
   const stakeFloorUsd = matrix.stakeFloorUsd ?? MIN_STAKE_NOTIONAL;
   const stakeTier = matrix.stakeFloorTier ?? "default";
 
@@ -607,7 +625,7 @@ export function evaluateTradeEvPreGate(
   if (passesEv) {
     const message = `[Pass: Trade EV] Live trade EV (${formatTradeEvPct(tradeEvPercent ?? 0)}) >= +${HIGH_EV_TRADE_THRESHOLD_PCT.toFixed(1)}% min requirement`;
     if (tradeId) gateLog(tradeId, message);
-    else console.log(message);
+    else if (isVerboseXAgentLoggingEnabled()) console.log(message);
     return { passed: true };
   }
 
@@ -616,7 +634,7 @@ export function evaluateTradeEvPreGate(
       ? "[Fail: Trade EV] Live trade EV unavailable"
       : `[Fail: Trade EV] ${formatTradeEvPct(tradeEvPercent)} < +${HIGH_EV_TRADE_THRESHOLD_PCT.toFixed(1)}% min requirement`;
   if (tradeId) gateLog(tradeId, failMessage);
-  else console.log(failMessage);
+  else if (isVerboseXAgentLoggingEnabled()) console.log(failMessage);
 
   return {
     passed: false,
