@@ -1,11 +1,13 @@
 /**
  * Whale trade auto-tweet endpoint.
  *
- * Set these 4 environment variables in the Vercel project dashboard (.env):
- *   X_API_KEY
- *   X_API_SECRET
- *   X_ACCESS_TOKEN
- *   X_ACCESS_TOKEN_SECRET
+ * Set these 4 OAuth credentials in the Vercel project dashboard (.env).
+ * Canonical names are X_*; TWITTER_* and X_ACCESS_SECRET aliases are also accepted
+ * (see lib/twitter/credentials.ts):
+ *   X_API_KEY (or TWITTER_API_KEY / X_CONSUMER_KEY)
+ *   X_API_SECRET (or TWITTER_API_SECRET / X_CONSUMER_SECRET)
+ *   X_ACCESS_TOKEN (or TWITTER_ACCESS_TOKEN)
+ *   X_ACCESS_TOKEN_SECRET (or X_ACCESS_SECRET / TWITTER_ACCESS_SECRET)
  *
  * Also set BOT_API_SECRET and pass it as the x-bot-secret request header.
  */

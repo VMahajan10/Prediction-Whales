@@ -1,6 +1,10 @@
 import { TwitterApi } from "twitter-api-v2";
 import type { XPostQueue } from "@/lib/crossmarket/store/schema";
 import {
+  isTwitterCredentialsConfigured,
+  resolveTwitterCredentials,
+} from "@/lib/twitter/credentials";
+import {
   generateWhaleReceiptPng,
   resolveWhaleReceiptData,
 } from "@/lib/x-agent/generateWhaleReceiptPng";
@@ -12,14 +16,6 @@ import {
 } from "@/lib/services/publicTelegramService";
 
 const LOG_PREFIX = "[publishScheduledQueueItem]";
-const TWITTER_CREDENTIAL_KEYS = [
-  "X_API_KEY",
-  "X_API_SECRET",
-  "X_ACCESS_TOKEN",
-  "X_ACCESS_TOKEN_SECRET",
-] as const;
-
-type TwitterCredentialKey = (typeof TWITTER_CREDENTIAL_KEYS)[number];
 
 export interface PublishQueuePostResult {
   ok: boolean;
@@ -31,39 +27,9 @@ export interface PublishQueuePostResult {
   error?: string;
 }
 
-function validateTwitterCredentials():
-  | {
-      ok: true;
-      appKey: string;
-      appSecret: string;
-      accessToken: string;
-      accessSecret: string;
-    }
-  | { ok: false; missing: TwitterCredentialKey[] } {
-  const values: Record<TwitterCredentialKey, string | undefined> = {
-    X_API_KEY: process.env.X_API_KEY,
-    X_API_SECRET: process.env.X_API_SECRET,
-    X_ACCESS_TOKEN: process.env.X_ACCESS_TOKEN,
-    X_ACCESS_TOKEN_SECRET: process.env.X_ACCESS_TOKEN_SECRET,
-  };
-
-  const missing = TWITTER_CREDENTIAL_KEYS.filter((key) => !values[key]?.trim());
-  if (missing.length > 0) {
-    return { ok: false, missing };
-  }
-
-  return {
-    ok: true,
-    appKey: values.X_API_KEY!.trim(),
-    appSecret: values.X_API_SECRET!.trim(),
-    accessToken: values.X_ACCESS_TOKEN!.trim(),
-    accessSecret: values.X_ACCESS_TOKEN_SECRET!.trim(),
-  };
-}
-
 /** True when all X API credentials are configured for scheduled publishing. */
 export function isTwitterPublishingConfigured(): boolean {
-  return validateTwitterCredentials().ok;
+  return isTwitterCredentialsConfigured();
 }
 
 async function buildReceiptPng(item: XPostQueue): Promise<Buffer | null> {
@@ -120,7 +86,7 @@ async function publishToX(
   text: string,
   receiptPng: Buffer | null
 ): Promise<PublishQueuePostResult> {
-  const credentialCheck = validateTwitterCredentials();
+  const credentialCheck = resolveTwitterCredentials();
   if (!credentialCheck.ok) {
     return {
       ok: false,

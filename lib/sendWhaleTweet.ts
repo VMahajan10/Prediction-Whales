@@ -1,4 +1,8 @@
 import { TwitterApi } from "twitter-api-v2";
+import {
+  resolveTwitterCredentials,
+  type TwitterCredentialCanonicalKey,
+} from "@/lib/twitter/credentials";
 
 export interface WhaleTweetPayload {
   tradeId?: string;
@@ -28,15 +32,6 @@ export type SendWhaleTweetResult =
 
 const COOLDOWN_MS = 15 * 60 * 1000;
 const THROTTLE_MS = 45 * 1000;
-
-const TWITTER_CREDENTIAL_KEYS = [
-  "X_API_KEY",
-  "X_API_SECRET",
-  "X_ACCESS_TOKEN",
-  "X_ACCESS_TOKEN_SECRET",
-] as const;
-
-type TwitterCredentialKey = (typeof TWITTER_CREDENTIAL_KEYS)[number];
 
 const recentPostCooldowns = new Map<string, number>();
 let lastTweetAt = 0;
@@ -108,29 +103,8 @@ function validateTwitterCredentials():
       accessToken: string;
       accessSecret: string;
     }
-  | { ok: false; missing: TwitterCredentialKey[] } {
-  const values: Record<TwitterCredentialKey, string | undefined> = {
-    X_API_KEY: process.env.X_API_KEY,
-    X_API_SECRET: process.env.X_API_SECRET,
-    X_ACCESS_TOKEN: process.env.X_ACCESS_TOKEN,
-    X_ACCESS_TOKEN_SECRET: process.env.X_ACCESS_TOKEN_SECRET,
-  };
-
-  const missing = TWITTER_CREDENTIAL_KEYS.filter(
-    (key) => !values[key]?.trim()
-  );
-
-  if (missing.length > 0) {
-    return { ok: false, missing };
-  }
-
-  return {
-    ok: true,
-    appKey: values.X_API_KEY!.trim(),
-    appSecret: values.X_API_SECRET!.trim(),
-    accessToken: values.X_ACCESS_TOKEN!.trim(),
-    accessSecret: values.X_ACCESS_TOKEN_SECRET!.trim(),
-  };
+  | { ok: false; missing: TwitterCredentialCanonicalKey[] } {
+  return resolveTwitterCredentials();
 }
 
 function createTwitterOAuthClient(credentials: {
