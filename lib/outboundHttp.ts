@@ -28,7 +28,7 @@ export function mergeOutboundHeaders(
     if (typeof value === "string") {
       merged[key] = value;
     } else if (Array.isArray(value)) {
-      merged[key] = value.join(", ");
+      merged[key] = (value as string[]).join(", ");
     }
   }
 
