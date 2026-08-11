@@ -1,3 +1,5 @@
+import { mergeOutboundHeaders } from "@/lib/outboundHttp";
+
 export const PAGE_FETCH_TIMEOUT_MS = 8000;
 
 export class FetchTimeoutError extends Error {
@@ -29,7 +31,11 @@ export async function fetchWithTimeout(
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    return await fetch(url, { ...init, signal: controller.signal });
+    return await fetch(url, {
+      ...init,
+      headers: mergeOutboundHeaders(init.headers),
+      signal: controller.signal,
+    });
   } catch (err) {
     if (controller.signal.aborted && !outerSignal?.aborted) {
       throw new FetchTimeoutError();

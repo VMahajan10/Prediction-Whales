@@ -175,7 +175,7 @@ async function loadWhaleHotTargets(): Promise<HotOrderBookTargets> {
 
   const [pmResult, kalshiResult] = await Promise.allSettled([
     fetchWhaleBackfill(),
-    fetchKalshiTrades(),
+    fetchKalshiTrades(undefined, { bypassThrottle: true }),
   ]);
 
   if (pmResult.status === "fulfilled") {

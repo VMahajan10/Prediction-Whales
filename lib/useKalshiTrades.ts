@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { KALSHI_CLIENT_POLL_MS } from "@/lib/ingestionPollConfig";
 import type { FeedTrade } from "@/lib/feedTradeTypes";
 
-const POLL_MS = 4_000;
+const POLL_MS = KALSHI_CLIENT_POLL_MS;
 
 export function useKalshiTrades() {
   const [trades, setTrades] = useState<FeedTrade[]>([]);

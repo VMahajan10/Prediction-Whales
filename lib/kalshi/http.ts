@@ -1,4 +1,5 @@
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
+import { OUTBOUND_COMPRESSION_HEADERS } from "@/lib/outboundHttp";
 
 export const KALSHI_API = "https://api.elections.kalshi.com/trade-api/v2";
 
@@ -97,6 +98,7 @@ export async function kalshiFetch(
           headers: {
             Accept: "application/json",
             "User-Agent": "MarketPulse/1.0",
+            ...OUTBOUND_COMPRESSION_HEADERS,
             ...(headers as Record<string, string> | undefined),
           },
         });

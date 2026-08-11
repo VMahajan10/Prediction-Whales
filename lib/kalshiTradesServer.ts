@@ -13,6 +13,12 @@ import {
   meetsProductFeedStakeThreshold,
 } from "@/lib/feedQualification";
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
+import {
+  KALSHI_TRADES_MAX_PAGES_INCREMENTAL,
+  KALSHI_TRADES_MAX_PAGES_INITIAL,
+  KALSHI_TRADES_PAGE_LIMIT,
+  KALSHI_TRADES_POLL_MS,
+} from "@/lib/ingestionPollConfig";
 import { resolveKalshiMarkets } from "@/lib/kalshiTitleResolver";
 import { kalshiFetch } from "@/lib/kalshi/http";
 import { queueKalshiShadowTrade, serializeShadowPayload } from "@/lib/x-agent/kalshiShadowTrades";
@@ -168,17 +174,40 @@ function kalshiTradeEvPercent(
   return resolveFeedTradeEvPercent({ price: trade.price }, pipeline ?? null);
 }
 
-const KALSHI_TRADES_PAGE_SIZE = 1_000;
-const KALSHI_TRADES_MAX_PAGES = 20;
+const KALSHI_TRADES_PAGE_SIZE = KALSHI_TRADES_PAGE_LIMIT;
 
-export async function fetchKalshiTrades(
+type KalshiUpstreamCache = {
+  fetchedAt: number;
+  trades: FeedTrade[];
+  inFlight: Promise<FeedTrade[]> | null;
+};
+
+const kalshiUpstreamCache: KalshiUpstreamCache = {
+  fetchedAt: 0,
+  trades: [],
+  inFlight: null,
+};
+
+function filterKalshiTradesByMinTs(
+  trades: FeedTrade[],
+  minTs?: number
+): FeedTrade[] {
+  if (minTs == null || !Number.isFinite(minTs) || minTs <= 0) return trades;
+  return trades.filter((trade) => trade.timestamp > minTs);
+}
+
+async function fetchKalshiTradesFromApi(
   minTs?: number
 ): Promise<FeedTrade[]> {
   const nowEpochSeconds = Math.floor(Date.now() / 1000);
   const raws: KalshiRawTrade[] = [];
   let cursor: string | undefined;
+  const maxPages =
+    minTs != null && minTs > 0
+      ? KALSHI_TRADES_MAX_PAGES_INCREMENTAL
+      : KALSHI_TRADES_MAX_PAGES_INITIAL;
 
-  for (let page = 0; page < KALSHI_TRADES_MAX_PAGES; page += 1) {
+  for (let page = 0; page < maxPages; page += 1) {
     const params = new URLSearchParams({
       limit: String(KALSHI_TRADES_PAGE_SIZE),
     });
@@ -213,7 +242,7 @@ export async function fetchKalshiTrades(
   if (raws.length === 0) return [];
 
   console.log(
-    `[kalshi/trades] fetched=${raws.length} pages<=${KALSHI_TRADES_MAX_PAGES}`
+    `[kalshi/trades] fetched=${raws.length} pages<=${maxPages} limit=${KALSHI_TRADES_PAGE_SIZE}`
   );
 
   const tickers = raws.map((raw) => raw.ticker).filter(Boolean);
@@ -294,4 +323,41 @@ export async function fetchKalshiTrades(
       netEvPercent,
     };
   });
+}
+
+/**
+ * Kalshi trades with upstream throttling — at most one REST sweep per
+ * {@link KALSHI_TRADES_POLL_MS}. Serves cached rows filtered by `min_ts`.
+ */
+export async function fetchKalshiTrades(
+  minTs?: number,
+  options?: { bypassThrottle?: boolean }
+): Promise<FeedTrade[]> {
+  const now = Date.now();
+  const cacheAge = now - kalshiUpstreamCache.fetchedAt;
+  const cacheFresh =
+    kalshiUpstreamCache.fetchedAt > 0 && cacheAge < KALSHI_TRADES_POLL_MS;
+
+  if (!options?.bypassThrottle && cacheFresh) {
+    return filterKalshiTradesByMinTs(kalshiUpstreamCache.trades, minTs);
+  }
+
+  if (!options?.bypassThrottle && kalshiUpstreamCache.inFlight) {
+    const trades = await kalshiUpstreamCache.inFlight;
+    return filterKalshiTradesByMinTs(trades, minTs);
+  }
+
+  const run = fetchKalshiTradesFromApi(minTs).then((trades) => {
+    kalshiUpstreamCache.trades = trades;
+    kalshiUpstreamCache.fetchedAt = Date.now();
+    kalshiUpstreamCache.inFlight = null;
+    return trades;
+  });
+
+  if (!options?.bypassThrottle) {
+    kalshiUpstreamCache.inFlight = run;
+  }
+
+  const trades = await run;
+  return filterKalshiTradesByMinTs(trades, minTs);
 }

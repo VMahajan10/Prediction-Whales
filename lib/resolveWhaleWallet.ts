@@ -1,4 +1,5 @@
 import { resolveWalletByTradeHash } from "@/lib/polymarket";
+import { METADATA_CACHE_TTL_MS } from "@/lib/ingestionPollConfig";
 
 const POLYGON_RPC_URLS = [
   "https://polygon-bor-rpc.publicnode.com",
@@ -25,6 +26,21 @@ export type WalletResolveSource =
   | "data-api-asset"
   | "data-api-global"
   | null;
+
+type WalletResolutionCacheEntry = {
+  expiresAt: number;
+  wallet: string | null;
+  source: WalletResolveSource;
+};
+
+const walletResolutionCache = new Map<string, WalletResolutionCacheEntry>();
+
+function walletResolutionCacheKey(
+  hash: string,
+  assetId?: string
+): string {
+  return `${hash.toLowerCase()}:${assetId ?? ""}`;
+}
 
 interface TxLog {
   address: string;
@@ -140,18 +156,36 @@ export async function resolveWalletForTrade(
   hash: string,
   options?: { assetId?: string }
 ): Promise<{ wallet: string | null; source: WalletResolveSource }> {
+  const cacheKey = walletResolutionCacheKey(hash, options?.assetId);
+  const cached = walletResolutionCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return { wallet: cached.wallet, source: cached.source };
+  }
+
+  const remember = (
+    wallet: string | null,
+    source: WalletResolveSource
+  ): { wallet: string | null; source: WalletResolveSource } => {
+    walletResolutionCache.set(cacheKey, {
+      wallet,
+      source,
+      expiresAt: Date.now() + METADATA_CACHE_TTL_MS,
+    });
+    return { wallet, source };
+  };
+
   const onchain = await resolveWalletOnChain(hash, options?.assetId);
   if (onchain) {
-    return { wallet: onchain, source: "onchain" };
+    return remember(onchain, "onchain");
   }
 
   const fromApi = await resolveWalletByTradeHash(hash, options?.assetId);
   if (fromApi) {
-    return {
-      wallet: fromApi,
-      source: options?.assetId ? "data-api-asset" : "data-api-global",
-    };
+    return remember(
+      fromApi,
+      options?.assetId ? "data-api-asset" : "data-api-global"
+    );
   }
 
-  return { wallet: null, source: null };
+  return remember(null, null);
 }

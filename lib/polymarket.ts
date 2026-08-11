@@ -6,6 +6,11 @@ import {
 } from "./clvPriceHistory";
 import { computeCrossMarketEvStats } from "./crossMarketEvStats";
 import {
+  METADATA_CACHE_TTL_MS,
+  POLYMARKET_TRADES_POLL_LIMIT,
+} from "./ingestionPollConfig";
+import { mergeOutboundHeaders } from "./outboundHttp";
+import {
   resolveTraderIntelligence,
   type TraderIntelligence,
 } from "./traderIntelligence";
@@ -24,6 +29,30 @@ import {
 
 const GAMMA_API_BASE = "https://gamma-api.polymarket.com";
 const DATA_API_BASE = "https://data-api.polymarket.com";
+
+const POLYMARKET_JSON_HEADERS = mergeOutboundHeaders({
+  Accept: "application/json",
+});
+
+type WalletResolveCacheEntry = {
+  expiresAt: number;
+  wallet: string | null;
+};
+
+const walletResolveCache = new Map<string, WalletResolveCacheEntry>();
+
+function polymarketFetch(
+  url: string,
+  init: RequestInit = {}
+): Promise<Response> {
+  return fetch(url, {
+    ...init,
+    headers: mergeOutboundHeaders({
+      ...POLYMARKET_JSON_HEADERS,
+      ...(init.headers as Record<string, string> | undefined),
+    }),
+  });
+}
 
 export type { ClosingLineResult } from "./clvPriceHistory";
 export type { TraderIntelligence } from "./traderIntelligence";
@@ -214,7 +243,7 @@ export async function fetchEventCategories(
 
   try {
     const params = unique.map((s) => `slug=${encodeURIComponent(s)}`).join("&");
-    const res = await fetch(
+    const res = await polymarketFetch(
       `https://gamma-api.polymarket.com/events?${params}`,
       { next: { revalidate: 3600 } }
     );
@@ -232,7 +261,7 @@ export async function fetchEventCategories(
       const retryParams = missing
         .map((s) => `slug=${encodeURIComponent(s)}`)
         .join("&");
-      const retry = await fetch(
+      const retry = await polymarketFetch(
         `https://gamma-api.polymarket.com/events?${retryParams}&closed=false`,
         { next: { revalidate: 3600 } }
       );
@@ -358,6 +387,13 @@ export interface TokenRegistry {
   tokens: Record<string, TokenMarketMeta>;
 }
 
+type RegistryCacheEntry = {
+  expiresAt: number;
+  registry: TokenRegistry;
+};
+
+let tokenRegistryCache: RegistryCacheEntry | null = null;
+
 function parseJsonArray<T>(value: string): T[] {
   try {
     const parsed: unknown = JSON.parse(value);
@@ -437,7 +473,10 @@ export async function fetchClosedPositions(
   try {
     const res = await fetchWithTimeout(
       `https://data-api.polymarket.com/closed-positions?user=${wallet}&limit=${CLOSED_POSITIONS_API_LIMIT}`,
-      { next: { revalidate: 300 } }
+      {
+        headers: mergeOutboundHeaders({ Accept: "application/json" }),
+        next: { revalidate: 300 },
+      }
     );
     if (!res.ok) return [];
     const data = await res.json();
@@ -589,12 +628,25 @@ export async function resolveWalletByTradeHash(
   assetId?: string
 ): Promise<string | null> {
   const normalized = hash.toLowerCase();
+  const cacheKey = `${normalized}:${assetId ?? ""}`;
+  const cached = walletResolveCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.wallet;
+  }
+
+  const remember = (wallet: string | null) => {
+    walletResolveCache.set(cacheKey, {
+      wallet,
+      expiresAt: Date.now() + METADATA_CACHE_TTL_MS,
+    });
+    return wallet;
+  };
 
   if (assetId) {
     try {
-      const res = await fetch(
-        `${DATA_API_BASE}/trades?asset=${encodeURIComponent(assetId)}&limit=100&sortBy=timestamp`,
-        { headers: { Accept: "application/json" }, next: { revalidate: 0 } }
+      const res = await polymarketFetch(
+        `${DATA_API_BASE}/trades?asset=${encodeURIComponent(assetId)}&limit=${POLYMARKET_TRADES_POLL_LIMIT}&sortBy=timestamp`,
+        { next: { revalidate: 0 } }
       );
       if (res.ok) {
         const data: unknown = await res.json();
@@ -602,7 +654,9 @@ export async function resolveWalletByTradeHash(
           const match = (data as DataTrade[]).find(
             (t) => t.transactionHash?.toLowerCase() === normalized
           );
-          if (match?.proxyWallet) return match.proxyWallet.toLowerCase();
+          if (match?.proxyWallet) {
+            return remember(match.proxyWallet.toLowerCase());
+          }
         }
       }
     } catch {
@@ -611,16 +665,12 @@ export async function resolveWalletByTradeHash(
   }
 
   const urls = [
-    `${DATA_API_BASE}/trades?limit=500&sortBy=timestamp`,
-    `${DATA_API_BASE}/trades?limit=200`,
+    `${DATA_API_BASE}/trades?limit=${POLYMARKET_TRADES_POLL_LIMIT}&sortBy=timestamp`,
   ];
 
   for (const url of urls) {
     try {
-      const res = await fetch(url, {
-        headers: { Accept: "application/json" },
-        next: { revalidate: 0 },
-      });
+      const res = await polymarketFetch(url, { next: { revalidate: 0 } });
       if (!res.ok) continue;
 
       const data: unknown = await res.json();
@@ -629,13 +679,15 @@ export async function resolveWalletByTradeHash(
       const match = (data as DataTrade[]).find(
         (t) => t.transactionHash?.toLowerCase() === normalized
       );
-      if (match?.proxyWallet) return match.proxyWallet.toLowerCase();
+      if (match?.proxyWallet) {
+        return remember(match.proxyWallet.toLowerCase());
+      }
     } catch {
       continue;
     }
   }
 
-  return null;
+  return remember(null);
 }
 
 export async function computeClvStats(
@@ -804,10 +856,7 @@ export function formatSpread(spread: number | null): string {
 export async function fetchMarkets(): Promise<MarketSummary[]> {
   const url = `${GAMMA_API_BASE}/markets?limit=100&active=true&closed=false`;
   console.log("Fetching markets from:", url);
-  const res = await fetch(url, {
-    headers: { Accept: "application/json" },
-    next: { revalidate: 0 },
-  });
+  const res = await polymarketFetch(url, { next: { revalidate: 0 } });
 
   if (!res.ok) {
     throw new Error(`Gamma API error: ${res.status} ${res.statusText}`);
@@ -825,9 +874,9 @@ export async function fetchMarketBySlug(
   slug: string
 ): Promise<MarketSummary | null> {
   try {
-    const res = await fetch(
+    const res = await polymarketFetch(
       `${GAMMA_API_BASE}/markets?slug=${encodeURIComponent(slug)}`,
-      { headers: { Accept: "application/json" }, next: { revalidate: 30 } }
+      { next: { revalidate: 30 } }
     );
     if (!res.ok) return null;
     const data: unknown = await res.json();
@@ -839,11 +888,8 @@ export async function fetchMarketBySlug(
 }
 
 export async function fetchTrades(): Promise<TradeSummary[]> {
-  const url = `${DATA_API_BASE}/trades?limit=200`;
-  const res = await fetch(url, {
-    headers: { Accept: "application/json" },
-    next: { revalidate: 0 },
-  });
+  const url = `${DATA_API_BASE}/trades?limit=${POLYMARKET_TRADES_POLL_LIMIT}`;
+  const res = await polymarketFetch(url, { next: { revalidate: 0 } });
 
   if (!res.ok) {
     throw new Error(`Data API error: ${res.status} ${res.statusText}`);
@@ -859,10 +905,7 @@ export async function fetchTrades(): Promise<TradeSummary[]> {
 
 export async function fetchWhaleBackfill(): Promise<TradeSummary[]> {
   const url = `${DATA_API_BASE}/trades?limit=100&filterType=CASH&filterAmount=500`;
-  const res = await fetch(url, {
-    headers: { Accept: "application/json" },
-    next: { revalidate: 0 },
-  });
+  const res = await polymarketFetch(url, { next: { revalidate: 0 } });
 
   if (!res.ok) {
     throw new Error(`Data API error: ${res.status} ${res.statusText}`);
@@ -878,7 +921,17 @@ export async function fetchWhaleBackfill(): Promise<TradeSummary[]> {
 
 export async function fetchTokenRegistry(options?: {
   maxMarkets?: number;
+  bypassCache?: boolean;
 }): Promise<TokenRegistry> {
+  const now = Date.now();
+  if (
+    !options?.bypassCache &&
+    tokenRegistryCache &&
+    tokenRegistryCache.expiresAt > now
+  ) {
+    return tokenRegistryCache.registry;
+  }
+
   const REGISTRY_PAGE_SIZE = 500;
   const REGISTRY_MAX_MARKETS = options?.maxMarkets ?? 5_000;
   const all: GammaMarket[] = [];
@@ -887,10 +940,7 @@ export async function fetchTokenRegistry(options?: {
     const url =
       `${GAMMA_API_BASE}/markets?limit=${REGISTRY_PAGE_SIZE}&offset=${offset}` +
       `&active=true&closed=false&order=volume24hr&ascending=false`;
-    const res = await fetch(url, {
-      headers: { Accept: "application/json" },
-      next: { revalidate: 60 },
-    });
+    const res = await polymarketFetch(url, { next: { revalidate: 60 } });
 
     if (!res.ok) {
       if (all.length > 0) break;
@@ -925,5 +975,10 @@ export async function fetchTokenRegistry(options?: {
     });
   }
 
-  return { tokenIds, tokens };
+  const registry = { tokenIds, tokens };
+  tokenRegistryCache = {
+    registry,
+    expiresAt: Date.now() + METADATA_CACHE_TTL_MS,
+  };
+  return registry;
 }

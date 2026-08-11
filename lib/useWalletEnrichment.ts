@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { KALSHI_TRADES_POLL_MS } from "@/lib/ingestionPollConfig";
 import {
   listCachedTradesMissingWallet,
   resolveAndCacheWallet,
 } from "@/lib/whaleCache";
 
-const POLL_INTERVAL_MS = 15_000;
+const POLL_INTERVAL_MS = KALSHI_TRADES_POLL_MS;
 const MAX_PER_TICK = 10;
 
 /**
