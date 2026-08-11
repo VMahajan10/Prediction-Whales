@@ -24,8 +24,10 @@ import {
   type ResolvedWhaleIdentity,
   type WhaleRegistryStats,
 } from "@/lib/whaleIdentityResolver";
+import { getWhaleAlias } from "@/lib/x-agent/getWhaleAlias";
 import { findWhaleByWalletCaseInsensitive } from "@/lib/x-agent/whaleRegistryDb";
 import type { WhaleRegistry } from "@/lib/crossmarket/store/schema";
+import { enrichTradesWithWhaleAlias } from "@/lib/trades/getTrades";
 
 export interface WalletFeedQualification extends WalletFeedQualificationInput {
   qualified: boolean;
@@ -46,11 +48,12 @@ function registryStats(whale: WhaleRegistry | null): WhaleRegistryStats | null {
 
 export function resolveRegistryWhaleIdentity(
   walletAddress: string,
-  whale: WhaleRegistry | null
+  whale: WhaleRegistry | null,
+  pseudonymOverride?: string | null
 ): ResolvedWhaleIdentity {
   return resolveWhaleIdentity(
     walletAddress,
-    whale?.pseudonym ?? null,
+    pseudonymOverride ?? whale?.pseudonym ?? null,
     registryStats(whale)
   );
 }
@@ -58,8 +61,13 @@ export function resolveRegistryWhaleIdentity(
 export async function qualifyWalletForFeed(
   walletAddress: string
 ): Promise<WalletFeedQualification> {
+  const alias = await getWhaleAlias(walletAddress);
   const whale = await findWhaleByWalletCaseInsensitive(walletAddress);
-  const identity = resolveRegistryWhaleIdentity(walletAddress, whale);
+  const identity = resolveRegistryWhaleIdentity(
+    walletAddress,
+    whale,
+    alias ?? whale?.pseudonym ?? null
+  );
 
   if (!whale) {
     return {
@@ -279,6 +287,7 @@ export async function enrichPolymarketFeedTradesWithIdentity<
     T & {
       whaleIdentity: ResolvedWhaleIdentity;
       marketTranslation: MarketPositionTranslation;
+      whaleAlias: string;
     }
   >
 > {
@@ -288,7 +297,7 @@ export async function enrichPolymarketFeedTradesWithIdentity<
 
   const qualifications = await qualifyWalletsForFeed(wallets);
 
-  return trades.flatMap((trade) => {
+  const enriched = trades.flatMap((trade) => {
     const marketTranslation =
       trade.marketTranslation ?? translateWhaleTradeMarket(trade);
     if (!marketTranslation) return [];
@@ -307,6 +316,8 @@ export async function enrichPolymarketFeedTradesWithIdentity<
       },
     ];
   });
+
+  return enrichTradesWithWhaleAlias(enriched);
 }
 
 export function recordKalshiFeedMetrics(detectedCount: number): void {

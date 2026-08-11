@@ -1,10 +1,12 @@
 import type { FeedTrade } from "@/lib/feedTradeTypes";
+import { KALSHI_TRADER_ALIAS } from "@/lib/trades/whaleAliasConstants";
 import { kalshiFeedTradeToWhale } from "@/lib/feed/kalshiFeedTrades";
 import { translateWhaleTradeMarket } from "@/lib/marketTranslator";
 import { tradeToWhale, type WhaleTrade } from "@/lib/whaleTrades";
 
 export type RecentHydratedTrade = FeedTrade & {
   netEvPercent?: number | null;
+  whaleAlias?: string;
 };
 
 function resolveHydratedStakeNotional(trade: RecentHydratedTrade): number {
@@ -59,6 +61,7 @@ export function recentTradeToWhale(trade: RecentHydratedTrade): WhaleTrade {
       transactionHash: trade.transactionHash ?? "",
       slug: trade.slug,
       assetId: trade.assetId,
+      proxyWallet: trade.proxyWallet,
     },
     {
       detectedAt: trade.timestamp * 1000,
@@ -74,6 +77,8 @@ export function recentTradeToWhale(trade: RecentHydratedTrade): WhaleTrade {
     ...whale,
     platform: "POLYMARKET",
     usdNotional: stakeNotional,
+    proxyWallet: trade.proxyWallet,
+    whaleAlias: trade.whaleAlias,
     marketTranslation,
     netEvPercent,
     averageEv: netEvPercent,

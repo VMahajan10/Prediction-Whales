@@ -20,6 +20,9 @@ import {
   resolvePolymarketTradeNotionalUsd,
 } from "@/lib/feedQualification";
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
+import {
+  enrichTradesWithWhaleAlias,
+} from "@/lib/trades/getTrades";
 import { initGlobalLocalEvCache } from "@/lib/evPipeline/redisCache";
 import { ensureFullyComputedTradeEv } from "@/lib/evPipeline/resolveTradeEv";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
@@ -171,12 +174,14 @@ type PolymarketPayload = {
   transactionHash?: string;
   slug?: string;
   assetId?: string;
+  proxyWallet?: string;
 };
 
 function polymarketPayloadToFeedTrade(
   payload: unknown,
   averageEv?: number,
-  category?: string | null
+  category?: string | null,
+  proxyWallet?: string | null
 ): RecentFeedTrade | null {
   if (!payload || typeof payload !== "object") return null;
   const row = payload as PolymarketPayload;
@@ -208,6 +213,10 @@ function polymarketPayloadToFeedTrade(
           ? (row as { averageEv: number }).averageEv
           : null;
 
+  const resolvedProxyWallet =
+    proxyWallet?.trim() ||
+    (typeof row.proxyWallet === "string" ? row.proxyWallet.trim() : undefined);
+
   return {
     id,
     source: "polymarket",
@@ -222,6 +231,7 @@ function polymarketPayloadToFeedTrade(
     transactionHash: row.transactionHash?.trim() || undefined,
     slug: row.slug?.trim() || undefined,
     assetId: row.assetId?.trim() || undefined,
+    proxyWallet: resolvedProxyWallet || undefined,
     netEvPercent,
     category: category?.trim() || undefined,
   };
@@ -426,6 +436,7 @@ async function fetchRecentPolymarketTrades(
         payload: feedTrades.payload,
         averageEv: feedTrades.averageEv,
         category: feedTrades.category,
+        proxyWallet: feedTrades.proxyWallet,
       })
       .from(feedTrades)
       .where(and(...predicates))
@@ -434,7 +445,12 @@ async function fetchRecentPolymarketTrades(
 
     const trades = rows
       .map((row) =>
-        polymarketPayloadToFeedTrade(row.payload, row.averageEv, row.category)
+        polymarketPayloadToFeedTrade(
+          row.payload,
+          row.averageEv,
+          row.category,
+          row.proxyWallet
+        )
       )
       .filter((trade): trade is RecentFeedTrade => trade != null)
       .filter(
@@ -596,10 +612,13 @@ export async function fetchRecentFeedTrades(options?: {
 
   const results = combineRecentTrades(polymarket, kalshi, RECENT_TRADES_LIMIT);
 
+  const filtered = applyRecentCategoryFilter(results, categoryFilter).map(
+    normalizeRecentFeedTrade
+  );
+  const enriched = await enrichTradesWithWhaleAlias(filtered);
+
   return {
-    trades: applyRecentCategoryFilter(results, categoryFilter).map(
-      normalizeRecentFeedTrade
-    ),
+    trades: enriched,
     degraded,
   };
 }

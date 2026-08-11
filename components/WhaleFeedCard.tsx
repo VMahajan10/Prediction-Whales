@@ -11,8 +11,9 @@ import { resolveFeedTradeEvDisplay } from "@/lib/feedTradeEv";
 import {
   formatWhaleWinRatePercent,
   isAnonymousWalletAddress,
-  sanitizeWhaleDisplayName,
+  whaleInitialsFromPseudonym,
 } from "@/lib/whaleIdentityResolver";
+import { KALSHI_TRADER_ALIAS } from "@/lib/trades/whaleAliasConstants";
 import type { WhaleTrade } from "@/lib/whaleTrades";
 
 export interface WhaleFeedCardProps {
@@ -28,37 +29,45 @@ export interface WhaleFeedCardProps {
  * prohibited, so Kalshi rows show a generic trader badge in the same slot
  * (docs/Kalshi Whale Attribution Audit.md). Never a pseudonym or win rate.
  */
-const KALSHI_ANONYMOUS_LABEL = "Kalshi Trader";
+const KALSHI_ANONYMOUS_LABEL = KALSHI_TRADER_ALIAS;
 
 function resolveFeedWhaleIdentity(trade: WhaleTrade) {
   if (trade.source === "kalshi") {
     return {
-      pseudonym: KALSHI_ANONYMOUS_LABEL,
+      pseudonym: trade.whaleAlias ?? KALSHI_ANONYMOUS_LABEL,
       initials: null,
       winRate: null,
       anonymous: true as const,
     };
   }
 
+  const whaleAlias = trade.whaleAlias?.trim();
+  if (whaleAlias) {
+    const identity = trade.whaleIdentity;
+    return {
+      pseudonym: whaleAlias,
+      initials: identity?.initials ?? whaleInitialsFromPseudonym(whaleAlias),
+      winRate: identity?.winRate ?? null,
+      anonymous: false as const,
+    };
+  }
+
   const wallet = trade.proxyWallet?.trim();
   if (!wallet || isAnonymousWalletAddress(wallet)) {
     return {
-      pseudonym: "Anonymous Observer",
-      initials: "AO",
+      pseudonym: trade.whaleIdentity?.pseudonym ?? "Unattributed Trader",
+      initials: "UT",
       winRate: null,
       anonymous: true as const,
     };
   }
 
   const identity = trade.whaleIdentity;
-  const pseudonym = sanitizeWhaleDisplayName(
-    identity?.pseudonym ?? null,
-    wallet
-  );
+  const pseudonym = identity?.pseudonym?.trim();
 
   return {
-    pseudonym,
-    initials: identity?.initials ?? pseudonym.slice(0, 2).toUpperCase(),
+    pseudonym: pseudonym ?? "Unattributed Trader",
+    initials: identity?.initials ?? whaleInitialsFromPseudonym(pseudonym ?? "UT"),
     winRate: identity?.winRate ?? null,
     anonymous: false as const,
   };

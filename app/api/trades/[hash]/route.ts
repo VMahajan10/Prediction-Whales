@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { fetchTrades } from "@/lib/polymarket";
+import { enrichTradesWithWhaleAlias } from "@/lib/trades/getTrades";
 import { findRelatedTrades, findTradeByHash } from "@/lib/whaleProfile";
 
 export const dynamic = "force-dynamic";
@@ -22,16 +23,20 @@ export async function GET(
       return NextResponse.json({ trade: null }, { status: 404 });
     }
 
+    const related = findRelatedTrades(trades, trade);
+    const enriched = await enrichTradesWithWhaleAlias(
+      [trade, ...related].map((row) => ({
+        ...row,
+        source: "polymarket" as const,
+        proxyWallet: row.proxyWallet ?? undefined,
+      }))
+    );
+    const [enrichedTrade, ...enrichedRelated] = enriched;
+
     return NextResponse.json(
       {
-        trade: {
-          ...trade,
-          proxyWallet: trade.proxyWallet ?? undefined,
-        },
-        relatedTrades: findRelatedTrades(trades, trade).map((t) => ({
-          ...t,
-          proxyWallet: t.proxyWallet ?? undefined,
-        })),
+        trade: enrichedTrade,
+        relatedTrades: enrichedRelated,
       },
       {
         headers: {

@@ -3,6 +3,7 @@ import {
   STAKE_FLOOR_DEFAULT_USD,
   STAKE_FLOOR_SPORTS_ENTERTAINMENT_USD,
 } from "@/lib/x-agent/stakeFloor";
+import { KALSHI_TRADER_ALIAS } from "@/lib/trades/whaleAliasConstants";
 import { normalizeFeedPlatform } from "@/lib/liveFeedMerge";
 import { resolveFeedTradeEvPercent, passesFeedTradeEvGate } from "@/lib/feedTradeEv";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
@@ -69,6 +70,7 @@ export function kalshiFeedTradeToWhale(
     netEvPercent,
     grossEvPercent: null,
     category: trade.category,
+    whaleAlias: KALSHI_TRADER_ALIAS,
   };
 }
 

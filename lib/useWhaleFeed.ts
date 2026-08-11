@@ -70,6 +70,7 @@ type RecentApiResponse = {
 
 type BackfillApiTrade = TradeSummary & {
   whaleIdentity?: ResolvedWhaleIdentity;
+  whaleAlias?: string;
   marketTranslation?: WhaleTrade["marketTranslation"];
   netEvPercent?: number | null;
   averageEv?: number | null;
@@ -331,6 +332,7 @@ export function useWhaleFeed() {
           source: "polymarket",
         }),
         whaleIdentity: t.whaleIdentity,
+        whaleAlias: t.whaleAlias,
         marketTranslation: t.marketTranslation,
         netEvPercent: t.netEvPercent ?? null,
         averageEv: t.averageEv ?? t.netEvPercent ?? null,

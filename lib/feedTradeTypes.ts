@@ -31,4 +31,8 @@ export interface FeedTrade {
   ev?: number | null;
   /** ISO-8601 trade time in normalized API responses. */
   traded_at?: string;
+  /** Polymarket proxy wallet when known. */
+  proxyWallet?: string;
+  /** Registry-backed or deterministic whale display name. */
+  whaleAlias?: string;
 }

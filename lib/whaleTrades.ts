@@ -23,6 +23,8 @@ export interface WhaleTrade extends TradeSummary {
   grossEvPercent?: number | null;
   /** Registry-backed whale identity and track-record stats for feed cards. */
   whaleIdentity?: ResolvedWhaleIdentity;
+  /** Resolved whale display name from the API (preferred over client-side inference). */
+  whaleAlias?: string;
   /** Plain-language market position copy for feed cards. */
   marketTranslation?: MarketPositionTranslation;
   /** Kalshi contract selection label (player, line, prop). */
