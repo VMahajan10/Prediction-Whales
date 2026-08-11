@@ -69,4 +69,19 @@ describe("getTrades whale alias enrichment", () => {
     expect(enriched[0]!.whaleAlias).toBe("Amber Specter #581");
     expect(enriched[1]!.whaleAlias).toBe(KALSHI_TRADER_ALIAS);
   });
+
+  it("drops null proxyWallet from enriched trades", async () => {
+    vi.mocked(getWhaleAlias).mockResolvedValue("Amber Specter #581");
+
+    const enriched = await enrichTradesWithWhaleAlias([
+      {
+        id: "k-null",
+        source: "kalshi",
+        proxyWallet: null,
+      },
+    ]);
+
+    expect(enriched[0]!.whaleAlias).toBe(KALSHI_TRADER_ALIAS);
+    expect(enriched[0]!.proxyWallet).toBeUndefined();
+  });
 });

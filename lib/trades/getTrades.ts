@@ -25,7 +25,8 @@ export type TradeWhaleAliasSource = "polymarket" | "kalshi";
 
 export type TradeWhaleAliasFields = {
   whaleAlias: string;
-  proxyWallet?: string;
+  /** Normalized on output; input rows may carry `null` from the database. */
+  proxyWallet?: string | null;
 };
 
 type AliasEnrichableTrade = {
@@ -91,16 +92,18 @@ export async function enrichTradesWithWhaleAlias<T extends AliasEnrichableTrade>
     aliasByWallet.set(wallet, await resolveTradeWhaleAlias(wallet, "polymarket"));
   });
 
-  return trades.map((trade) => {
+  return trades.map((trade): T & TradeWhaleAliasFields => {
+    const proxyWallet = normalizeResolvableWallet(trade.proxyWallet ?? undefined);
     const source = trade.source ?? "polymarket";
+
     if (source === "kalshi") {
       return {
         ...trade,
+        proxyWallet,
         whaleAlias: KALSHI_TRADER_ALIAS,
       };
     }
 
-    const proxyWallet = normalizeResolvableWallet(trade.proxyWallet);
     const whaleAlias = proxyWallet
       ? aliasByWallet.get(proxyWallet) ??
         generateDeterministicWhalePseudonym(proxyWallet)
@@ -108,7 +111,7 @@ export async function enrichTradesWithWhaleAlias<T extends AliasEnrichableTrade>
 
     return {
       ...trade,
-      ...(proxyWallet ? { proxyWallet } : {}),
+      proxyWallet,
       whaleAlias,
     };
   });
