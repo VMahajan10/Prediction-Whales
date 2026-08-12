@@ -646,9 +646,15 @@ export async function fetchRecentFeedTrades(options?: {
     normalizeRecentFeedTrade
   );
   const enriched = await enrichTradesWithWhaleAlias(filtered);
+  const qualified = enriched.filter(
+    (trade) =>
+      trade.netEvPercent != null &&
+      Number.isFinite(trade.netEvPercent) &&
+      meetsFeedTradeEvThreshold(trade.netEvPercent)
+  );
 
   return {
-    trades: enriched,
+    trades: qualified,
     degraded,
   };
 }

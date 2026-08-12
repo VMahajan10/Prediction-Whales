@@ -7,7 +7,9 @@ import {
   meetsFeedStakeThreshold,
   meetsFeedTieredStakeThreshold,
   meetsFeedTradeEvThreshold,
+  meetsFeedTradeEvDecimal,
   meetsProductFeedStakeThreshold,
+  passesStrictFeedTradeEv,
   meetsWalletAvgEvThreshold,
   MIN_AVG_EV_THRESHOLD,
   MIN_FEED_RESOLVED_BETS,
@@ -125,6 +127,20 @@ describe("feedQualification", () => {
     );
     expect(meetsFeedTradeEvThreshold(-14)).toBe(false);
     expect(meetsFeedTradeEvThreshold(null)).toBe(false);
+  });
+
+  it("enforces the +3.0% floor in decimal EV units", () => {
+    expect(meetsFeedTradeEvDecimal(0.03)).toBe(true);
+    expect(meetsFeedTradeEvDecimal(0.029)).toBe(false);
+    expect(meetsFeedTradeEvDecimal(null)).toBe(false);
+  });
+
+  it("passesStrictFeedTradeEv accepts percent or decimal EV", () => {
+    expect(passesStrictFeedTradeEv({ netEvPercent: 3.5 })).toBe(true);
+    expect(passesStrictFeedTradeEv({ ev: 0.035 })).toBe(true);
+    expect(passesStrictFeedTradeEv({ netEvPercent: 2.9 })).toBe(false);
+    expect(passesStrictFeedTradeEv({ ev: 0.02 })).toBe(false);
+    expect(passesStrictFeedTradeEv({})).toBe(false);
   });
 
   it("enforces the minimum wallet avg EV threshold", () => {

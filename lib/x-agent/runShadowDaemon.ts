@@ -21,7 +21,7 @@ import { tradeToWhale } from "@/lib/whaleTrades";
 import { processWhaleTradeForXAgent } from "@/lib/x-agent/enqueueWhaleTrade";
 import { flushAllBatchedNeonWrites } from "@/lib/x-agent/batchedNeonWrites";
 import {
-  passesShadowIngestionStakeGate,
+  passesShadowProductFeedGate,
   socketTradeToEvInput,
 } from "@/lib/x-agent/shadowTradeQualification";
 import {
@@ -282,7 +282,7 @@ export class ShadowCronDaemon {
       if (!trade) break;
 
       try {
-        if (!passesShadowIngestionStakeGate(trade)) continue;
+        if (!(await passesShadowProductFeedGate(trade))) continue;
 
         const whale = await socketTradeToWhale(trade);
         await this.persistFeedTrade(trade, whale);

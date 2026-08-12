@@ -69,16 +69,14 @@ describe("collectPolymarketFeedCandidates", () => {
     vi.mocked(resolveCachedFeedTradeEvPercents).mockReset();
   });
 
-  it("keeps stake-qualified trades with uncached EV so the client can hydrate them", async () => {
+  it("drops trades with uncached EV instead of returning null placeholders", async () => {
     vi.mocked(resolveCachedFeedTradeEvPercents).mockResolvedValue(
       new Map([[baseTrade.id, null]])
     );
 
     const candidates = await collectPolymarketFeedCandidates([baseTrade]);
 
-    expect(candidates).toHaveLength(1);
-    expect(candidates[0]!.netEvPercent).toBeNull();
-    expect(candidates[0]!.averageEv).toBeNull();
+    expect(candidates).toHaveLength(0);
   });
 
   it("attaches cached EV when the pipeline has already scored the asset", async () => {

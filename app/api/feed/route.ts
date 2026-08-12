@@ -4,7 +4,10 @@ import {
   enrichPolymarketFeedTradesWithIdentity,
   filterTranslatablePolymarketFeedTrades,
 } from "@/lib/feedQualificationServer";
-import { resolvePolymarketTradeNotionalUsd } from "@/lib/feedQualification";
+import {
+  MIN_FEED_TRADE_EV_PCT,
+  resolvePolymarketTradeNotionalUsd,
+} from "@/lib/feedQualification";
 import { collectKalshiFeedCandidates } from "@/lib/feed/kalshiFeedCandidatesServer";
 import {
   fetchFallbackFeedTrades,
@@ -37,13 +40,15 @@ export async function GET() {
     const translatable = filterTranslatablePolymarketFeedTrades(candidates);
     const enriched = await enrichPolymarketFeedTradesWithIdentity(translatable);
 
-    const renderable = enriched.filter(
+    const qualified = enriched.filter(
       (trade) =>
-        trade.netEvPercent != null && Number.isFinite(trade.netEvPercent)
+        trade.netEvPercent != null &&
+        Number.isFinite(trade.netEvPercent) &&
+        trade.netEvPercent >= MIN_FEED_TRADE_EV_PCT
     );
 
     await recordFeedTradeHistory(
-      renderable.map((trade) => ({
+      qualified.map((trade) => ({
         id: trade.id,
         transactionHash: trade.transactionHash,
         proxyWallet: trade.proxyWallet,
@@ -55,9 +60,9 @@ export async function GET() {
       }))
     );
 
-    if (renderable.length > 0) {
+    if (qualified.length > 0) {
       return NextResponse.json({
-        trades: enriched,
+        trades: qualified,
         kalshiTrades,
         source: "live",
       });
@@ -73,7 +78,7 @@ export async function GET() {
     }
 
     return NextResponse.json({
-      trades: enriched,
+      trades: qualified,
       kalshiTrades,
       source: "live",
     });

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { fetchTrades } from "@/lib/polymarket";
+import { filterQualifiedPolymarketFeedTrades } from "@/lib/feedQualificationServer";
 import { enrichTradesWithWhaleAlias } from "@/lib/trades/getTrades";
 
 export const dynamic = "force-dynamic";
@@ -11,8 +12,10 @@ export async function GET() {
       .sort((a, b) => b.timestamp - a.timestamp)
       .slice(0, 20);
 
+    const qualified = await filterQualifiedPolymarketFeedTrades(trades);
+
     const enriched = await enrichTradesWithWhaleAlias(
-      trades.map((trade) => ({
+      qualified.map((trade) => ({
         ...trade,
         source: "polymarket" as const,
         proxyWallet: trade.proxyWallet ?? undefined,

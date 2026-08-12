@@ -6,6 +6,7 @@ import { filterFeedByPlatform } from "@/lib/liveFeedMerge";
 import {
   meetsProductFeedStakeThreshold,
   meetsFeedTradeEvThreshold,
+  passesStrictFeedTradeEv,
 } from "@/lib/feedQualification";
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import type { FeedTrade } from "@/lib/feedTradeTypes";
@@ -49,6 +50,10 @@ function passesLiveFeedTradeGate(
 ): boolean {
   if (!meetsProductFeedStakeThreshold(trade.usdNotional)) {
     return false;
+  }
+
+  if (passesStrictFeedTradeEv(trade)) {
+    return true;
   }
 
   const pipelineKey = pipelineEvKeyForTrade(trade);
@@ -111,6 +116,7 @@ export function useLiveFeed(platform: LiveFeedPlatform = "all") {
         if (cancelled) return;
         const incoming = Array.isArray(data.trades) ? data.trades : [];
         const hydrated = incoming
+          .filter((trade) => passesStrictFeedTradeEv(trade))
           .sort(byTimeDesc)
           .slice(0, LIVE_FEED_RETENTION);
         setFeedBuffer(hydrated);
@@ -168,7 +174,9 @@ export function useLiveFeed(platform: LiveFeedPlatform = "all") {
 
   const trades = useMemo(
     () =>
-      filterFeedByPlatform(feedBuffer, platform).slice(0, LIVE_FEED_RETENTION),
+      filterFeedByPlatform(feedBuffer, platform)
+        .filter((trade) => passesStrictFeedTradeEv(trade))
+        .slice(0, LIVE_FEED_RETENTION),
     [feedBuffer, platform]
   );
 

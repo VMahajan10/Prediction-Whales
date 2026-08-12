@@ -30,13 +30,7 @@ function logShadowGateDrop(trade: SocketTrade, reason: string): void {
   console.log(`[Gate Drop] Venue: POLYMARKET | Reason: ${reason}`);
 }
 
-/**
- * Cheap stake-only gate for the shadow daemon — defers EV/credibility to
- * `processWhaleTradeForXAgent` (which can compute EV on demand).
- *
- * The previous product-feed gate required cache-only EV and silently dropped
- * every trade when the pipeline cache was cold after worker restart.
- */
+/** Stake + assetId pre-check — full +3.0% EV gate is `passesShadowProductFeedGate`. */
 export function passesShadowIngestionStakeGate(trade: SocketTrade): boolean {
   if (!meetsProductFeedStakeThreshold(trade.usdNotional)) {
     logShadowGateDrop(

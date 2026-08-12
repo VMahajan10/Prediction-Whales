@@ -155,15 +155,14 @@ export type PolymarketFeedCandidateTrade<T extends PolymarketFeedTradeLike> =
   };
 
 /**
- * Page-load feed candidates: tiered stake floor now, trade EV when already cached.
+ * Page-load feed candidates: stake floor + cached trade EV >= +3.0% only.
  *
- * Computing EV inline costs minutes of LLM latency per request, so trades whose
- * EV is not cached are returned with null EV and gated client-side once
- * /api/ev/trades hydrates them — the same path live socket trades already use.
+ * Trades without a cached authoritative EV are dropped — the product feed never
+ * surfaces N/A or sub-threshold rows while the pipeline hydrates.
  */
 export async function collectPolymarketFeedCandidates<
   T extends PolymarketFeedTradeLike,
->(trades: T[]): Promise<Array<PolymarketFeedCandidateTrade<T>>> {
+>(trades: T[]): Promise<Array<QualifiedPolymarketFeedTrade<T>>> {
   const tradeEvPercents = await resolveCachedFeedTradeEvPercents(
     trades.map((trade) => ({
       id: trade.id,
@@ -172,8 +171,7 @@ export async function collectPolymarketFeedCandidates<
     }))
   );
 
-  const candidates: Array<PolymarketFeedCandidateTrade<T>> = [];
-  let gatePassedTrades = 0;
+  const candidates: Array<QualifiedPolymarketFeedTrade<T>> = [];
 
   for (const trade of trades) {
     const notionalUsd = resolvePolymarketTradeNotionalUsd(trade);
@@ -181,9 +179,7 @@ export async function collectPolymarketFeedCandidates<
     const tradeEvPercent = tradeEvPercents.get(trade.id) ?? null;
 
     if (
-      !meetsProductFeedStakeThreshold(notionalUsd)
-    ) {
-      evaluateLiveFeedTradeGate(
+      !evaluateLiveFeedTradeGate(
         {
           stakeUsd: notionalUsd,
           title: trade.title,
@@ -193,26 +189,25 @@ export async function collectPolymarketFeedCandidates<
           tradeEvPercent,
         },
         { id: trade.id, source: "api" }
-      );
+      ).passed
+    ) {
       continue;
     }
 
-    const evKnown = tradeEvPercent != null && Number.isFinite(tradeEvPercent);
-    if (evKnown && !meetsFeedTradeEvThreshold(tradeEvPercent)) {
+    if (tradeEvPercent == null || !Number.isFinite(tradeEvPercent)) {
       continue;
     }
-    if (evKnown) gatePassedTrades += 1;
 
     candidates.push({
       ...trade,
-      netEvPercent: evKnown ? tradeEvPercent : null,
-      averageEv: evKnown ? tradeEvPercent : null,
+      netEvPercent: tradeEvPercent,
+      averageEv: tradeEvPercent,
     });
   }
 
   recordFeedMetrics({
     tradesDetected: trades.length,
-    gatePassedTrades,
+    gatePassedTrades: candidates.length,
     whaleWallets: candidates
       .map((trade) => trade.proxyWallet)
       .filter((wallet): wallet is string => Boolean(wallet)),

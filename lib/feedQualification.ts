@@ -91,6 +91,26 @@ export function meetsFeedTradeEvThreshold(
   );
 }
 
+/** Strict product-feed EV floor in decimal probability units (0.03 = +3.0%). */
+export function meetsFeedTradeEvDecimal(
+  evDecimal: number | null | undefined
+): boolean {
+  return (
+    evDecimal != null &&
+    Number.isFinite(evDecimal) &&
+    evDecimal >= MIN_FEED_TRADE_EV_DECIMAL
+  );
+}
+
+/** Trade-level EV in percent or decimal — rejects N/A and values below +3.0%. */
+export function passesStrictFeedTradeEv(input: {
+  netEvPercent?: number | null;
+  ev?: number | null;
+}): boolean {
+  if (meetsFeedTradeEvThreshold(input.netEvPercent)) return true;
+  return meetsFeedTradeEvDecimal(input.ev);
+}
+
 export function meetsWalletAvgEvThreshold(
   avgEv: number | null | undefined
 ): boolean {
