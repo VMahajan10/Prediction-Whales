@@ -1,7 +1,7 @@
 import "server-only";
 
 import {
-  generateDeterministicWhalePseudonym,
+  generateUniqueTraderName,
   isAnonymousWalletAddress,
   isUsableCustomWhaleName,
 } from "@/lib/whaleIdentityResolver";
@@ -49,7 +49,7 @@ export async function getWhaleAlias(walletAddress: string): Promise<string | nul
     return existing.pseudonym.trim();
   }
 
-  const pseudonym = generateDeterministicWhalePseudonym(normalized);
+  const pseudonym = generateUniqueTraderName(normalized);
   const whale = await upsertWhaleRegistry({
     walletAddress: normalized,
     pseudonym,

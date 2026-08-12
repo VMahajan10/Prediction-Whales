@@ -3,7 +3,7 @@ import "server-only";
 import type { WhaleRegistry } from "@/lib/crossmarket/store/schema";
 import {
   ANONYMOUS_WALLET_ADDRESS,
-  generateDeterministicWhalePseudonym,
+  generateUniqueTraderName,
   isAnonymousWalletAddress,
   isUsableCustomWhaleName,
 } from "@/lib/whaleIdentityResolver";
@@ -24,7 +24,7 @@ export function formatWalletPseudonym(wallet: string): string {
 }
 
 export function resolveDeterministicWhalePseudonym(wallet: string): string {
-  return generateDeterministicWhalePseudonym(normalizeWalletAddress(wallet));
+  return generateUniqueTraderName(normalizeWalletAddress(wallet));
 }
 
 export function isRegistryPseudonymUnlabelled(

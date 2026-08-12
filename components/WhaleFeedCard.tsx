@@ -10,8 +10,8 @@ import { formatPriceCents, formatStakeCompact } from "@/lib/whaleDetails";
 import { resolveFeedTradeEvDisplay } from "@/lib/feedTradeEv";
 import {
   formatWhaleWinRatePercent,
+  getUniqueTraderName,
   isAnonymousWalletAddress,
-  resolveFeedTraderDisplayName,
   WHALE_TRADER_FALLBACK_ALIAS,
   whaleInitialsFromPseudonym,
 } from "@/lib/whaleIdentityResolver";
@@ -45,8 +45,8 @@ function resolveFeedWhaleIdentity(trade: WhaleTrade) {
 
   const wallet = trade.proxyWallet?.trim();
   const hasWallet = Boolean(wallet && !isAnonymousWalletAddress(wallet));
-  const displayName = resolveFeedTraderDisplayName({
-    wallet: trade.proxyWallet,
+  const displayName = getUniqueTraderName({
+    proxyWallet: trade.proxyWallet,
     pseudonym: trade.whaleIdentity?.pseudonym,
     whaleAlias: trade.whaleAlias,
   });

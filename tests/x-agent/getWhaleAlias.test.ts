@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  generateDeterministicWhalePseudonym,
+  generateUniqueTraderName,
   hashWalletAddress,
+  UNIQUE_TRADER_NAME_PATTERN,
 } from "@/lib/whaleIdentityResolver";
 import {
   needsGeneratedWhalePseudonym,
@@ -20,19 +21,17 @@ const WALLET_B = "0x1111111111111111111111111111111111111111";
 
 describe("deterministic whale aliases", () => {
   it("generates different aliases for different wallets", () => {
-    const aliasA = generateDeterministicWhalePseudonym(WALLET_A);
-    const aliasB = generateDeterministicWhalePseudonym(WALLET_B);
+    const aliasA = generateUniqueTraderName(WALLET_A);
+    const aliasB = generateUniqueTraderName(WALLET_B);
 
     expect(aliasA).not.toBe(aliasB);
-    expect(aliasA).toMatch(/^[A-Za-z]+ [A-Za-z]+ #\d{3}$/);
+    expect(aliasA).toMatch(UNIQUE_TRADER_NAME_PATTERN);
   });
 
   it("does not use the shared unknown-wallet alias", () => {
-    expect(generateDeterministicWhalePseudonym("unknown")).toBe(
-      "Anonymous Observer"
-    );
-    expect(generateDeterministicWhalePseudonym(WALLET_A)).not.toBe(
-      generateDeterministicWhalePseudonym("unknown")
+    expect(generateUniqueTraderName("unknown")).toBe("AnonymousTrader102");
+    expect(generateUniqueTraderName(WALLET_A)).not.toBe(
+      generateUniqueTraderName("unknown")
     );
   });
 
@@ -57,8 +56,8 @@ describe("deterministic whale aliases", () => {
 
   it("is stable for the same wallet hash", () => {
     expect(hashWalletAddress(WALLET_A)).toBe(hashWalletAddress(WALLET_A));
-    expect(generateDeterministicWhalePseudonym(WALLET_A)).toBe(
-      generateDeterministicWhalePseudonym(WALLET_A)
+    expect(generateUniqueTraderName(WALLET_A)).toBe(
+      generateUniqueTraderName(WALLET_A)
     );
   });
 });

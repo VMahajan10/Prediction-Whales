@@ -117,6 +117,11 @@ export function isUsableCustomWhaleName(
 }
 
 export function generateDeterministicWhalePseudonym(walletAddress: string): string {
+  return generateUniqueTraderName(walletAddress);
+}
+
+/** Compact deterministic alias: `CrimsonVanguard142` (Adjective+Noun+Number). */
+export function generateUniqueTraderName(walletAddress: string): string {
   const normalized = normalizeWallet(walletAddress);
   if (
     !normalized ||
@@ -124,7 +129,7 @@ export function generateDeterministicWhalePseudonym(walletAddress: string): stri
     normalized === "unknown" ||
     normalized === "anonymous"
   ) {
-    return "Anonymous Observer";
+    return "AnonymousTrader102";
   }
 
   const hash = hashWalletAddress(normalized);
@@ -132,10 +137,71 @@ export function generateDeterministicWhalePseudonym(walletAddress: string): stri
   const noun =
     WHALE_NOUNS[Math.floor(hash / WHALE_ADJECTIVES.length) % WHALE_NOUNS.length];
   const serial = (hash % 900) + 100;
-  return `${adjective} ${noun} #${serial}`;
+  return `${adjective}${noun}${serial}`;
+}
+
+export const UNIQUE_TRADER_NAME_PATTERN = /^[A-Z][a-z]+[A-Z][a-z]+\d{3}$/;
+
+export function isLegacySpacedWhalePseudonym(value: string): boolean {
+  return /^[A-Za-z]+ [A-Za-z]+ #\d{3}$/.test(value.trim());
+}
+
+export type UniqueTraderNameInput = {
+  wallet?: string | null;
+  proxyWallet?: string | null;
+  username?: string | null;
+  pseudonym?: string | null;
+  whaleAlias?: string | null;
+  name?: string | null;
+};
+
+function resolveTraderWallet(
+  trader: UniqueTraderNameInput
+): string | undefined {
+  const wallet = (trader.proxyWallet ?? trader.wallet)?.trim().toLowerCase();
+  if (!wallet || isAnonymousWalletAddress(wallet)) return undefined;
+  if (!/^0x[a-f0-9]{40}$/.test(wallet)) return undefined;
+  return wallet;
+}
+
+/**
+ * Stable trader label for feed cards, tweets, and Telegram copy.
+ * Custom registry names win; unnamed wallets get a deterministic compact alias.
+ */
+export function getUniqueTraderName(trader: UniqueTraderNameInput): string {
+  const wallet = resolveTraderWallet(trader);
+  const candidates = [
+    trader.username,
+    trader.whaleAlias,
+    trader.pseudonym,
+    trader.name,
+  ];
+
+  for (const candidate of candidates) {
+    const trimmed = candidate?.trim();
+    if (!trimmed) continue;
+    if (wallet) {
+      if (!isUsableCustomWhaleName(trimmed, wallet)) continue;
+    } else if (isHexWalletDisplay(trimmed)) {
+      continue;
+    }
+    return trimmed;
+  }
+
+  if (wallet) {
+    return generateUniqueTraderName(wallet);
+  }
+
+  return WHALE_TRADER_FALLBACK_ALIAS;
 }
 
 export function whaleInitialsFromPseudonym(pseudonym: string): string {
+  const withoutSerial = pseudonym.replace(/\d+$/, "").trim();
+  const pascalParts = withoutSerial.match(/[A-Z][a-z]+/g);
+  if (pascalParts && pascalParts.length >= 2) {
+    return `${pascalParts[0]![0] ?? ""}${pascalParts[1]![0] ?? ""}`.toUpperCase();
+  }
+
   const words = pseudonym
     .replace(/#\d+/g, "")
     .trim()
@@ -158,33 +224,12 @@ export function formatShortWalletAddress(wallet: string): string {
 }
 
 /**
- * Feed/card trader label — registry aliases and tier pseudonyms win; then a
- * short wallet fragment; finally the generic whale fallback when unattributed.
+ * Feed/card trader label — delegates to {@link getUniqueTraderName}.
  */
-export function resolveFeedTraderDisplayName(input: {
-  wallet?: string | null;
-  pseudonym?: string | null;
-  whaleAlias?: string | null;
-}): string {
-  const whaleAlias = input.whaleAlias?.trim();
-  if (whaleAlias) return whaleAlias;
-
-  const wallet = input.wallet?.trim();
-  const hasWallet = Boolean(wallet && !isAnonymousWalletAddress(wallet));
-
-  const pseudonym = input.pseudonym?.trim();
-  if (
-    pseudonym &&
-    (!hasWallet || isUsableCustomWhaleName(pseudonym, wallet!))
-  ) {
-    return pseudonym;
-  }
-
-  if (hasWallet && wallet) {
-    return formatShortWalletAddress(wallet);
-  }
-
-  return WHALE_TRADER_FALLBACK_ALIAS;
+export function resolveFeedTraderDisplayName(
+  input: UniqueTraderNameInput
+): string {
+  return getUniqueTraderName(input);
 }
 
 /** UI-safe label — never returns a raw hex wallet fragment. */
@@ -193,10 +238,10 @@ export function sanitizeWhaleDisplayName(
   walletAddress: string
 ): string {
   if (!value?.trim() || isHexWalletDisplay(value)) {
-    return generateDeterministicWhalePseudonym(walletAddress);
+    return generateUniqueTraderName(walletAddress);
   }
   if (isRegistryHexPseudonym(value, walletAddress)) {
-    return generateDeterministicWhalePseudonym(walletAddress);
+    return generateUniqueTraderName(walletAddress);
   }
   return value.trim();
 }
@@ -242,7 +287,7 @@ export function resolveWhaleIdentity(
   const normalized = normalizeWallet(walletAddress);
   const pseudonym = isUsableCustomWhaleName(customName, normalized)
     ? customName!.trim()
-    : generateDeterministicWhalePseudonym(normalized);
+    : generateUniqueTraderName(normalized);
 
   const avgEv =
     stats?.avgEv != null && Number.isFinite(stats.avgEv) ? stats.avgEv : null;

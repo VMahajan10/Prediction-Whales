@@ -1,5 +1,5 @@
 import {
-  generateDeterministicWhalePseudonym,
+  getUniqueTraderName,
   isAnonymousWalletAddress,
   isUsableCustomWhaleName,
 } from "@/lib/whaleIdentityResolver";
@@ -45,10 +45,9 @@ export function isUnlabelledWhalePseudonym(
 }
 
 /**
- * Human-facing whale label for post copy.
+ * Human-facing whale label for post copy, tweets, and Telegram.
  * Named registry whales keep their pseudonym; identified wallets without a
- * usable registry alias get a deterministic hash-based pseudonym (never a
- * shared static fallback like "unknown" → Amber Specter #581).
+ * usable registry alias get a deterministic compact alias (e.g. CrimsonVanguard142).
  */
 export function formatWhaleDisplayLabel(
   walletAddress: string,
@@ -62,9 +61,8 @@ export function formatWhaleDisplayLabel(
     return pickUnlabelledWhalePhrase(random);
   }
 
-  if (pseudonym?.trim() && isUsableCustomWhaleName(pseudonym, walletAddress)) {
-    return pseudonym.trim();
-  }
-
-  return generateDeterministicWhalePseudonym(walletAddress);
+  return getUniqueTraderName({
+    wallet: walletAddress,
+    pseudonym,
+  });
 }

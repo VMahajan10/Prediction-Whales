@@ -1,25 +1,28 @@
 import { describe, expect, it } from "vitest";
 import {
-  formatShortWalletAddress,
   generateDeterministicWhalePseudonym,
+  generateUniqueTraderName,
+  getUniqueTraderName,
   hashWalletAddress,
   isHexWalletDisplay,
   isUsableCustomWhaleName,
   resolveFeedTraderDisplayName,
   resolveWhaleIdentity,
   sanitizeWhaleDisplayName,
+  UNIQUE_TRADER_NAME_PATTERN,
   WHALE_TRADER_FALLBACK_ALIAS,
 } from "@/lib/whaleIdentityResolver";
 
 const WALLET = "0xabcdef1234567890abcdef1234567890abcdef12";
 
 describe("whaleIdentityResolver", () => {
-  it("generates deterministic pseudonyms from wallet hash", () => {
-    const first = generateDeterministicWhalePseudonym(WALLET);
-    const second = generateDeterministicWhalePseudonym(WALLET);
+  it("generates deterministic compact trader names from wallet hash", () => {
+    const first = generateUniqueTraderName(WALLET);
+    const second = generateUniqueTraderName(WALLET);
 
-    expect(first).toMatch(/^[A-Za-z]+ [A-Za-z]+ #\d{3}$/);
+    expect(first).toMatch(UNIQUE_TRADER_NAME_PATTERN);
     expect(second).toBe(first);
+    expect(generateDeterministicWhalePseudonym(WALLET)).toBe(first);
     expect(hashWalletAddress(WALLET)).toBe(hashWalletAddress(WALLET));
   });
 
@@ -39,7 +42,7 @@ describe("whaleIdentityResolver", () => {
     expect(identity.clvScore).toBe(0.035);
   });
 
-  it("rejects hex-like custom names and falls back to deterministic pseudonyms", () => {
+  it("rejects hex-like custom names and falls back to compact aliases", () => {
     expect(isHexWalletDisplay("0xabc1…e2Db")).toBe(true);
     expect(isUsableCustomWhaleName("0xabc1…e2Db", WALLET)).toBe(false);
 
@@ -50,34 +53,43 @@ describe("whaleIdentityResolver", () => {
     });
 
     expect(identity.pseudonym).not.toContain("0x");
-    expect(identity.pseudonym).toMatch(/#\d{3}$/);
+    expect(identity.pseudonym).toMatch(UNIQUE_TRADER_NAME_PATTERN);
   });
 
   it("never sanitizes to a raw wallet fragment", () => {
     const sanitized = sanitizeWhaleDisplayName("0xabcd…ef12", WALLET);
     expect(sanitized).not.toContain("0x");
-    expect(sanitized).toMatch(/#\d{3}$/);
+    expect(sanitized).toMatch(UNIQUE_TRADER_NAME_PATTERN);
   });
 
   it("prioritizes registry aliases for feed display", () => {
     expect(
       resolveFeedTraderDisplayName({
         wallet: WALLET,
-        whaleAlias: "Silver Champion #640",
+        whaleAlias: "Zhang-match whale",
         pseudonym: "Other Name",
+      })
+    ).toBe("Zhang-match whale");
+  });
+
+  it("generates a compact alias when no custom name is available", () => {
+    expect(
+      getUniqueTraderName({
+        proxyWallet: WALLET,
+      })
+    ).toBe(generateUniqueTraderName(WALLET));
+  });
+
+  it("keeps legacy tier aliases when provided on the trade", () => {
+    expect(
+      getUniqueTraderName({
+        proxyWallet: WALLET,
+        whaleAlias: "Silver Champion #640",
       })
     ).toBe("Silver Champion #640");
   });
 
-  it("falls back to a short wallet label when no alias is available", () => {
-    expect(
-      resolveFeedTraderDisplayName({
-        wallet: WALLET,
-      })
-    ).toBe(formatShortWalletAddress(WALLET));
-  });
-
   it("uses Whale Trader when the wallet is missing", () => {
-    expect(resolveFeedTraderDisplayName({})).toBe(WHALE_TRADER_FALLBACK_ALIAS);
+    expect(getUniqueTraderName({})).toBe(WHALE_TRADER_FALLBACK_ALIAS);
   });
 });

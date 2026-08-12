@@ -36,7 +36,7 @@ describe("getTrades whale alias enrichment", () => {
 
     const alias = await resolveTradeWhaleAlias(WALLET_A, "polymarket");
     expect(alias).not.toBe("Anonymous Observer");
-    expect(alias).toMatch(/^[A-Za-z]+ [A-Za-z]+ #\d{3}$/);
+    expect(alias).toMatch(/^[A-Z][a-z]+[A-Z][a-z]+\d{3}$/);
   });
 
   it("uses Kalshi Trader for kalshi rows", async () => {

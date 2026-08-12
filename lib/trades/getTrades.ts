@@ -2,7 +2,7 @@ import "server-only";
 
 import { mapWithConcurrency } from "@/lib/clvPriceHistory";
 import {
-  generateDeterministicWhalePseudonym,
+  generateUniqueTraderName,
   isAnonymousWalletAddress,
   resolveWhaleIdentity,
   type ResolvedWhaleIdentity,
@@ -59,7 +59,7 @@ export async function resolveTradeWhaleAlias(
   if (!wallet) return WHALE_TRADER_FALLBACK_ALIAS;
 
   const alias = await getWhaleAlias(wallet);
-  return alias ?? generateDeterministicWhalePseudonym(wallet);
+  return alias ?? generateUniqueTraderName(wallet);
 }
 
 export function buildWhaleIdentityForAlias(
@@ -107,7 +107,7 @@ export async function enrichTradesWithWhaleAlias<T extends AliasEnrichableTrade>
 
     const whaleAlias = proxyWallet
       ? aliasByWallet.get(proxyWallet) ??
-        generateDeterministicWhalePseudonym(proxyWallet)
+        generateUniqueTraderName(proxyWallet)
       : WHALE_TRADER_FALLBACK_ALIAS;
 
     return {
