@@ -40,6 +40,9 @@ const WHALE_NOUNS = [
 ] as const;
 
 import { resolveWalletClvScore } from "@/lib/metrics/clv";
+import { WHALE_TRADER_FALLBACK_ALIAS } from "@/lib/trades/whaleAliasConstants";
+
+export { WHALE_TRADER_FALLBACK_ALIAS } from "@/lib/trades/whaleAliasConstants";
 
 export interface WhaleRegistryStats {
   winRate?: number | null;
@@ -145,6 +148,43 @@ export function whaleInitialsFromPseudonym(pseudonym: string): string {
 
   const compact = pseudonym.replace(/[^a-zA-Z]/g, "");
   return (compact.slice(0, 2) || "WH").toUpperCase();
+}
+
+/** Compact `0x1234…5678` label for wallets without a registry pseudonym. */
+export function formatShortWalletAddress(wallet: string): string {
+  const normalized = normalizeWallet(wallet);
+  if (normalized.length < 12) return normalized;
+  return `${normalized.slice(0, 6)}…${normalized.slice(-4)}`;
+}
+
+/**
+ * Feed/card trader label — registry aliases and tier pseudonyms win; then a
+ * short wallet fragment; finally the generic whale fallback when unattributed.
+ */
+export function resolveFeedTraderDisplayName(input: {
+  wallet?: string | null;
+  pseudonym?: string | null;
+  whaleAlias?: string | null;
+}): string {
+  const whaleAlias = input.whaleAlias?.trim();
+  if (whaleAlias) return whaleAlias;
+
+  const wallet = input.wallet?.trim();
+  const hasWallet = Boolean(wallet && !isAnonymousWalletAddress(wallet));
+
+  const pseudonym = input.pseudonym?.trim();
+  if (
+    pseudonym &&
+    (!hasWallet || isUsableCustomWhaleName(pseudonym, wallet!))
+  ) {
+    return pseudonym;
+  }
+
+  if (hasWallet && wallet) {
+    return formatShortWalletAddress(wallet);
+  }
+
+  return WHALE_TRADER_FALLBACK_ALIAS;
 }
 
 /** UI-safe label — never returns a raw hex wallet fragment. */

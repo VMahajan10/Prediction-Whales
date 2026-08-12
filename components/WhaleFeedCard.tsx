@@ -11,6 +11,8 @@ import { resolveFeedTradeEvDisplay } from "@/lib/feedTradeEv";
 import {
   formatWhaleWinRatePercent,
   isAnonymousWalletAddress,
+  resolveFeedTraderDisplayName,
+  WHALE_TRADER_FALLBACK_ALIAS,
   whaleInitialsFromPseudonym,
 } from "@/lib/whaleIdentityResolver";
 import { KALSHI_TRADER_ALIAS } from "@/lib/trades/whaleAliasConstants";
@@ -41,35 +43,23 @@ function resolveFeedWhaleIdentity(trade: WhaleTrade) {
     };
   }
 
-  const whaleAlias = trade.whaleAlias?.trim();
-  if (whaleAlias) {
-    const identity = trade.whaleIdentity;
-    return {
-      pseudonym: whaleAlias,
-      initials: identity?.initials ?? whaleInitialsFromPseudonym(whaleAlias),
-      winRate: identity?.winRate ?? null,
-      anonymous: false as const,
-    };
-  }
-
   const wallet = trade.proxyWallet?.trim();
-  if (!wallet || isAnonymousWalletAddress(wallet)) {
-    return {
-      pseudonym: trade.whaleIdentity?.pseudonym ?? "Unattributed Trader",
-      initials: "UT",
-      winRate: null,
-      anonymous: true as const,
-    };
-  }
-
+  const hasWallet = Boolean(wallet && !isAnonymousWalletAddress(wallet));
+  const displayName = resolveFeedTraderDisplayName({
+    wallet: trade.proxyWallet,
+    pseudonym: trade.whaleIdentity?.pseudonym,
+    whaleAlias: trade.whaleAlias,
+  });
   const identity = trade.whaleIdentity;
-  const pseudonym = identity?.pseudonym?.trim();
+  const anonymous =
+    !hasWallet || displayName === WHALE_TRADER_FALLBACK_ALIAS;
 
   return {
-    pseudonym: pseudonym ?? "Unattributed Trader",
-    initials: identity?.initials ?? whaleInitialsFromPseudonym(pseudonym ?? "UT"),
+    pseudonym: displayName,
+    initials:
+      identity?.initials ?? whaleInitialsFromPseudonym(displayName),
     winRate: identity?.winRate ?? null,
-    anonymous: false as const,
+    anonymous,
   };
 }
 

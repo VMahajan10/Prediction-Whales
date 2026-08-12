@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatShortWalletAddress,
   generateDeterministicWhalePseudonym,
   hashWalletAddress,
   isHexWalletDisplay,
   isUsableCustomWhaleName,
+  resolveFeedTraderDisplayName,
   resolveWhaleIdentity,
   sanitizeWhaleDisplayName,
+  WHALE_TRADER_FALLBACK_ALIAS,
 } from "@/lib/whaleIdentityResolver";
 
 const WALLET = "0xabcdef1234567890abcdef1234567890abcdef12";
@@ -54,5 +57,27 @@ describe("whaleIdentityResolver", () => {
     const sanitized = sanitizeWhaleDisplayName("0xabcd…ef12", WALLET);
     expect(sanitized).not.toContain("0x");
     expect(sanitized).toMatch(/#\d{3}$/);
+  });
+
+  it("prioritizes registry aliases for feed display", () => {
+    expect(
+      resolveFeedTraderDisplayName({
+        wallet: WALLET,
+        whaleAlias: "Silver Champion #640",
+        pseudonym: "Other Name",
+      })
+    ).toBe("Silver Champion #640");
+  });
+
+  it("falls back to a short wallet label when no alias is available", () => {
+    expect(
+      resolveFeedTraderDisplayName({
+        wallet: WALLET,
+      })
+    ).toBe(formatShortWalletAddress(WALLET));
+  });
+
+  it("uses Whale Trader when the wallet is missing", () => {
+    expect(resolveFeedTraderDisplayName({})).toBe(WHALE_TRADER_FALLBACK_ALIAS);
   });
 });

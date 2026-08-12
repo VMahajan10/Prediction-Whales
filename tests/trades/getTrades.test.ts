@@ -12,7 +12,7 @@ import {
 } from "@/lib/trades/getTrades";
 import {
   KALSHI_TRADER_ALIAS,
-  UNATTRIBUTED_TRADER_ALIAS,
+  WHALE_TRADER_FALLBACK_ALIAS,
 } from "@/lib/trades/whaleAliasConstants";
 
 const WALLET_A = "0xabcdef1234567890abcdef1234567890abcdef12";
@@ -45,9 +45,9 @@ describe("getTrades whale alias enrichment", () => {
     );
   });
 
-  it("uses Unattributed Trader when no wallet is present", async () => {
+  it("uses Whale Trader when no wallet is present", async () => {
     await expect(resolveTradeWhaleAlias(null, "polymarket")).resolves.toBe(
-      UNATTRIBUTED_TRADER_ALIAS
+      WHALE_TRADER_FALLBACK_ALIAS
     );
   });
 

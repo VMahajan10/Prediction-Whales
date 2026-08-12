@@ -11,12 +11,13 @@ import {
 import { getWhaleAlias } from "@/lib/x-agent/getWhaleAlias";
 import {
   KALSHI_TRADER_ALIAS,
-  UNATTRIBUTED_TRADER_ALIAS,
+  WHALE_TRADER_FALLBACK_ALIAS,
 } from "@/lib/trades/whaleAliasConstants";
 
 export {
   KALSHI_TRADER_ALIAS,
   UNATTRIBUTED_TRADER_ALIAS,
+  WHALE_TRADER_FALLBACK_ALIAS,
 } from "@/lib/trades/whaleAliasConstants";
 
 const WHALE_ALIAS_CONCURRENCY = 8;
@@ -55,7 +56,7 @@ export async function resolveTradeWhaleAlias(
   if (source === "kalshi") return KALSHI_TRADER_ALIAS;
 
   const wallet = normalizeResolvableWallet(walletAddress);
-  if (!wallet) return UNATTRIBUTED_TRADER_ALIAS;
+  if (!wallet) return WHALE_TRADER_FALLBACK_ALIAS;
 
   const alias = await getWhaleAlias(wallet);
   return alias ?? generateDeterministicWhalePseudonym(wallet);
@@ -107,7 +108,7 @@ export async function enrichTradesWithWhaleAlias<T extends AliasEnrichableTrade>
     const whaleAlias = proxyWallet
       ? aliasByWallet.get(proxyWallet) ??
         generateDeterministicWhalePseudonym(proxyWallet)
-      : UNATTRIBUTED_TRADER_ALIAS;
+      : WHALE_TRADER_FALLBACK_ALIAS;
 
     return {
       ...trade,
