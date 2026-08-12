@@ -116,6 +116,36 @@ export function isUsableCustomWhaleName(
   return !isHexWalletDisplay(customName);
 }
 
+const STATIC_TRADER_FALLBACK_LABELS = new Set(
+  [
+    WHALE_TRADER_FALLBACK_ALIAS,
+    "Unattributed Trader",
+    "Anonymous Whale",
+    "Anonymous Observer",
+    "AnonymousTrader102",
+  ].map((label) => label.toLowerCase())
+);
+
+function aliasFromHash(hash: number): string {
+  const adjective = WHALE_ADJECTIVES[hash % WHALE_ADJECTIVES.length];
+  const noun =
+    WHALE_NOUNS[Math.floor(hash / WHALE_ADJECTIVES.length) % WHALE_NOUNS.length];
+  const serial = (hash % 900) + 100;
+  return `${adjective}${noun}${serial}`;
+}
+
+/**
+ * Deterministic compact alias from any stable seed (wallet, trade id, tx hash).
+ * Never returns static labels like "Whale Trader".
+ */
+export function hashToTraderAlias(seed: string): string {
+  const normalized = seed.trim().toLowerCase();
+  if (!normalized) {
+    return aliasFromHash(hashWalletAddress("seed:empty-trader"));
+  }
+  return aliasFromHash(hashWalletAddress(normalized));
+}
+
 export function generateDeterministicWhalePseudonym(walletAddress: string): string {
   return generateUniqueTraderName(walletAddress);
 }
@@ -129,15 +159,10 @@ export function generateUniqueTraderName(walletAddress: string): string {
     normalized === "unknown" ||
     normalized === "anonymous"
   ) {
-    return "AnonymousTrader102";
+    return hashToTraderAlias(`placeholder:${normalized || "anonymous"}`);
   }
 
-  const hash = hashWalletAddress(normalized);
-  const adjective = WHALE_ADJECTIVES[hash % WHALE_ADJECTIVES.length];
-  const noun =
-    WHALE_NOUNS[Math.floor(hash / WHALE_ADJECTIVES.length) % WHALE_NOUNS.length];
-  const serial = (hash % 900) + 100;
-  return `${adjective}${noun}${serial}`;
+  return hashToTraderAlias(normalized);
 }
 
 export const UNIQUE_TRADER_NAME_PATTERN = /^[A-Z][a-z]+[A-Z][a-z]+\d{3}$/;
@@ -146,31 +171,89 @@ export function isLegacySpacedWhalePseudonym(value: string): boolean {
   return /^[A-Za-z]+ [A-Za-z]+ #\d{3}$/.test(value.trim());
 }
 
+export function isStaticTraderFallbackLabel(
+  value: string | null | undefined
+): boolean {
+  if (!value?.trim()) return true;
+  return STATIC_TRADER_FALLBACK_LABELS.has(value.trim().toLowerCase());
+}
+
 export type UniqueTraderNameInput = {
   wallet?: string | null;
   proxyWallet?: string | null;
+  address?: string | null;
+  user?: string | null;
+  maker_address?: string | null;
+  taker_address?: string | null;
+  makerAddress?: string | null;
+  takerAddress?: string | null;
   username?: string | null;
   pseudonym?: string | null;
   whaleAlias?: string | null;
+  displayName?: string | null;
   name?: string | null;
+  id?: string | null;
+  transactionHash?: string | null;
 };
 
-function resolveTraderWallet(
-  trader: UniqueTraderNameInput
-): string | undefined {
-  const wallet = (trader.proxyWallet ?? trader.wallet)?.trim().toLowerCase();
+function coerceWalletCandidate(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const wallet = value.trim().toLowerCase();
   if (!wallet || isAnonymousWalletAddress(wallet)) return undefined;
   if (!/^0x[a-f0-9]{40}$/.test(wallet)) return undefined;
   return wallet;
 }
 
 /**
+ * Extract a Polymarket wallet from any common trade payload key variant.
+ */
+export function extractTraderWalletAddress(
+  trader: UniqueTraderNameInput | Record<string, unknown> | null | undefined
+): string | undefined {
+  if (!trader || typeof trader !== "object") return undefined;
+
+  const record = trader as Record<string, unknown>;
+  const candidates = [
+    record.proxyWallet,
+    record.wallet,
+    record.address,
+    record.user,
+    record.maker_address,
+    record.taker_address,
+    record.makerAddress,
+    record.takerAddress,
+  ];
+
+  for (const candidate of candidates) {
+    const wallet = coerceWalletCandidate(candidate);
+    if (wallet) return wallet;
+  }
+
+  return undefined;
+}
+
+function resolveTraderHashSeed(trader: UniqueTraderNameInput): string {
+  const wallet = extractTraderWalletAddress(trader);
+  if (wallet) return wallet;
+
+  const transactionHash = trader.transactionHash?.trim().toLowerCase();
+  if (transactionHash) return `tx:${transactionHash}`;
+
+  const id = trader.id?.trim().toLowerCase();
+  if (id) return `id:${id}`;
+
+  return "seed:unattributed-trade";
+}
+
+/**
  * Stable trader label for feed cards, tweets, and Telegram copy.
- * Custom registry names win; unnamed wallets get a deterministic compact alias.
+ * Custom registry names win; otherwise hashes wallet / trade identity.
+ * Never returns static labels like "Whale Trader".
  */
 export function getUniqueTraderName(trader: UniqueTraderNameInput): string {
-  const wallet = resolveTraderWallet(trader);
+  const wallet = extractTraderWalletAddress(trader);
   const candidates = [
+    trader.displayName,
     trader.username,
     trader.whaleAlias,
     trader.pseudonym,
@@ -179,7 +262,7 @@ export function getUniqueTraderName(trader: UniqueTraderNameInput): string {
 
   for (const candidate of candidates) {
     const trimmed = candidate?.trim();
-    if (!trimmed) continue;
+    if (!trimmed || isStaticTraderFallbackLabel(trimmed)) continue;
     if (wallet) {
       if (!isUsableCustomWhaleName(trimmed, wallet)) continue;
     } else if (isHexWalletDisplay(trimmed)) {
@@ -188,11 +271,7 @@ export function getUniqueTraderName(trader: UniqueTraderNameInput): string {
     return trimmed;
   }
 
-  if (wallet) {
-    return generateUniqueTraderName(wallet);
-  }
-
-  return WHALE_TRADER_FALLBACK_ALIAS;
+  return hashToTraderAlias(resolveTraderHashSeed(trader));
 }
 
 export function whaleInitialsFromPseudonym(pseudonym: string): string {

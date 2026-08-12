@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  extractTraderWalletAddress,
   generateDeterministicWhalePseudonym,
   generateUniqueTraderName,
   getUniqueTraderName,
+  hashToTraderAlias,
   hashWalletAddress,
   isHexWalletDisplay,
+  isStaticTraderFallbackLabel,
   isUsableCustomWhaleName,
   resolveFeedTraderDisplayName,
   resolveWhaleIdentity,
@@ -89,7 +92,42 @@ describe("whaleIdentityResolver", () => {
     ).toBe("Silver Champion #640");
   });
 
-  it("uses Whale Trader when the wallet is missing", () => {
-    expect(getUniqueTraderName({})).toBe(WHALE_TRADER_FALLBACK_ALIAS);
+  it("extracts wallets from alternate payload keys", () => {
+    expect(
+      extractTraderWalletAddress({
+        maker_address: WALLET,
+      })
+    ).toBe(WALLET);
+    expect(
+      extractTraderWalletAddress({
+        address: WALLET,
+      })
+    ).toBe(WALLET);
+    expect(
+      extractTraderWalletAddress({
+        user: WALLET,
+      })
+    ).toBe(WALLET);
+  });
+
+  it("never returns Whale Trader when a trade identity seed exists", () => {
+    const alias = getUniqueTraderName({
+      id: "scroll-trade-1",
+      transactionHash: "0xfeed",
+      whaleAlias: WHALE_TRADER_FALLBACK_ALIAS,
+    });
+    expect(alias).not.toBe(WHALE_TRADER_FALLBACK_ALIAS);
+    expect(alias).toMatch(UNIQUE_TRADER_NAME_PATTERN);
+    expect(alias).toBe(hashToTraderAlias("tx:0xfeed"));
+    expect(isStaticTraderFallbackLabel(alias)).toBe(false);
+  });
+
+  it("rejects static fallback labels even when supplied as whaleAlias", () => {
+    expect(
+      getUniqueTraderName({
+        proxyWallet: WALLET,
+        whaleAlias: "Whale Trader",
+      })
+    ).toBe(generateUniqueTraderName(WALLET));
   });
 });

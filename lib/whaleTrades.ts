@@ -25,6 +25,8 @@ export interface WhaleTrade extends TradeSummary {
   whaleIdentity?: ResolvedWhaleIdentity;
   /** Resolved whale display name from the API (preferred over client-side inference). */
   whaleAlias?: string;
+  /** Server-attached display label for feed cards (never a static fallback). */
+  displayName?: string;
   /** Plain-language market position copy for feed cards. */
   marketTranslation?: MarketPositionTranslation;
   /** Kalshi contract selection label (player, line, prop). */

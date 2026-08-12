@@ -35,4 +35,6 @@ export interface FeedTrade {
   proxyWallet?: string;
   /** Registry-backed or deterministic whale display name. */
   whaleAlias?: string;
+  /** Server-attached display label for feed cards (never a static fallback). */
+  displayName?: string;
 }

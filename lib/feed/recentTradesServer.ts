@@ -23,6 +23,7 @@ import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import {
   enrichTradesWithWhaleAlias,
 } from "@/lib/trades/getTrades";
+import { extractTraderWalletAddress } from "@/lib/whaleIdentityResolver";
 import { initGlobalLocalEvCache } from "@/lib/evPipeline/redisCache";
 import { ensureFullyComputedTradeEv } from "@/lib/evPipeline/resolveTradeEv";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
@@ -175,7 +176,38 @@ type PolymarketPayload = {
   slug?: string;
   assetId?: string;
   proxyWallet?: string;
+  wallet?: string;
+  address?: string;
+  user?: string;
+  maker_address?: string;
+  taker_address?: string;
+  makerAddress?: string;
+  takerAddress?: string;
+  username?: string;
+  name?: string;
+  pseudonym?: string;
 };
+
+function resolvePayloadProxyWallet(
+  row: PolymarketPayload,
+  columnProxyWallet?: string | null
+): string | undefined {
+  const fromColumn = columnProxyWallet?.trim();
+  if (fromColumn) return fromColumn;
+
+  return (
+    extractTraderWalletAddress({
+      proxyWallet: row.proxyWallet,
+      wallet: row.wallet,
+      address: row.address,
+      user: row.user,
+      maker_address: row.maker_address,
+      taker_address: row.taker_address,
+      makerAddress: row.makerAddress,
+      takerAddress: row.takerAddress,
+    }) ?? undefined
+  );
+}
 
 function polymarketPayloadToFeedTrade(
   payload: unknown,
@@ -213,9 +245,7 @@ function polymarketPayloadToFeedTrade(
           ? (row as { averageEv: number }).averageEv
           : null;
 
-  const resolvedProxyWallet =
-    proxyWallet?.trim() ||
-    (typeof row.proxyWallet === "string" ? row.proxyWallet.trim() : undefined);
+  const resolvedProxyWallet = resolvePayloadProxyWallet(row, proxyWallet);
 
   return {
     id,

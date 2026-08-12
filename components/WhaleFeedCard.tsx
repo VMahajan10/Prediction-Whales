@@ -12,7 +12,7 @@ import {
   formatWhaleWinRatePercent,
   getUniqueTraderName,
   isAnonymousWalletAddress,
-  WHALE_TRADER_FALLBACK_ALIAS,
+  isStaticTraderFallbackLabel,
   whaleInitialsFromPseudonym,
 } from "@/lib/whaleIdentityResolver";
 import { KALSHI_TRADER_ALIAS } from "@/lib/trades/whaleAliasConstants";
@@ -47,12 +47,16 @@ function resolveFeedWhaleIdentity(trade: WhaleTrade) {
   const hasWallet = Boolean(wallet && !isAnonymousWalletAddress(wallet));
   const displayName = getUniqueTraderName({
     proxyWallet: trade.proxyWallet,
+    address: trade.proxyWallet,
+    id: trade.id,
+    transactionHash: trade.transactionHash,
     pseudonym: trade.whaleIdentity?.pseudonym,
     whaleAlias: trade.whaleAlias,
+    displayName: trade.displayName,
   });
   const identity = trade.whaleIdentity;
   const anonymous =
-    !hasWallet || displayName === WHALE_TRADER_FALLBACK_ALIAS;
+    !hasWallet || isStaticTraderFallbackLabel(displayName);
 
   return {
     pseudonym: displayName,

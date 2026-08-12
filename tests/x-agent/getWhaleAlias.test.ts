@@ -29,7 +29,10 @@ describe("deterministic whale aliases", () => {
   });
 
   it("does not use the shared unknown-wallet alias", () => {
-    expect(generateUniqueTraderName("unknown")).toBe("AnonymousTrader102");
+    expect(generateUniqueTraderName("unknown")).toMatch(
+      UNIQUE_TRADER_NAME_PATTERN
+    );
+    expect(generateUniqueTraderName("unknown")).not.toBe("AnonymousTrader102");
     expect(generateUniqueTraderName(WALLET_A)).not.toBe(
       generateUniqueTraderName("unknown")
     );

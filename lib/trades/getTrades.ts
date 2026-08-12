@@ -2,17 +2,16 @@ import "server-only";
 
 import { mapWithConcurrency } from "@/lib/clvPriceHistory";
 import {
+  extractTraderWalletAddress,
   generateUniqueTraderName,
+  getUniqueTraderName,
   isAnonymousWalletAddress,
   resolveWhaleIdentity,
   type ResolvedWhaleIdentity,
   type WhaleRegistryStats,
 } from "@/lib/whaleIdentityResolver";
 import { getWhaleAlias } from "@/lib/x-agent/getWhaleAlias";
-import {
-  KALSHI_TRADER_ALIAS,
-  WHALE_TRADER_FALLBACK_ALIAS,
-} from "@/lib/trades/whaleAliasConstants";
+import { KALSHI_TRADER_ALIAS } from "@/lib/trades/whaleAliasConstants";
 
 export {
   KALSHI_TRADER_ALIAS,
@@ -26,12 +25,28 @@ export type TradeWhaleAliasSource = "polymarket" | "kalshi";
 
 export type TradeWhaleAliasFields = {
   whaleAlias: string;
+  /** Server-side display label — always a unique alias or registry name. */
+  displayName: string;
   /** Normalized on output; input rows may carry `null` from the database. */
   proxyWallet?: string | null;
 };
 
 type AliasEnrichableTrade = {
+  id?: string | null;
+  transactionHash?: string | null;
   proxyWallet?: string | null;
+  wallet?: string | null;
+  address?: string | null;
+  user?: string | null;
+  maker_address?: string | null;
+  taker_address?: string | null;
+  makerAddress?: string | null;
+  takerAddress?: string | null;
+  username?: string | null;
+  name?: string | null;
+  pseudonym?: string | null;
+  whaleAlias?: string | null;
+  displayName?: string | null;
   source?: TradeWhaleAliasSource;
   whaleIdentity?: ResolvedWhaleIdentity;
 };
@@ -51,12 +66,18 @@ function normalizeResolvableWallet(
  */
 export async function resolveTradeWhaleAlias(
   walletAddress: string | null | undefined,
-  source: TradeWhaleAliasSource = "polymarket"
+  source: TradeWhaleAliasSource = "polymarket",
+  seed?: { id?: string | null; transactionHash?: string | null }
 ): Promise<string> {
   if (source === "kalshi") return KALSHI_TRADER_ALIAS;
 
   const wallet = normalizeResolvableWallet(walletAddress);
-  if (!wallet) return WHALE_TRADER_FALLBACK_ALIAS;
+  if (!wallet) {
+    return getUniqueTraderName({
+      id: seed?.id,
+      transactionHash: seed?.transactionHash,
+    });
+  }
 
   const alias = await getWhaleAlias(wallet);
   return alias ?? generateUniqueTraderName(wallet);
@@ -75,7 +96,7 @@ export function buildWhaleIdentityForAlias(
   return resolveWhaleIdentity(wallet, whaleAlias, stats ?? null);
 }
 
-/** Attach `whaleAlias` (and normalized `proxyWallet`) to every trade in a batch. */
+/** Attach `whaleAlias`, `displayName`, and normalized `proxyWallet` to every trade. */
 export async function enrichTradesWithWhaleAlias<T extends AliasEnrichableTrade>(
   trades: T[]
 ): Promise<Array<T & TradeWhaleAliasFields>> {
@@ -83,7 +104,7 @@ export async function enrichTradesWithWhaleAlias<T extends AliasEnrichableTrade>
     new Set(
       trades
         .filter((trade) => (trade.source ?? "polymarket") !== "kalshi")
-        .map((trade) => normalizeResolvableWallet(trade.proxyWallet))
+        .map((trade) => extractTraderWalletAddress(trade))
         .filter((wallet): wallet is string => Boolean(wallet))
     )
   );
@@ -94,7 +115,7 @@ export async function enrichTradesWithWhaleAlias<T extends AliasEnrichableTrade>
   });
 
   return trades.map((trade): T & TradeWhaleAliasFields => {
-    const proxyWallet = normalizeResolvableWallet(trade.proxyWallet ?? undefined);
+    const proxyWallet = extractTraderWalletAddress(trade);
     const source = trade.source ?? "polymarket";
 
     if (source === "kalshi") {
@@ -102,18 +123,38 @@ export async function enrichTradesWithWhaleAlias<T extends AliasEnrichableTrade>
         ...trade,
         proxyWallet,
         whaleAlias: KALSHI_TRADER_ALIAS,
+        displayName: KALSHI_TRADER_ALIAS,
       };
     }
 
     const whaleAlias = proxyWallet
-      ? aliasByWallet.get(proxyWallet) ??
-        generateUniqueTraderName(proxyWallet)
-      : WHALE_TRADER_FALLBACK_ALIAS;
+      ? aliasByWallet.get(proxyWallet) ?? generateUniqueTraderName(proxyWallet)
+      : getUniqueTraderName({
+          id: trade.id,
+          transactionHash: trade.transactionHash,
+          username: trade.username,
+          name: trade.name,
+          pseudonym: trade.pseudonym ?? trade.whaleIdentity?.pseudonym,
+          whaleAlias: trade.whaleAlias,
+          displayName: trade.displayName,
+        });
+
+    const displayName = getUniqueTraderName({
+      proxyWallet,
+      id: trade.id,
+      transactionHash: trade.transactionHash,
+      username: trade.username,
+      name: trade.name,
+      pseudonym: trade.pseudonym ?? trade.whaleIdentity?.pseudonym,
+      whaleAlias,
+      displayName: trade.displayName,
+    });
 
     return {
       ...trade,
       proxyWallet,
-      whaleAlias,
+      whaleAlias: displayName,
+      displayName,
     };
   });
 }

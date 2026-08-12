@@ -7,6 +7,7 @@ import { tradeToWhale, type WhaleTrade } from "@/lib/whaleTrades";
 export type RecentHydratedTrade = FeedTrade & {
   netEvPercent?: number | null;
   whaleAlias?: string;
+  displayName?: string;
 };
 
 function resolveHydratedStakeNotional(trade: RecentHydratedTrade): number {
@@ -78,7 +79,8 @@ export function recentTradeToWhale(trade: RecentHydratedTrade): WhaleTrade {
     platform: "POLYMARKET",
     usdNotional: stakeNotional,
     proxyWallet: trade.proxyWallet,
-    whaleAlias: trade.whaleAlias,
+    whaleAlias: trade.displayName ?? trade.whaleAlias,
+    displayName: trade.displayName ?? trade.whaleAlias,
     marketTranslation,
     netEvPercent,
     averageEv: netEvPercent,
