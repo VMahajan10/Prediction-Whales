@@ -14,6 +14,34 @@ export interface WhaleCardAvgEvDisplay {
   lowConfidence: boolean;
 }
 
+/** True when the trade already carries a stamped feed EV for card display. */
+export function whaleHasStampedFeedEv(trade: WhaleTrade): boolean {
+  return (
+    coalesceDisplayEvPercent({
+      netEvPercent: trade.netEvPercent ?? null,
+      grossEvPercent: trade.grossEvPercent ?? null,
+      averageEv: trade.averageEv ?? null,
+    }) != null
+  );
+}
+
+/**
+ * Freeze the gate-passing trade EV onto a feed row so later pipeline refreshes
+ * cannot drift the card to N/A or a live negative edge.
+ */
+export function stampWhaleFeedAdmissionEv(
+  trade: WhaleTrade,
+  tradeEvPercent: number
+): WhaleTrade {
+  if (!Number.isFinite(tradeEvPercent)) return trade;
+  if (whaleHasStampedFeedEv(trade)) return trade;
+  return {
+    ...trade,
+    netEvPercent: tradeEvPercent,
+    averageEv: tradeEvPercent,
+  };
+}
+
 /**
  * Merge pipeline EV fields onto a whale row for card display.
  *

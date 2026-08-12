@@ -144,8 +144,8 @@ function dedupeRequestItems(
   return Array.from(unique.values());
 }
 
-/** Assets resolved per request — small chunks let the feed render progressively. */
-const EV_BATCH_CHUNK_SIZE = 8;
+/** Assets resolved per request — buffer rows are listed first for priority hydration. */
+const EV_BATCH_CHUNK_SIZE = 16;
 /** Browser / remote EV HTTP — long enough for cold ensemble hydration. */
 const EV_HTTP_TIMEOUT_MS = 60_000;
 

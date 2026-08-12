@@ -29,7 +29,11 @@ import {
   pipelineEvKeyForWhale,
   resolvePipelineEvForWhale,
 } from "@/lib/pipelineEvClient";
-import { mergePipelineEvOntoWhale } from "@/lib/whaleCardEv";
+import {
+  mergePipelineEvOntoWhale,
+  stampWhaleFeedAdmissionEv,
+  whaleHasStampedFeedEv,
+} from "@/lib/whaleCardEv";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import {
   useQualifiedWalletFilter,
@@ -274,6 +278,46 @@ function attachWhaleIdentity(
 
   if (!marketTranslation) return withIdentity;
   return { ...withIdentity, marketTranslation };
+}
+
+function resolveWhaleTradeEvPercent(
+  trade: WhaleTrade,
+  pipelineEvIndex: Map<string, PipelineTradeEv>
+): number | null {
+  const pipeline = resolvePipelineEvForWhale(pipelineEvIndex, trade);
+  return resolveFeedTradeEvPercent(
+    {
+      price: trade.price,
+      netEvPercent: trade.netEvPercent,
+      grossEvPercent: trade.grossEvPercent,
+    },
+    pipeline
+  );
+}
+
+function stampWhaleForFeedAdmission(
+  trade: WhaleTrade,
+  pipelineEvIndex: Map<string, PipelineTradeEv>
+): WhaleTrade {
+  if (whaleHasStampedFeedEv(trade)) return trade;
+  const tradeEvPercent = resolveWhaleTradeEvPercent(trade, pipelineEvIndex);
+  if (tradeEvPercent == null || !Number.isFinite(tradeEvPercent)) return trade;
+  return stampWhaleFeedAdmissionEv(trade, tradeEvPercent);
+}
+
+function hydrateWhaleBufferAdmissionEv(
+  trades: WhaleTrade[],
+  pipelineEvIndex: Map<string, PipelineTradeEv>
+): WhaleTrade[] {
+  let changed = false;
+  const next = trades.map((trade) => {
+    if (whaleHasStampedFeedEv(trade)) return trade;
+    const tradeEvPercent = resolveWhaleTradeEvPercent(trade, pipelineEvIndex);
+    if (!meetsFeedTradeEvThreshold(tradeEvPercent)) return trade;
+    changed = true;
+    return stampWhaleFeedAdmissionEv(trade, tradeEvPercent!);
+  });
+  return changed ? next : trades;
 }
 
 function isPolymarketTradeEligibleForFeed(
@@ -567,20 +611,11 @@ export function useWhaleFeed() {
 
       if (!meetsProductFeedStakeThreshold(whale.usdNotional)) continue;
 
-      const pipelineKey = pipelineEvKeyForWhale(whale);
-      const pipeline = pipelineKey ? pipelineEvIndex.get(pipelineKey) : undefined;
-      const tradeEvPercent = resolveFeedTradeEvPercent(
-        {
-          price: whale.price,
-          netEvPercent: whale.netEvPercent,
-          grossEvPercent: whale.grossEvPercent,
-        },
-        pipeline
-      );
+      const tradeEvPercent = resolveWhaleTradeEvPercent(whale, pipelineEvIndex);
       if (!meetsFeedTradeEvThreshold(tradeEvPercent)) continue;
 
       whaleBufferSeen.current.add(key);
-      incoming.push(whale);
+      incoming.push(stampWhaleForFeedAdmission(whale, pipelineEvIndex));
     }
 
     for (const whale of qualifiedKalshiWhales) {
@@ -588,7 +623,7 @@ export function useWhaleFeed() {
       const key = whaleKey(whale);
       if (!key || whaleBufferSeen.current.has(key)) continue;
       whaleBufferSeen.current.add(key);
-      incoming.push(whale);
+      incoming.push(stampWhaleForFeedAdmission(whale, pipelineEvIndex));
     }
 
     for (const trade of mergedKalshiFeedTrades) {
@@ -600,14 +635,14 @@ export function useWhaleFeed() {
       if (!key || whaleBufferSeen.current.has(key)) continue;
       if (!isKalshiWhaleEligibleForLiveFeed(whale, pipelineEvIndex)) continue;
       whaleBufferSeen.current.add(key);
-      incoming.push(whale);
+      incoming.push(stampWhaleForFeedAdmission(whale, pipelineEvIndex));
     }
 
     for (const whale of qualifiedPolymarketWhales) {
       const key = whaleKey(whale);
       if (!key || whaleBufferSeen.current.has(key)) continue;
       whaleBufferSeen.current.add(key);
-      incoming.push(whale);
+      incoming.push(stampWhaleForFeedAdmission(whale, pipelineEvIndex));
     }
 
     if (incoming.length === 0) return;
@@ -628,14 +663,20 @@ export function useWhaleFeed() {
     pipelineEvIndex,
   ]);
 
+  useEffect(() => {
+    if (!backfillLoaded) return;
+    setWhaleBuffer((prev) => hydrateWhaleBufferAdmissionEv(prev, pipelineEvIndex));
+  }, [pipelineEvIndex, backfillLoaded]);
+
   const whales = useMemo(
     () =>
-      whaleBuffer.map((trade) =>
-        mergePipelineEvOntoWhale(
+      whaleBuffer.map((trade) => {
+        if (whaleHasStampedFeedEv(trade)) return trade;
+        return mergePipelineEvOntoWhale(
           trade,
           resolvePipelineEvForWhale(pipelineEvIndex, trade) ?? undefined
-        )
-      ),
+        );
+      }),
     [whaleBuffer, pipelineEvIndex]
   );
 

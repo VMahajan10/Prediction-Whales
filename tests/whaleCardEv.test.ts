@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { mergePipelineEvOntoWhale } from "@/lib/whaleCardEv";
+import {
+  mergePipelineEvOntoWhale,
+  stampWhaleFeedAdmissionEv,
+  whaleHasStampedFeedEv,
+} from "@/lib/whaleCardEv";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import type { WhaleTrade } from "@/lib/whaleTrades";
 
@@ -97,5 +101,31 @@ describe("mergePipelineEvOntoWhale", () => {
 
     expect(merged).toBe(trade);
     expect(merged.netEvPercent).toBe(6.1);
+  });
+});
+
+describe("stampWhaleFeedAdmissionEv", () => {
+  it("freezes gate-passing EV onto the trade row", () => {
+    const stamped = stampWhaleFeedAdmissionEv(whaleTrade(), 4.2);
+
+    expect(stamped.netEvPercent).toBe(4.2);
+    expect(stamped.averageEv).toBe(4.2);
+  });
+
+  it("does not overwrite an existing stamped EV", () => {
+    const trade = whaleTrade({ netEvPercent: 6.1, averageEv: 6.1 });
+    const stamped = stampWhaleFeedAdmissionEv(trade, 4.2);
+
+    expect(stamped).toBe(trade);
+    expect(stamped.netEvPercent).toBe(6.1);
+  });
+
+  it("detects stamped feed EV on the trade", () => {
+    expect(whaleHasStampedFeedEv(whaleTrade())).toBe(false);
+    expect(
+      whaleHasStampedFeedEv(
+        stampWhaleFeedAdmissionEv(whaleTrade(), 4.2)
+      )
+    ).toBe(true);
   });
 });
