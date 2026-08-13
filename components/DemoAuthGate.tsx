@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState, type ReactNode } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import DemoAuthScreen from "@/components/DemoAuthScreen";
 import { sanitizeRedirectPath } from "@/lib/authRedirect";
-import { isPublicReviewPath } from "@/lib/publicRoutes";
+import { isPublicAppPath } from "@/lib/publicRoutes";
 import { DemoAuthProvider, useDemoAuth } from "@/lib/DemoAuthGateContext";
 
 function DemoAuthGatePlaceholder() {
@@ -33,7 +33,7 @@ function DemoAuthGateInner({ children }: { children: ReactNode }) {
     setHasMounted(true);
   }, []);
 
-  if (isPublicReviewPath(pathname)) {
+  if (isPublicAppPath(pathname)) {
     return <>{children}</>;
   }
 

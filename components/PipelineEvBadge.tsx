@@ -1,5 +1,6 @@
 "use client";
 
+import { AI_INSIGHT_DISCLAIMER_TEXT } from "@/lib/legalCompliance";
 import { formatEvPercent } from "@/lib/crossMarketEvDisplay";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import {
@@ -39,7 +40,7 @@ export default function PipelineEvBadge({
   return (
     <span
       className={`inline-flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${badgeClasses(display.netEvPercent)} ${className}`}
-      title={pipelineEvTooltip(ev!, display)}
+      title={`${pipelineEvTooltip(ev!, display)} · ${AI_INSIGHT_DISCLAIMER_TEXT}`}
     >
       <span>{label} EV</span>
       {display.lowConfidence ? (
@@ -69,7 +70,7 @@ export function PipelineEvInline({
   return (
     <span
       className={`inline-flex items-center gap-1 text-[11px] ${color} ${className}`}
-      title={pipelineEvTooltip(ev!, display)}
+      title={`${pipelineEvTooltip(ev!, display)} · ${AI_INSIGHT_DISCLAIMER_TEXT}`}
     >
       <span>{evLabel(display.netEvPercent, display.lowConfidence)} EV</span>
       {display.lowConfidence ? (

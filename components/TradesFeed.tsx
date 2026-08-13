@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import CrossMarketEvBadge from "@/components/CrossMarketEvBadge";
 import AiArbitrageBadge from "@/components/AiArbitrageBadge";
+import FeedLegalDisclaimer from "@/components/FeedLegalDisclaimer";
 import PipelineEvBadge from "@/components/PipelineEvBadge";
 import PlatformFilterToggle from "@/components/PlatformFilterToggle";
 import { getTimeAgo } from "@/lib/client-utils";
@@ -295,6 +296,7 @@ export default function TradesFeed() {
           ))
         )}
       </div>
+      <FeedLegalDisclaimer variant="both" className="mt-3 px-1" />
     </div>
   );
 }

@@ -29,7 +29,7 @@ export default function AiArbitrageBadge({
   return (
     <span
       className={`inline-flex items-center rounded border border-pulse-accent/40 bg-pulse-accent/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-pulse-accent ${className}`}
-      title={`Synthetic PM↔Kalshi arbitrage gap · ${formatEvPercent(result.combinedEvPercent)} combined EV`}
+      title={`Synthetic PM↔Kalshi arbitrage gap · ${formatEvPercent(result.combinedEvPercent)} combined EV · AI-generated estimate, not financial advice.`}
     >
       AI Arbitrage Opportunity
     </span>

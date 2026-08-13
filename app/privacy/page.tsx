@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import MobileAppShell from "@/components/MobileAppShell";
+import DataDeletionRequest from "@/components/DataDeletionRequest";
 
 export const metadata: Metadata = {
   title: "Privacy Policy | Prediction Whales",
@@ -138,6 +139,10 @@ export default function PrivacyPolicyPage() {
             </ul>
           </section>
 
+          <section>
+            <DataDeletionRequest />
+          </section>
+
           <section className="space-y-3">
             <h2 className="text-base font-bold text-white">Children</h2>
             <p>
@@ -178,6 +183,10 @@ export default function PrivacyPolicyPage() {
               >
                 privacy@predictionwhales.com
               </a>
+              . See our{" "}
+              <Link href="/terms" className="text-pulse-accent hover:underline">
+                Terms of Service
+              </Link>
               .
             </p>
           </section>

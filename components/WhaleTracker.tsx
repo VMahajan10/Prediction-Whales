@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import FeedLegalDisclaimer from "@/components/FeedLegalDisclaimer";
 import WhaleFeedCard from "@/components/WhaleFeedCard";
 import WhaleFeedCategoryTabs from "@/components/WhaleFeedCategoryTabs";
 import WhaleFeedPlatformFilter from "@/components/WhaleFeedPlatformFilter";
@@ -169,6 +170,7 @@ export default function WhaleTracker({
           })}
         </ul>
       )}
+      <FeedLegalDisclaimer className="mt-4 px-1" />
     </div>
   );
 }

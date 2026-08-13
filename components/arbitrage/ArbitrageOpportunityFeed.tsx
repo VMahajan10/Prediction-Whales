@@ -1,5 +1,6 @@
 "use client";
 
+import FeedLegalDisclaimer from "@/components/FeedLegalDisclaimer";
 import Link from "next/link";
 import {
   formatArbLockLabel,
@@ -113,6 +114,7 @@ export default function ArbitrageOpportunityFeed({
           </ul>
         )}
       </div>
+      <FeedLegalDisclaimer variant="ai" className="mt-3 px-1" />
     </section>
   );
 }
