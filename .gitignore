@@ -38,6 +38,8 @@ next-env.d.ts
 
 # Native Mobile Building & Signing Exclusions
 android/keystore.properties
+keystore.properties
+**/keystore.properties
 android/keystores/
 android/local.properties
 ios/App/Pods/

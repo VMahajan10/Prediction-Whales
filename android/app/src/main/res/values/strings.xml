@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Prediction Whales</string>
+    <string name="title_activity_main">Prediction Whales</string>
+    <string name="package_name">com.predictionwhales.app</string>
+    <string name="custom_url_scheme">com.predictionwhales.app</string>
+</resources>
