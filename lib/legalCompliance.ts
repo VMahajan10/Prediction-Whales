@@ -4,13 +4,16 @@ export const FINANCIAL_DISCLAIMER_STORAGE_KEY =
 export const DATA_DELETION_EMAIL = "privacy@predictionwhales.com";
 
 export const FEED_DISCLAIMER_TEXT =
-  "Data provided as-is for informational purposes. EV metrics are estimates and not financial advice.";
+  "Market odds, trade feeds, and EV metrics are derived from third-party platforms (Polymarket & Kalshi) for educational research only.";
 
 export const AI_INSIGHT_DISCLAIMER_TEXT =
   "AI-generated insights and automated analysis are estimates only — not financial or investment advice.";
 
 export const NON_AFFILIATION_DISCLAIMER_TEXT =
-  "Prediction Whales is an independent analytics platform and is not affiliated, endorsed, or sponsored by Polymarket.";
+  "Prediction Whales is an independent third-party analytics tool. It aggregates and processes publicly available market data from trading platforms including Polymarket and Kalshi. Prediction Whales is not affiliated with, endorsed by, sponsored by, or associated with Polymarket, Kalshi, or their respective parent entities.";
+
+export const DATA_SOURCE_INGESTION_DISCLOSURE_TEXT =
+  "Our service collects publicly accessible market transactions, order book metrics, and wallet/account trade identifiers from public prediction market APIs and smart contracts (including Polymarket and Kalshi) to calculate performance analytics and EV metrics.";
 
 export const PERFORMANCE_DISCLAIMER_TEXT =
   "EV metrics and historical trader records are provided for educational research. Past performance does not guarantee future results.";

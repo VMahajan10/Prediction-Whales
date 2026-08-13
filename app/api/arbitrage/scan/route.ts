@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { publicApiErrorMessage } from "@/lib/apiError";
 import {
   parseStakeUsd,
   scanArbitrageWindowsBatch,
@@ -80,7 +81,7 @@ export async function POST(request: NextRequest) {
       scanDurationMs: scan.scanDurationMs,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Arbitrage batch scan failed";
+    const message = publicApiErrorMessage(err, "Arbitrage batch scan failed");
     console.error("[api/arbitrage/scan] POST failed:", err);
     return NextResponse.json({
       error: message,
@@ -127,8 +128,7 @@ export async function GET(request: NextRequest) {
       scanDurationMs: scan.scanDurationMs,
     });
   } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Arbitrage scan failed";
+    const message = publicApiErrorMessage(err, "Arbitrage scan failed");
     console.error("[api/arbitrage/scan] GET failed:", err);
     return NextResponse.json({
       error: message,

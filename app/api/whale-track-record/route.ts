@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { publicApiErrorMessage } from "@/lib/apiError";
 import {
   buildWhaleTrackRecord,
   needsTrackRecordRecompute,
@@ -125,9 +126,8 @@ export async function GET(request: Request) {
       cacheEnabled: isTrackRecordCacheEnabled(),
     });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Failed to fetch track record";
-    console.error("[api/whale-track-record]", message);
+    const message = publicApiErrorMessage(error, "Failed to fetch track record");
+    console.error("[api/whale-track-record]", error);
     return NextResponse.json(
       {
         wallet: null,

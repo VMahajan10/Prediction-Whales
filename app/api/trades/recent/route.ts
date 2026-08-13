@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { publicApiErrorMessage } from "@/lib/apiError";
 import { parseRecentFeedCategoryFilter } from "@/lib/constants/categories";
 import {
   fetchRecentFeedTrades,
@@ -36,9 +37,8 @@ export async function GET(request: NextRequest) {
       { headers }
     );
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Failed to fetch recent trades";
-    console.error("[api/trades/recent]", message);
+    const message = publicApiErrorMessage(error, "Failed to fetch recent trades");
+    console.error("[api/trades/recent]", error);
     return NextResponse.json(
       {
         trades: [],

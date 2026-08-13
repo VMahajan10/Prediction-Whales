@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { publicApiErrorMessage } from "@/lib/apiError";
 import {
   computeCrossMarketEv,
   gameMatchId,
@@ -245,7 +246,7 @@ export async function GET() {
   } catch (err) {
     console.error("[cross-market-ev]", err);
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Unknown error" },
+      { error: publicApiErrorMessage(err, "Failed to load cross-market EV data") },
       { status: 500 }
     );
   }

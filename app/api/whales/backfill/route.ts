@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { publicApiErrorMessage } from "@/lib/apiError";
 import {
   enrichPolymarketFeedTradesWithIdentity,
   filterQualifiedPolymarketFeedTrades,
@@ -17,9 +18,8 @@ export async function GET() {
     const enriched = await enrichPolymarketFeedTradesWithIdentity(translatable);
     return NextResponse.json({ trades: enriched });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Failed to fetch whale backfill";
-    console.error("[api/whales/backfill]", message);
+    const message = publicApiErrorMessage(error, "Failed to fetch whale backfill");
+    console.error("[api/whales/backfill]", error);
     return NextResponse.json({ trades: [], error: message }, { status: 500 });
   }
 }

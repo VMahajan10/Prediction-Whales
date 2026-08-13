@@ -105,10 +105,8 @@ export default function TermsPage() {
             <h2 className="text-base font-bold text-white">Non-affiliation</h2>
             <p>{NON_AFFILIATION_DISCLAIMER_TEXT}</p>
             <p>
-              References to Kalshi, Manifold, Metaculus, and other third-party
-              platforms are for identification and analytics purposes only. We
-              are not affiliated with or endorsed by those services unless
-              explicitly stated.
+              References to Manifold, Metaculus, and other third-party platforms
+              are for identification and analytics purposes only.
             </p>
           </section>
 

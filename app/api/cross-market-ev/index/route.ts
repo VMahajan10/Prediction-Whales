@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { publicApiErrorMessage } from "@/lib/apiError";
 import { getCrossMarketEvIndex } from "@/lib/crossMarketEvIndexStore";
 
 export const dynamic = "force-dynamic";
@@ -15,7 +16,7 @@ export async function GET() {
   } catch (err) {
     console.error("[cross-market-ev/index]", err);
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Unknown error" },
+      { error: publicApiErrorMessage(err, "Failed to load cross-market EV index") },
       { status: 500 }
     );
   }

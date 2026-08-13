@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { publicApiErrorMessage } from "@/lib/apiError";
+import { authorizeCronRequest } from "@/lib/cronAuth";
 import { isEmbeddingConfigured } from "@/lib/evPipeline/embeddings";
 import { runMarketMapping } from "@/lib/evPipeline/mapMarkets";
 import { isDatabaseEnabled } from "@/lib/crossmarket/store/db";
@@ -7,24 +9,19 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 function authorize(request: NextRequest): boolean {
-  const secret =
-    request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ??
-    request.nextUrl.searchParams.get("secret");
-
   const expected = process.env.CRON_SECRET ?? process.env.MAP_MARKETS_SECRET;
-  if (!expected) return true;
-  return secret === expected;
+  return authorizeCronRequest(request, expected);
 }
 
 /**
  * Cross-market mapping pipeline — extract, normalize, embed, match, persist.
  *
  * GET /api/ev/map-markets
+ *   Authorization: Bearer $CRON_SECRET (or MAP_MARKETS_SECRET)
  *   ?threshold=0.85
  *   &pmLimit=200
  *   &kalshiPages=5
  *   &dryRun=1          (skip DB writes)
- *   &secret=...
  *
  * Requires OPENAI_API_KEY. DATABASE_URL optional when dryRun=1.
  */
@@ -81,8 +78,8 @@ export async function GET(request: NextRequest) {
         result.matchedCount > 0 || result.failures.length === 0 ? 200 : 207,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Mapping pipeline failed";
-    console.error("[ev/map-markets] fatal:", message);
+    const message = publicApiErrorMessage(err, "Mapping pipeline failed");
+    console.error("[ev/map-markets] fatal:", message, err);
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { publicApiErrorMessage } from "@/lib/apiError";
 import { qualifyWalletsForFeed } from "@/lib/feedQualificationServer";
 
 export const dynamic = "force-dynamic";
@@ -11,11 +12,11 @@ export async function POST(request: Request) {
     const qualifications = await qualifyWalletsForFeed(wallets);
     return NextResponse.json({ qualifications });
   } catch (error) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Failed to resolve wallet feed qualification";
-    console.error("[api/whales/wallet-qualification]", message);
+    const message = publicApiErrorMessage(
+      error,
+      "Failed to resolve wallet feed qualification"
+    );
+    console.error("[api/whales/wallet-qualification]", error);
     return NextResponse.json({ qualifications: {}, error: message }, { status: 500 });
   }
 }

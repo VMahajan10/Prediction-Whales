@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { publicApiErrorMessage } from "@/lib/apiError";
 import { fetchTrades } from "@/lib/polymarket";
 import { filterQualifiedPolymarketFeedTrades } from "@/lib/feedQualificationServer";
 import { enrichTradesWithWhaleAlias } from "@/lib/trades/getTrades";
@@ -34,7 +35,7 @@ export async function GET() {
   } catch (err) {
     console.error("[api/trades]", err);
     return NextResponse.json(
-      { trades: [], error: String(err) },
+      { trades: [], error: publicApiErrorMessage(err, "Failed to load trades") },
       {
         status: 500,
         headers: {

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { publicApiErrorMessage } from "@/lib/apiError";
 import { fetchTrades } from "@/lib/polymarket";
 import { enrichTradesWithWhaleAlias } from "@/lib/trades/getTrades";
 import { findRelatedTrades, findTradeByHash } from "@/lib/whaleProfile";
@@ -46,8 +47,12 @@ export async function GET(
       }
     );
   } catch (err) {
+    console.error("[api/trades/[hash]]", err);
     return NextResponse.json(
-      { trade: null, error: String(err) },
+      {
+        trade: null,
+        error: publicApiErrorMessage(err, "Failed to load trade"),
+      },
       { status: 500 }
     );
   }

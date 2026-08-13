@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { publicApiErrorMessage } from "@/lib/apiError";
 import { fetchMarketBySlug, fetchMarkets } from "@/lib/polymarket";
 
 export const dynamic = "force-dynamic";
@@ -16,9 +17,8 @@ export async function GET(request: Request) {
     const markets = await fetchMarkets();
     return NextResponse.json({ markets });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Failed to fetch markets";
-    console.error("[api/markets]", message);
+    const message = publicApiErrorMessage(error, "Failed to fetch markets");
+    console.error("[api/markets]", error);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

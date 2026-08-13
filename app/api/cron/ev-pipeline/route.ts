@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { publicApiErrorMessage } from "@/lib/apiError";
+import { authorizeCronRequest } from "@/lib/cronAuth";
 import { runEvPipeline } from "@/lib/evPipeline/pipeline";
 import {
   runWithPipelineLock,
@@ -14,7 +16,7 @@ export const maxDuration = 300;
  * Trigger:
  * - Render worker: warmEvPipeline() at daemon startup (lib/x-agent/runShadowDaemon.ts)
  * - GitHub Actions: shadow-cron workflow every 15m (backfill mode → runEvPipeline)
- * - Manual: GET /api/cron/ev-pipeline?secret=$CRON_SECRET
+ * - Manual: GET /api/cron/ev-pipeline with `Authorization: Bearer $CRON_SECRET`
  *
  * Stages (see lib/evPipeline/pipeline.ts):
  * 1. ingestOrderBooks  — Redis cache PM/Kalshi mids (10s TTL)
@@ -26,12 +28,8 @@ export const maxDuration = 300;
  * 4. computeTraderEv   — upsert trader_ev_analytics + cache wallet rollups
  */
 export async function GET(request: NextRequest) {
-  const secret =
-    request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ??
-    request.nextUrl.searchParams.get("secret");
-
   const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret && secret !== cronSecret) {
+  if (!authorizeCronRequest(request, cronSecret)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -78,7 +76,7 @@ export async function GET(request: NextRequest) {
       {
         ok: false,
         runId,
-        error: err instanceof Error ? err.message : "Pipeline failed",
+        error: publicApiErrorMessage(err, "Pipeline failed"),
       },
       { status: 500 },
     );

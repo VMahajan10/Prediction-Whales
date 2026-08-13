@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { publicApiErrorMessage } from "@/lib/apiError";
 import { resolveWalletForTrade } from "@/lib/resolveWhaleWallet";
 
 export const dynamic = "force-dynamic";
@@ -20,9 +21,8 @@ export async function GET(request: Request) {
     const { wallet, source } = await resolveWalletForTrade(hash, { assetId });
     return NextResponse.json({ wallet, source });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Failed to resolve wallet";
-    console.error("[api/wallet/resolve]", message);
+    const message = publicApiErrorMessage(error, "Failed to resolve wallet");
+    console.error("[api/wallet/resolve]", error);
     return NextResponse.json({ wallet: null, error: message }, { status: 500 });
   }
 }

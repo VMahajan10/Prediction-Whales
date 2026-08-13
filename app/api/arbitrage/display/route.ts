@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { publicApiErrorMessage } from "@/lib/apiError";
 import { resolveArbitrageDisplay } from "@/lib/arbitrageFinder/displayResolver";
 import { parseStakeUsd } from "@/lib/arbitrageFinder/windowService";
 
@@ -77,8 +78,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ snapshot });
   } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Arbitrage display failed";
+    const message = publicApiErrorMessage(err, "Arbitrage display failed");
     console.error("[api/arbitrage/display] GET failed:", err);
     return NextResponse.json({ error: message, snapshot: null }, { status: 500 });
   }

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import MobileAppShell from "@/components/MobileAppShell";
 import DataDeletionRequest from "@/components/DataDeletionRequest";
-import { NON_AFFILIATION_DISCLAIMER_TEXT } from "@/lib/legalCompliance";
+import { DATA_SOURCE_INGESTION_DISCLOSURE_TEXT, NON_AFFILIATION_DISCLAIMER_TEXT } from "@/lib/legalCompliance";
 
 export const metadata: Metadata = {
   title: "Privacy Policy | Prediction Whales",
@@ -45,6 +45,7 @@ export default function PrivacyPolicyPage() {
             <h2 className="text-base font-bold text-white">
               Information we collect
             </h2>
+            <p>{DATA_SOURCE_INGESTION_DISCLOSURE_TEXT}</p>
             <ul className="list-disc space-y-2 pl-5">
               <li>
                 <strong className="text-white">Public market data.</strong> We

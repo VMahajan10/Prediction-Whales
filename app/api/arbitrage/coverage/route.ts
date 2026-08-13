@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { publicApiErrorMessage } from "@/lib/apiError";
 import { getArbScanMeta } from "@/lib/arbitrageFinder/cache/windowCache";
 import { collectArbitrageScanCoverage } from "@/lib/arbitrageFinder/observability/scanCoverage";
 
@@ -38,8 +39,10 @@ export async function GET(request: NextRequest) {
       fromCache: false,
     });
   } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Arbitrage coverage fetch failed";
+    const message = publicApiErrorMessage(
+      err,
+      "Arbitrage coverage fetch failed"
+    );
     console.error("[api/arbitrage/coverage] GET failed:", err);
     return NextResponse.json({ error: message }, { status: 500 });
   }
@@ -67,8 +70,10 @@ export async function POST(request: NextRequest) {
       recordedAt: meta?.recordedAt ?? report.scannedAt,
     });
   } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Arbitrage coverage scan failed";
+    const message = publicApiErrorMessage(
+      err,
+      "Arbitrage coverage scan failed"
+    );
     console.error("[api/arbitrage/coverage] POST failed:", err);
     return NextResponse.json({ error: message }, { status: 500 });
   }

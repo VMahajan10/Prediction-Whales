@@ -3,6 +3,7 @@ import { recordKalshiFeedMetrics } from "@/lib/feedQualificationServer";
 import { KALSHI_TRADES_POLL_MS } from "@/lib/ingestionPollConfig";
 import { flushKalshiShadowTradesNow } from "@/lib/x-agent/kalshiShadowTrades";
 import { NextResponse } from "next/server";
+import { publicApiErrorMessage } from "@/lib/apiError";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -59,7 +60,7 @@ export async function GET(request: Request) {
       {
         trades: [],
         ok: false as const,
-        error: err instanceof Error ? err.message : "Failed to fetch Kalshi trades",
+        error: publicApiErrorMessage(err, "Failed to fetch Kalshi trades"),
       },
       { status: 502 }
     );

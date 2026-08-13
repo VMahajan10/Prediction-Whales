@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { publicApiErrorMessage } from "@/lib/apiError";
 import {
   getArbitrageWindowsForPair,
   parseStakeUsd,
@@ -69,7 +70,7 @@ export async function GET(request: NextRequest) {
       stakeUsd,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Arbitrage window scan failed";
+    const message = publicApiErrorMessage(err, "Arbitrage window scan failed");
     console.error("[api/arbitrage/windows] GET failed:", err);
     return NextResponse.json({ error: message, windows: [], best: null }, { status: 500 });
   }

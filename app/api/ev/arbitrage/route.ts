@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { publicApiErrorMessage } from "@/lib/apiError";
 import { resolveArbitrageDisplay } from "@/lib/arbitrageFinder/displayResolver";
 import {
   buildNeutralArbitrageSnapshot,
@@ -571,8 +572,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(payload, { status: 200 });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Arbitrage scan failed";
-    console.error("[api/ev/arbitrage]", message);
+    const message = publicApiErrorMessage(err, "Arbitrage scan failed");
+    console.error("[api/ev/arbitrage]", err);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

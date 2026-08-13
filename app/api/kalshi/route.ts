@@ -2,6 +2,7 @@ import { KalshiClient } from "@kalshi/sdk";
 import { cacheKalshiTitlesFromMarkets } from "@/lib/kalshiTitleResolver";
 import { recordPrices } from "@/lib/kalshiPriceStore";
 import { NextResponse } from "next/server";
+import { publicApiErrorMessage } from "@/lib/apiError";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -178,7 +179,7 @@ export async function GET() {
   } catch (err) {
     console.error("Kalshi API error:", err);
     return NextResponse.json(
-      { markets: [], error: String(err) },
+      { markets: [], error: publicApiErrorMessage(err, "Failed to load Kalshi markets") },
       { status: 500 }
     );
   }

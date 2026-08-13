@@ -7,6 +7,7 @@ import {
   buildScheduleApprovalApiMessage,
   formatScheduledClockTime,
 } from "@/lib/x-agent/scheduleMessages";
+import { publicApiErrorMessage } from "@/lib/apiError";
 import {
   getRandomScheduledTime,
   resolveImmediateScheduledAt,
@@ -147,7 +148,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         ok: false,
-        error: error instanceof Error ? error.message : "Internal server error",
+        error: publicApiErrorMessage(error, "Internal server error"),
       },
       { status: 500 }
     );

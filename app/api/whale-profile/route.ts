@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { publicApiErrorMessage } from "@/lib/apiError";
 import { getAppBaseUrl } from "@/lib/appBaseUrl";
 import {
   fetchMarkets,
@@ -66,6 +67,7 @@ export async function GET(request: Request) {
       matchedMarket,
     });
   } catch (err) {
+    console.error("[api/whale-profile]", err);
     return NextResponse.json(
       {
         trade: null,
@@ -76,7 +78,7 @@ export async function GET(request: Request) {
           delta: 0,
         },
         matchedMarket: null,
-        error: String(err),
+        error: publicApiErrorMessage(err, "Failed to load whale profile"),
       },
       { status: 500 }
     );

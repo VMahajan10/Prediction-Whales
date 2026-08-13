@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { publicApiErrorMessage } from "@/lib/apiError";
 import {
   collectPolymarketFeedCandidates,
   enrichPolymarketFeedTradesWithIdentity,
@@ -83,9 +84,8 @@ export async function GET() {
       source: "live",
     });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Failed to fetch product feed";
-    console.error("[api/feed]", message);
+    const message = publicApiErrorMessage(error, "Failed to fetch product feed");
+    console.error("[api/feed]", error);
     return NextResponse.json(
       { trades: [], kalshiTrades, error: message },
       { status: 500 }
