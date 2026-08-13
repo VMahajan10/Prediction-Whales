@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import MobileAppShell from "@/components/MobileAppShell";
 import DataDeletionRequest from "@/components/DataDeletionRequest";
+import { NON_AFFILIATION_DISCLAIMER_TEXT } from "@/lib/legalCompliance";
 
 export const metadata: Metadata = {
   title: "Privacy Policy | Prediction Whales",
@@ -161,6 +162,11 @@ export default function PrivacyPolicyPage() {
               information may be processed in the United States or other
               countries where our providers operate.
             </p>
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="text-base font-bold text-white">Non-affiliation</h2>
+            <p>{NON_AFFILIATION_DISCLAIMER_TEXT}</p>
           </section>
 
           <section className="space-y-3">

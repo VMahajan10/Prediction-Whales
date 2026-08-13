@@ -9,6 +9,12 @@ export const FEED_DISCLAIMER_TEXT =
 export const AI_INSIGHT_DISCLAIMER_TEXT =
   "AI-generated insights and automated analysis are estimates only — not financial or investment advice.";
 
+export const NON_AFFILIATION_DISCLAIMER_TEXT =
+  "Prediction Whales is an independent analytics platform and is not affiliated, endorsed, or sponsored by Polymarket.";
+
+export const PERFORMANCE_DISCLAIMER_TEXT =
+  "EV metrics and historical trader records are provided for educational research. Past performance does not guarantee future results.";
+
 export const FINANCIAL_DISCLAIMER_SUMMARY =
   "Prediction Whales provides market data and automated analysis for informational purposes only. Nothing in this app constitutes financial or investment advice. Trade at your own risk.";
 

@@ -1,10 +1,11 @@
 import {
   AI_INSIGHT_DISCLAIMER_TEXT,
   FEED_DISCLAIMER_TEXT,
+  PERFORMANCE_DISCLAIMER_TEXT,
 } from "@/lib/legalCompliance";
 
 type FeedLegalDisclaimerProps = {
-  variant?: "feed" | "ai" | "both";
+  variant?: "feed" | "ai" | "both" | "performance";
   className?: string;
 };
 
@@ -17,7 +18,9 @@ export default function FeedLegalDisclaimer({
       ? [FEED_DISCLAIMER_TEXT, AI_INSIGHT_DISCLAIMER_TEXT]
       : variant === "ai"
         ? [AI_INSIGHT_DISCLAIMER_TEXT]
-        : [FEED_DISCLAIMER_TEXT];
+        : variant === "performance"
+          ? [PERFORMANCE_DISCLAIMER_TEXT]
+          : [FEED_DISCLAIMER_TEXT];
 
   return (
     <p

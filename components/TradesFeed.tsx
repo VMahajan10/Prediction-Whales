@@ -273,6 +273,8 @@ export default function TradesFeed() {
         {whales.length !== 1 ? "s" : ""} · {platformLabel}
       </div>
 
+      <FeedLegalDisclaimer variant="performance" className="mb-3 px-1" />
+
       <div className="max-h-[480px] flex-1 space-y-1 overflow-y-auto">
         {seedLoading && trades.length === 0 ? (
           <TradeFeedSkeleton />

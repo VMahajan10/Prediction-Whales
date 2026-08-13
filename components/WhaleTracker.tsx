@@ -127,13 +127,15 @@ export default function WhaleTracker({
         className="mb-4 px-1"
       />
 
-      <p className="mb-4 px-1 text-[10px] uppercase tracking-wide text-pulse-label">
+      <p className="mb-2 px-1 text-[10px] uppercase tracking-wide text-pulse-label">
         {sortedWhales.length} of {filteredWhales.length} ·{" "}
         {whaleFeedCategoryLabel(categoryTab)}
         {platformFilter !== "all"
           ? ` · ${platformFilter === "kalshi" ? "Kalshi" : "Polymarket"}`
           : ""}
       </p>
+
+      <FeedLegalDisclaimer variant="performance" className="mb-4 px-1" />
 
       {sortedWhales.length === 0 ? (
         <div className="pulse-card rounded-2xl px-4 py-8 text-center">

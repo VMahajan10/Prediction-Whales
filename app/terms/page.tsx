@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import MobileAppShell from "@/components/MobileAppShell";
+import { NON_AFFILIATION_DISCLAIMER_TEXT } from "@/lib/legalCompliance";
 
 export const metadata: Metadata = {
   title: "Terms of Service | Prediction Whales",
@@ -101,14 +102,24 @@ export default function TermsPage() {
           </section>
 
           <section className="space-y-3">
+            <h2 className="text-base font-bold text-white">Non-affiliation</h2>
+            <p>{NON_AFFILIATION_DISCLAIMER_TEXT}</p>
+            <p>
+              References to Kalshi, Manifold, Metaculus, and other third-party
+              platforms are for identification and analytics purposes only. We
+              are not affiliated with or endorsed by those services unless
+              explicitly stated.
+            </p>
+          </section>
+
+          <section className="space-y-3">
             <h2 className="text-base font-bold text-white">
               Third-party platforms
             </h2>
             <p>
               The Service references data from third-party prediction market
-              platforms (e.g., Polymarket, Kalshi). We are not affiliated with
-              or endorsed by those platforms unless explicitly stated. Your use
-              of third-party services is governed by their terms and policies.
+              platforms. Your use of third-party services is governed by their
+              terms and policies.
             </p>
           </section>
 
