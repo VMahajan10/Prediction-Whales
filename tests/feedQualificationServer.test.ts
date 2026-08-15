@@ -95,6 +95,18 @@ describe("filterQualifiedPolymarketFeedTrades", () => {
 
     expect(trades).toHaveLength(0);
   });
+
+  it("includes trades from unindexed Polymarket wallets while metrics backfill", async () => {
+    vi.mocked(resolveFeedTradeEvPercents).mockResolvedValue(
+      new Map([[baseTrade.id, 4.2]])
+    );
+    vi.mocked(findWhaleByWalletCaseInsensitive).mockResolvedValue(null);
+
+    const trades = await filterQualifiedPolymarketFeedTrades([baseTrade]);
+
+    expect(trades).toHaveLength(1);
+    expect(trades[0]!.netEvPercent).toBe(4.2);
+  });
 });
 
 describe("collectPolymarketFeedCandidates", () => {

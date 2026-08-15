@@ -6,6 +6,7 @@ import { resolveFeedFilterCategoryLabel } from "@/lib/feedFilterDiagnostics";
 import type { ResolvedWhaleIdentity } from "@/lib/whaleIdentityResolver";
 import {
   isQualifiedWalletForProductFeed,
+  passesPolymarketTraderCredibilityForFeed,
   meetsProductFeedStakeThreshold,
   meetsFeedTradeEvThreshold,
   resolvePolymarketTradeNotionalUsd,
@@ -140,17 +141,23 @@ async function filterPolymarketFeedTradesByTraderCredibility<
   return trades.filter((trade) => {
     const wallet = trade.proxyWallet?.trim().toLowerCase();
     if (!wallet) return false;
-    return qualifications[wallet]?.qualified === true;
+    const qualification = qualifications[wallet];
+    if (!qualification) return false;
+    return passesPolymarketTraderCredibilityForFeed(qualification, true);
   });
 }
 
 export async function traderMeetsProductFeedCredibility(
-  walletAddress: string | null | undefined
+  walletAddress: string | null | undefined,
+  tradePassesProductFeedGates = true
 ): Promise<boolean> {
   const wallet = walletAddress?.trim();
   if (!wallet) return false;
   const qualification = await qualifyWalletForFeed(wallet);
-  return qualification.qualified;
+  return passesPolymarketTraderCredibilityForFeed(
+    qualification,
+    tradePassesProductFeedGates
+  );
 }
 
 export interface PolymarketFeedTradeLike {
@@ -349,9 +356,16 @@ export async function enrichPolymarketFeedTradesWithIdentity<
     if (!marketTranslation) return [];
 
     const wallet = trade.proxyWallet?.trim().toLowerCase();
-    if (!wallet || !qualifications[wallet]?.qualified) return [];
+    const qualification = wallet ? qualifications[wallet] : undefined;
+    if (
+      !wallet ||
+      !qualification ||
+      !passesPolymarketTraderCredibilityForFeed(qualification, true)
+    ) {
+      return [];
+    }
 
-    const identity = qualifications[wallet]!.identity;
+    const identity = qualification.identity;
     return [
       {
         ...trade,

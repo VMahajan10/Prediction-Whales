@@ -113,6 +113,37 @@ export function isQualifiedTraderForProductFeed(
   );
 }
 
+/**
+ * Trader history not yet indexed — registry row missing or volume/count still null.
+ * Distinct from wallets with calculated metrics that fail thresholds (e.g. 0 bets).
+ */
+export function isTraderMetricsUncalculated(
+  stats: ProductFeedTraderStats & { avgEv?: number | null }
+): boolean {
+  const count = stats.resolvedBetCount ?? stats.resolvedBetsCount;
+  if (count == null) return true;
+  if (
+    stats.resolvedVolumeUSD == null &&
+    stats.avgStakeNotional == null
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Polymarket feed trader gate — strict when metrics exist; fallback while backfilling.
+ * Call with `tradePassesProductFeedGates=true` only after stake + EV gates pass.
+ */
+export function passesPolymarketTraderCredibilityForFeed(
+  stats: WalletFeedQualificationInput & { resolvedVolumeUSD?: number | null },
+  tradePassesProductFeedGates = true
+): boolean {
+  if (isQualifiedTraderForProductFeed(stats)) return true;
+  if (!tradePassesProductFeedGates) return false;
+  return isTraderMetricsUncalculated(stats);
+}
+
 export function meetsFeedStakeThreshold(stakeUsd: number): boolean {
   return Number.isFinite(stakeUsd) && stakeUsd >= CREDIBILITY_CONFIG.MIN_STAKE_USD;
 }

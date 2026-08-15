@@ -4,6 +4,7 @@ import { and, desc, gte, sql } from "drizzle-orm";
 import {
   MIN_FEED_TRADE_EV_PCT,
   MIN_PRODUCT_FEED_STAKE_USD,
+  passesPolymarketTraderCredibilityForFeed,
 } from "@/lib/feedQualification";
 import { getDb, isDatabaseEnabled } from "@/lib/crossmarket/store/db";
 import { feedTrades } from "@/lib/crossmarket/store/schema";
@@ -36,7 +37,9 @@ async function filterRecordableByTraderCredibility(
   return trades.filter((trade) => {
     const wallet = trade.proxyWallet?.trim().toLowerCase();
     if (!wallet) return false;
-    return qualifications[wallet]?.qualified === true;
+    const qualification = qualifications[wallet];
+    if (!qualification) return false;
+    return passesPolymarketTraderCredibilityForFeed(qualification, true);
   });
 }
 
@@ -129,7 +132,14 @@ export async function fetchFallbackFeedTrades<T>(
     const payloads: T[] = [];
     for (const row of rows) {
       const wallet = row.proxyWallet?.trim().toLowerCase();
-      if (!wallet || !qualifications[wallet]?.qualified) continue;
+      const qualification = wallet ? qualifications[wallet] : undefined;
+      if (
+        !wallet ||
+        !qualification ||
+        !passesPolymarketTraderCredibilityForFeed(qualification, true)
+      ) {
+        continue;
+      }
       payloads.push(row.payload as T);
       if (payloads.length >= limit) break;
     }

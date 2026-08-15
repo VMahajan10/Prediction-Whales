@@ -15,6 +15,7 @@ import {
 } from "@/lib/feedQualification";
 import { recordFeedTradeHistory } from "@/lib/feed/feedTradeHistory";
 import { qualifyWalletForFeed } from "@/lib/feedQualificationServer";
+import { passesPolymarketTraderCredibilityForFeed } from "@/lib/feedQualification";
 import { coalesceDisplayEvPercent } from "@/lib/evPipeline/tradeEvRecord";
 import { ensureFullyComputedTradeEv } from "@/lib/evPipeline/resolveTradeEv";
 import { pipelineEvLookupKey } from "@/lib/evPipeline/types";
@@ -331,7 +332,11 @@ export class ShadowCronDaemon {
     const wallet = whale.proxyWallet?.trim();
     if (!wallet) return;
     const traderQualification = await qualifyWalletForFeed(wallet);
-    if (!traderQualification.qualified) return;
+    if (
+      !passesPolymarketTraderCredibilityForFeed(traderQualification, true)
+    ) {
+      return;
+    }
 
     await recordFeedTradeHistory([
       {

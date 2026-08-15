@@ -12,6 +12,7 @@ import {
 import {
   meetsProductFeedStakeThreshold,
   meetsFeedTradeEvThreshold,
+  passesPolymarketTraderCredibilityForFeed,
   resolvePolymarketTradeNotionalUsd,
 } from "@/lib/feedQualification";
 import { retainLastNonEmpty } from "@/lib/feed/feedRetention";
@@ -263,6 +264,16 @@ function isPolymarketTradeQualifiedForFeed(
   }
 
   return qualified;
+}
+
+/** Pending wallet qual fetch allows trade-level-qualified Polymarket rows through. */
+function passesPolymarketWalletCredibilityForClient(
+  qualification: WalletQualification | undefined,
+  tradePassesProductFeedGates: boolean
+): boolean {
+  if (!tradePassesProductFeedGates) return false;
+  if (!qualification) return true;
+  return passesPolymarketTraderCredibilityForFeed(qualification, true);
 }
 
 function attachWhaleIdentity(
@@ -568,12 +579,18 @@ export function useWhaleFeed() {
         .filter((trade) => {
           const wallet = trade.proxyWallet?.trim().toLowerCase();
           if (!wallet) return false;
-          const qualification = walletQualifications.get(wallet);
-          if (!qualification?.qualified) return false;
-          return isPolymarketTradeEligibleForFeed(
-            trade,
-            pipelineEvIndex,
-            loggedFilterRejects.current
+          if (
+            !isPolymarketTradeEligibleForFeed(
+              trade,
+              pipelineEvIndex,
+              loggedFilterRejects.current
+            )
+          ) {
+            return false;
+          }
+          return passesPolymarketWalletCredibilityForClient(
+            walletQualifications.get(wallet),
+            true
           );
         })
         .map((trade) => {
@@ -617,7 +634,15 @@ export function useWhaleFeed() {
       if (!meetsProductFeedStakeThreshold(whale.usdNotional)) continue;
 
       const wallet = whale.proxyWallet?.trim().toLowerCase();
-      if (!wallet || !walletQualifications.get(wallet)?.qualified) continue;
+      if (
+        !wallet ||
+        !passesPolymarketWalletCredibilityForClient(
+          walletQualifications.get(wallet),
+          true
+        )
+      ) {
+        continue;
+      }
 
       const admitted = stampWhaleForFeedAdmission(whale, pipelineEvIndex);
       if (!admitted) continue;
@@ -814,7 +839,15 @@ export function useWhaleFeed() {
         continue;
 
       const wallet = whale.proxyWallet?.trim().toLowerCase();
-      if (!wallet || !walletQualifications.get(wallet)?.qualified) continue;
+      if (
+        !wallet ||
+        !passesPolymarketWalletCredibilityForClient(
+          walletQualifications.get(wallet),
+          true
+        )
+      ) {
+        continue;
+      }
 
       qualifiedNotified.current.add(key);
       const qualification = walletQualifications.get(wallet);

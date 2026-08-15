@@ -20,6 +20,8 @@ import {
   MIN_STAKE_THRESHOLD,
   isQualifiedWalletForProductFeed,
   isQualifiedTraderForProductFeed,
+  isTraderMetricsUncalculated,
+  passesPolymarketTraderCredibilityForFeed,
   meetsProductFeedResolvedBetsThreshold,
   meetsProductFeedResolvedVolumeThreshold,
   MIN_PRODUCT_FEED_RESOLVED_BETS,
@@ -303,6 +305,46 @@ describe("feedQualification", () => {
         avgStakeNotional: 30,
       })
     ).toBe(true);
+  });
+
+  it("allows Polymarket feed rows while trader metrics are still backfilling", () => {
+    expect(
+      isTraderMetricsUncalculated({
+        resolvedBetsCount: null,
+        avgStakeNotional: null,
+        avgEv: null,
+      })
+    ).toBe(true);
+
+    expect(
+      passesPolymarketTraderCredibilityForFeed({
+        avgEv: null,
+        resolvedBetsCount: null,
+        avgStakeNotional: null,
+        resolvedVolumeUSD: null,
+      })
+    ).toBe(true);
+
+    expect(
+      passesPolymarketTraderCredibilityForFeed({
+        avgEv: 0.02,
+        resolvedBetsCount: 5,
+        avgStakeNotional: 20,
+        resolvedVolumeUSD: 100,
+      })
+    ).toBe(false);
+
+    expect(
+      passesPolymarketTraderCredibilityForFeed(
+        {
+          avgEv: 0.02,
+          resolvedBetsCount: 5,
+          avgStakeNotional: 20,
+          resolvedVolumeUSD: 100,
+        },
+        false
+      )
+    ).toBe(false);
   });
 });
 
