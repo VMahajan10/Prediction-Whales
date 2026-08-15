@@ -32,6 +32,7 @@ import {
   resolveWhaleIdentity,
   sanitizeWhaleDisplayName,
 } from "@/lib/whaleIdentityResolver";
+import { coalesceTradeEvPercent } from "@/lib/feedTradeEv";
 import { initialTradeFromStash } from "@/lib/tradeNavigationStore";
 import { useResolvedWallet } from "@/lib/useResolvedWallet";
 import { useWhaleTrackRecord } from "@/lib/useWhaleTrackRecord";
@@ -187,7 +188,14 @@ export default function WhaleDetailsPage() {
         retryCount.current = 0;
         setRetrying(false);
         const whaleTrade = asWhaleTrade(foundTrade);
-        setTrade(whaleTrade);
+        setTrade((prev) => ({
+          ...whaleTrade,
+          netEvPercent:
+            whaleTrade.netEvPercent ?? prev?.netEvPercent ?? null,
+          averageEv: whaleTrade.averageEv ?? prev?.averageEv ?? null,
+          grossEvPercent:
+            whaleTrade.grossEvPercent ?? prev?.grossEvPercent ?? null,
+        }));
         setCurrentPrice(whaleTrade.price);
         setNotFound(false);
         finishLoading();
@@ -333,10 +341,11 @@ export default function WhaleDetailsPage() {
     totalBets
   );
 
+  const tradeEvPercent = coalesceTradeEvPercent(trade);
   const avgEv =
     whaleIdentity.avgEv ??
     trackData?.pipelineEvAnalytics?.averageEv ??
-    null;
+    tradeEvPercent;
 
   const copyHref = buildPolymarketMarketUrl({
     eventSlug: trade.eventSlug,

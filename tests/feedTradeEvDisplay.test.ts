@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   entryPriceEvPercent,
   passesFeedTradeEvGate,
+  coalesceTradeEvPercent,
   resolveFeedTradeEvDisplay,
 } from "@/lib/feedTradeEv";
 
@@ -68,5 +69,34 @@ describe("resolveFeedTradeEvDisplay", () => {
 
     expect(display.label).toBe("TRADE EV");
     expect(display.value).toBe("N/A");
+  });
+});
+
+describe("coalesceTradeEvPercent", () => {
+  it("prefers netEvPercent and alternate API field names", () => {
+    expect(
+      coalesceTradeEvPercent({
+        netEvPercent: 5.8,
+        averageEv: 3.1,
+        ev: 0.02,
+      })
+    ).toBe(5.8);
+
+    expect(
+      coalesceTradeEvPercent({
+        evPercent: 4.2,
+      })
+    ).toBe(4.2);
+
+    expect(
+      coalesceTradeEvPercent({
+        ev: 0.058,
+      })
+    ).toBeCloseTo(5.8, 5);
+  });
+
+  it("returns null when no EV fields are present", () => {
+    expect(coalesceTradeEvPercent({})).toBeNull();
+    expect(coalesceTradeEvPercent(null)).toBeNull();
   });
 });

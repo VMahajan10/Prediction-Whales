@@ -7,17 +7,43 @@ import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import { formatEvPercent } from "@/lib/crossMarketEvDisplay";
 import { meetsFeedTradeEvThreshold } from "@/lib/feedQualification";
 
-function tradeLevelEvPercent(input: {
+export interface TradeEvPercentInput {
   tradeEvPercent?: number | null;
   netEvPercent?: number | null;
   grossEvPercent?: number | null;
-}): number | null {
-  if (input.tradeEvPercent != null && Number.isFinite(input.tradeEvPercent)) {
-    return input.tradeEvPercent;
-  }
-  for (const value of [input.netEvPercent, input.grossEvPercent]) {
+  averageEv?: number | null;
+  /** Decimal EV (+3% → 0.03) from normalized API payloads. */
+  ev?: number | null;
+  tradeEv?: number | null;
+  evPercent?: number | null;
+}
+
+function tradeLevelEvPercent(input: TradeEvPercentInput): number | null {
+  return coalesceTradeEvPercent(input);
+}
+
+/** Trade-level EV % from any common API / feed field name. */
+export function coalesceTradeEvPercent(
+  trade: TradeEvPercentInput | null | undefined
+): number | null {
+  if (!trade) return null;
+
+  for (const value of [
+    trade.tradeEvPercent,
+    trade.netEvPercent,
+    trade.averageEv,
+    trade.grossEvPercent,
+    trade.evPercent,
+    trade.tradeEv,
+  ]) {
     if (value != null && Number.isFinite(value)) return value;
   }
+
+  const ev = trade.ev;
+  if (ev != null && Number.isFinite(ev)) {
+    return Math.abs(ev) <= 1 ? ev * 100 : ev;
+  }
+
   return null;
 }
 
@@ -99,20 +125,16 @@ function formatFeedEvValue(evPercent: number): string {
 
 /** Feed card Trade EV — authoritative EV only; no implied-prob substitutes. */
 export function resolveFeedTradeEvDisplay(
-  trade: {
+  trade: TradeEvPercentInput & {
     price: number;
     source?: "polymarket" | "kalshi";
-    tradeEvPercent?: number | null;
-    netEvPercent?: number | null;
-    grossEvPercent?: number | null;
-    averageEv?: number | null;
   },
   pipeline?: PipelineTradeEv | null
 ): FeedTradeEvDisplay {
   const tradeEvPercent = resolveFeedTradeEvPercent(
     {
       price: trade.price,
-      tradeEvPercent: trade.tradeEvPercent ?? trade.averageEv ?? null,
+      tradeEvPercent: coalesceTradeEvPercent(trade),
       netEvPercent: trade.netEvPercent,
       grossEvPercent: trade.grossEvPercent,
     },

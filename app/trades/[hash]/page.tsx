@@ -32,6 +32,7 @@ import { isPolymarketTrade } from "@/lib/tradeSource";
 import { useResolvedWallet } from "@/lib/useResolvedWallet";
 import { useCrossMarketEvIndex } from "@/lib/useCrossMarketEvIndex";
 import { usePipelineTradeEv } from "@/lib/usePipelineEvIndex";
+import { coalesceTradeEvPercent, type TradeEvPercentInput } from "@/lib/feedTradeEv";
 import { resolvePolymarketPipelineTokenId } from "@/lib/pipelineEvClient";
 import { getFullDate, getTimeAgo } from "@/lib/time";
 import {
@@ -142,6 +143,14 @@ export default function TradeDetailPage() {
   const displayWallet = useMemo(
     () => polymarketTrade?.proxyWallet ?? resolvedWallet,
     [polymarketTrade?.proxyWallet, resolvedWallet]
+  );
+
+  const tradeEvPercent = useMemo(
+    () =>
+      coalesceTradeEvPercent(
+        polymarketTrade as TradeEvPercentInput | null | undefined
+      ),
+    [polymarketTrade]
   );
 
   const tradeEvInput = useMemo(() => {
@@ -711,6 +720,7 @@ export default function TradeDetailPage() {
           title={trade.title}
           slug={trade.slug}
           baseStakeUsd={size}
+          tradeEvPercent={tradeEvPercent}
           className="mb-4"
         />
         <Suspense fallback={<EnrichmentSkeleton rows={2} />}>

@@ -2,8 +2,12 @@
 
 import ArbitrageDiscrepancyBox from "@/components/arbitrage/ArbitrageDiscrepancyBox";
 import { PipelineEvInline } from "@/components/PipelineEvBadge";
+import { formatEvPercent } from "@/lib/crossMarketEvDisplay";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
-import { resolveDetailPanelDisplayEv } from "@/lib/evPipeline/tradeEvRecord";
+import {
+  pipelineEvTone,
+  resolveDetailPanelDisplayEv,
+} from "@/lib/evPipeline/tradeEvRecord";
 
 export interface TradeDetailEvArbMetricsProps {
   pipelineData: PipelineTradeEv | null | undefined;
@@ -17,6 +21,8 @@ export interface TradeDetailEvArbMetricsProps {
   slug?: string | null;
   pmMid?: number | null;
   baseStakeUsd?: number | null;
+  /** Cached trade-level EV % when pipeline lookup is cold. */
+  tradeEvPercent?: number | null;
   className?: string;
 }
 
@@ -36,13 +42,19 @@ export default function TradeDetailEvArbMetrics({
   slug,
   pmMid,
   baseStakeUsd,
+  tradeEvPercent = null,
   className = "",
 }: TradeDetailEvArbMetricsProps) {
-  const pipelineDisplay = resolveDetailPanelDisplayEv(pipelineData);
+  const pipelineDisplay = resolveDetailPanelDisplayEv(
+    pipelineData,
+    tradePrice
+  );
   const hasPipelineEv = pipelineDisplay != null;
+  const hasTradeEv =
+    tradeEvPercent != null && Number.isFinite(tradeEvPercent);
   const hasArbIdentifier = !!(pmTokenId || kalshiTicker);
 
-  if (!hasPipelineEv && !hasArbIdentifier) return null;
+  if (!hasPipelineEv && !hasTradeEv && !hasArbIdentifier) return null;
 
   return (
     <div
@@ -59,6 +71,18 @@ export default function TradeDetailEvArbMetrics({
           <div className="mt-1">
             <PipelineEvInline ev={pipelineData} className="text-sm font-bold" />
           </div>
+        ) : hasTradeEv ? (
+          <p
+            className={`mt-1 text-sm font-bold ${
+              pipelineEvTone(tradeEvPercent!).positive
+                ? "text-green-400"
+                : pipelineEvTone(tradeEvPercent!).negative
+                  ? "text-red-400/80"
+                  : "text-slate-400"
+            }`}
+          >
+            {formatEvPercent(tradeEvPercent!)} EV
+          </p>
         ) : (
           <p className="mt-1 text-sm font-bold text-zinc-500">—</p>
         )}
