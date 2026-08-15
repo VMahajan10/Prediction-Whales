@@ -19,6 +19,7 @@ import {
   MIN_PRODUCT_FEED_STAKE_USD,
   passesPolymarketTraderCredibilityForFeed,
   resolvePolymarketTradeNotionalUsd,
+  type WalletFeedQualificationInput,
 } from "@/lib/feedQualification";
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import {
@@ -449,16 +450,7 @@ async function resolveCachedKalshiPipelineEv(
 
 function filterRecentPolymarketByTraderCredibility(
   trades: RecentFeedTrade[],
-  qualifications: Record<
-    string,
-    {
-      qualified: boolean;
-      resolvedBetsCount?: number | null;
-      avgStakeNotional?: number | null;
-      resolvedVolumeUSD?: number | null;
-      avgEv?: number | null;
-    }
-  >
+  qualifications: Record<string, WalletFeedQualificationInput>
 ): RecentFeedTrade[] {
   return trades.filter((trade) => {
     const wallet = trade.proxyWallet?.trim().toLowerCase();

@@ -136,7 +136,7 @@ export function isTraderMetricsUncalculated(
  * Call with `tradePassesProductFeedGates=true` only after stake + EV gates pass.
  */
 export function passesPolymarketTraderCredibilityForFeed(
-  stats: WalletFeedQualificationInput & { resolvedVolumeUSD?: number | null },
+  stats: WalletFeedQualificationInput,
   tradePassesProductFeedGates = true
 ): boolean {
   if (isQualifiedTraderForProductFeed(stats)) return true;
@@ -337,7 +337,7 @@ export function isQualifiedFeedTrade(trade: FeedQualificationTrade): boolean {
 }
 
 export interface WalletFeedQualificationInput {
-  avgEv: number | null | undefined;
+  avgEv?: number | null;
   resolvedBetCount?: number | null;
   /** @deprecated Use resolvedBetCount */
   resolvedBetsCount?: number | null;
