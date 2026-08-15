@@ -15,7 +15,7 @@ import {
 } from "@/lib/feedQualification";
 import { recordFeedTradeHistory } from "@/lib/feed/feedTradeHistory";
 import { qualifyWalletForFeed } from "@/lib/feedQualificationServer";
-import { passesPolymarketTraderCredibilityForFeed } from "@/lib/feedQualification";
+import { passesPolymarketFeedTraderGate } from "@/lib/feedQualification";
 import { coalesceDisplayEvPercent } from "@/lib/evPipeline/tradeEvRecord";
 import { ensureFullyComputedTradeEv } from "@/lib/evPipeline/resolveTradeEv";
 import { pipelineEvLookupKey } from "@/lib/evPipeline/types";
@@ -330,10 +330,12 @@ export class ShadowCronDaemon {
     if (!meetsFeedTradeEvThreshold(evPercent)) return;
 
     const wallet = whale.proxyWallet?.trim();
-    if (!wallet) return;
-    const traderQualification = await qualifyWalletForFeed(wallet);
+    const traderQualification = wallet
+      ? await qualifyWalletForFeed(wallet)
+      : null;
     if (
-      !passesPolymarketTraderCredibilityForFeed(traderQualification, true)
+      wallet &&
+      !passesPolymarketFeedTraderGate(wallet, traderQualification, true)
     ) {
       return;
     }
@@ -358,6 +360,7 @@ export class ShadowCronDaemon {
           transactionHash: trade.transactionHash,
           slug: trade.slug,
           assetId: trade.assetId,
+          proxyWallet: whale.proxyWallet,
         },
       },
     ]);

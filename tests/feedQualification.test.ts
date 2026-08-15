@@ -21,6 +21,7 @@ import {
   isQualifiedWalletForProductFeed,
   isQualifiedTraderForProductFeed,
   isTraderMetricsUncalculated,
+  passesPolymarketFeedTraderGate,
   passesPolymarketTraderCredibilityForFeed,
   meetsProductFeedResolvedBetsThreshold,
   meetsProductFeedResolvedVolumeThreshold,
@@ -317,11 +318,36 @@ describe("feedQualification", () => {
     ).toBe(true);
 
     expect(
+      isTraderMetricsUncalculated({
+        resolvedBetsCount: 0,
+        avgStakeNotional: 0,
+        avgEv: 0,
+      })
+    ).toBe(true);
+
+    expect(
+      isTraderMetricsUncalculated({
+        resolvedBetsCount: 50,
+        avgStakeNotional: 0,
+        avgEv: 0.78,
+      })
+    ).toBe(true);
+
+    expect(
       passesPolymarketTraderCredibilityForFeed({
         avgEv: null,
         resolvedBetsCount: null,
         avgStakeNotional: null,
         resolvedVolumeUSD: null,
+      })
+    ).toBe(true);
+
+    expect(
+      passesPolymarketTraderCredibilityForFeed({
+        avgEv: 1,
+        resolvedBetsCount: 50,
+        avgStakeNotional: 0,
+        resolvedVolumeUSD: 0,
       })
     ).toBe(true);
 
@@ -345,6 +371,13 @@ describe("feedQualification", () => {
         false
       )
     ).toBe(false);
+  });
+
+  it("admits wallet-less Polymarket trades when trade gates already passed", () => {
+    expect(passesPolymarketFeedTraderGate(undefined, undefined, true)).toBe(
+      true
+    );
+    expect(passesPolymarketFeedTraderGate(null, undefined, false)).toBe(false);
   });
 });
 

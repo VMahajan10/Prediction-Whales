@@ -17,7 +17,7 @@ import {
   meetsProductFeedStakeThreshold,
   MIN_FEED_TRADE_EV_PCT,
   MIN_PRODUCT_FEED_STAKE_USD,
-  passesPolymarketTraderCredibilityForFeed,
+  passesPolymarketFeedTraderGate,
   resolvePolymarketTradeNotionalUsd,
   type WalletFeedQualificationInput,
 } from "@/lib/feedQualification";
@@ -454,10 +454,8 @@ function filterRecentPolymarketByTraderCredibility(
 ): RecentFeedTrade[] {
   return trades.filter((trade) => {
     const wallet = trade.proxyWallet?.trim().toLowerCase();
-    if (!wallet) return false;
-    const qualification = qualifications[wallet];
-    if (!qualification) return false;
-    return passesPolymarketTraderCredibilityForFeed(qualification, true);
+    const qualification = wallet ? qualifications[wallet] : undefined;
+    return passesPolymarketFeedTraderGate(wallet, qualification, true);
   });
 }
 

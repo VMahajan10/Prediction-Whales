@@ -107,6 +107,33 @@ describe("filterQualifiedPolymarketFeedTrades", () => {
     expect(trades).toHaveLength(1);
     expect(trades[0]!.netEvPercent).toBe(4.2);
   });
+
+  it("includes trades from registry rows with schema zero defaults before hydration", async () => {
+    vi.mocked(resolveFeedTradeEvPercents).mockResolvedValue(
+      new Map([[baseTrade.id, 4.2]])
+    );
+    vi.mocked(findWhaleByWalletCaseInsensitive).mockResolvedValue({
+      ...qualifiedWhale,
+      resolvedBetsCount: 50,
+      avgStakeNotional: 0,
+    } as never);
+
+    const trades = await filterQualifiedPolymarketFeedTrades([baseTrade]);
+
+    expect(trades).toHaveLength(1);
+  });
+
+  it("includes trades missing proxyWallet when stake and EV already pass", async () => {
+    vi.mocked(resolveFeedTradeEvPercents).mockResolvedValue(
+      new Map([[baseTrade.id, 4.2]])
+    );
+
+    const trades = await filterQualifiedPolymarketFeedTrades([
+      { ...baseTrade, proxyWallet: undefined },
+    ]);
+
+    expect(trades).toHaveLength(1);
+  });
 });
 
 describe("collectPolymarketFeedCandidates", () => {

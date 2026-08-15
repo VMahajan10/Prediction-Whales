@@ -12,7 +12,7 @@ import {
 import {
   meetsProductFeedStakeThreshold,
   meetsFeedTradeEvThreshold,
-  passesPolymarketTraderCredibilityForFeed,
+  passesPolymarketFeedTraderGate,
   resolvePolymarketTradeNotionalUsd,
 } from "@/lib/feedQualification";
 import { retainLastNonEmpty } from "@/lib/feed/feedRetention";
@@ -268,12 +268,15 @@ function isPolymarketTradeQualifiedForFeed(
 
 /** Pending wallet qual fetch allows trade-level-qualified Polymarket rows through. */
 function passesPolymarketWalletCredibilityForClient(
+  wallet: string | undefined,
   qualification: WalletQualification | undefined,
   tradePassesProductFeedGates: boolean
 ): boolean {
-  if (!tradePassesProductFeedGates) return false;
-  if (!qualification) return true;
-  return passesPolymarketTraderCredibilityForFeed(qualification, true);
+  return passesPolymarketFeedTraderGate(
+    wallet,
+    qualification,
+    tradePassesProductFeedGates
+  );
 }
 
 function attachWhaleIdentity(
@@ -577,8 +580,6 @@ export function useWhaleFeed() {
     () =>
       polymarketWhales
         .filter((trade) => {
-          const wallet = trade.proxyWallet?.trim().toLowerCase();
-          if (!wallet) return false;
           if (
             !isPolymarketTradeEligibleForFeed(
               trade,
@@ -588,8 +589,10 @@ export function useWhaleFeed() {
           ) {
             return false;
           }
+          const wallet = trade.proxyWallet?.trim().toLowerCase();
           return passesPolymarketWalletCredibilityForClient(
-            walletQualifications.get(wallet),
+            wallet,
+            wallet ? walletQualifications.get(wallet) : undefined,
             true
           );
         })
@@ -635,9 +638,9 @@ export function useWhaleFeed() {
 
       const wallet = whale.proxyWallet?.trim().toLowerCase();
       if (
-        !wallet ||
         !passesPolymarketWalletCredibilityForClient(
-          walletQualifications.get(wallet),
+          wallet,
+          wallet ? walletQualifications.get(wallet) : undefined,
           true
         )
       ) {
@@ -840,9 +843,9 @@ export function useWhaleFeed() {
 
       const wallet = whale.proxyWallet?.trim().toLowerCase();
       if (
-        !wallet ||
         !passesPolymarketWalletCredibilityForClient(
-          walletQualifications.get(wallet),
+          wallet,
+          wallet ? walletQualifications.get(wallet) : undefined,
           true
         )
       ) {
@@ -850,7 +853,9 @@ export function useWhaleFeed() {
       }
 
       qualifiedNotified.current.add(key);
-      const qualification = walletQualifications.get(wallet);
+      const qualification = wallet
+        ? walletQualifications.get(wallet)
+        : undefined;
       const enriched = attachWhaleIdentity(whale, qualification);
       setNewWhale(enriched);
       queueWhaleTweetNotify(enriched);

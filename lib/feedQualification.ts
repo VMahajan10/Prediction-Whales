@@ -114,20 +114,27 @@ export function isQualifiedTraderForProductFeed(
 }
 
 /**
- * Trader history not yet indexed — registry row missing or volume/count still null.
- * Distinct from wallets with calculated metrics that fail thresholds (e.g. 0 bets).
+ * Trader history not yet indexed — registry row missing or schema defaults (0)
+ * before Polymarket closed-position hydration. Distinct from wallets with
+ * calculated metrics that fail thresholds (e.g. 5 bets, $100 volume).
  */
 export function isTraderMetricsUncalculated(
   stats: ProductFeedTraderStats & { avgEv?: number | null }
 ): boolean {
   const count = stats.resolvedBetCount ?? stats.resolvedBetsCount;
-  if (count == null) return true;
+  if (count == null || count <= 0) return true;
+
   if (
-    stats.resolvedVolumeUSD == null &&
-    stats.avgStakeNotional == null
+    stats.resolvedVolumeUSD != null &&
+    Number.isFinite(stats.resolvedVolumeUSD) &&
+    stats.resolvedVolumeUSD > 0
   ) {
-    return true;
+    return false;
   }
+
+  const avgStake = stats.avgStakeNotional;
+  if (avgStake == null || avgStake <= 0) return true;
+
   return false;
 }
 
@@ -142,6 +149,28 @@ export function passesPolymarketTraderCredibilityForFeed(
   if (isQualifiedTraderForProductFeed(stats)) return true;
   if (!tradePassesProductFeedGates) return false;
   return isTraderMetricsUncalculated(stats);
+}
+
+/**
+ * Polymarket feed trader gate for a trade row — missing wallet admits when trade
+ * gates already passed (stake + EV); Kalshi has no analogous wallet column.
+ */
+export function passesPolymarketFeedTraderGate(
+  walletAddress: string | null | undefined,
+  qualification: WalletFeedQualificationInput | null | undefined,
+  tradePassesProductFeedGates = true
+): boolean {
+  const wallet = walletAddress?.trim().toLowerCase();
+  if (!wallet) return tradePassesProductFeedGates;
+  return passesPolymarketTraderCredibilityForFeed(
+    qualification ?? {
+      avgEv: null,
+      resolvedBetsCount: null,
+      avgStakeNotional: null,
+      resolvedVolumeUSD: null,
+    },
+    tradePassesProductFeedGates
+  );
 }
 
 export function meetsFeedStakeThreshold(stakeUsd: number): boolean {

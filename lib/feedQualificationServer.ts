@@ -6,7 +6,7 @@ import { resolveFeedFilterCategoryLabel } from "@/lib/feedFilterDiagnostics";
 import type { ResolvedWhaleIdentity } from "@/lib/whaleIdentityResolver";
 import {
   isQualifiedWalletForProductFeed,
-  passesPolymarketTraderCredibilityForFeed,
+  passesPolymarketFeedTraderGate,
   meetsProductFeedStakeThreshold,
   meetsFeedTradeEvThreshold,
   resolvePolymarketTradeNotionalUsd,
@@ -26,7 +26,6 @@ import {
   resolveWhaleIdentity,
   type WhaleRegistryStats,
 } from "@/lib/whaleIdentityResolver";
-import { getWhaleAlias } from "@/lib/x-agent/getWhaleAlias";
 import { findWhaleByWalletCaseInsensitive } from "@/lib/x-agent/whaleRegistryDb";
 import type { WhaleRegistry } from "@/lib/crossmarket/store/schema";
 import { enrichTradesWithWhaleAlias } from "@/lib/trades/getTrades";
@@ -71,12 +70,11 @@ export function resolveRegistryWhaleIdentity(
 export async function qualifyWalletForFeed(
   walletAddress: string
 ): Promise<WalletFeedQualification> {
-  const alias = await getWhaleAlias(walletAddress);
   const whale = await findWhaleByWalletCaseInsensitive(walletAddress);
   const identity = resolveRegistryWhaleIdentity(
     walletAddress,
     whale,
-    alias ?? whale?.pseudonym ?? null
+    whale?.pseudonym ?? null
   );
 
   if (!whale) {
@@ -134,16 +132,13 @@ async function filterPolymarketFeedTradesByTraderCredibility<
     .map((trade) => trade.proxyWallet?.trim().toLowerCase())
     .filter((wallet): wallet is string => Boolean(wallet));
 
-  if (wallets.length === 0) return [];
-
-  const qualifications = await qualifyWalletsForFeed(wallets);
+  const qualifications =
+    wallets.length > 0 ? await qualifyWalletsForFeed(wallets) : {};
 
   return trades.filter((trade) => {
     const wallet = trade.proxyWallet?.trim().toLowerCase();
-    if (!wallet) return false;
-    const qualification = qualifications[wallet];
-    if (!qualification) return false;
-    return passesPolymarketTraderCredibilityForFeed(qualification, true);
+    const qualification = wallet ? qualifications[wallet] : undefined;
+    return passesPolymarketFeedTraderGate(wallet, qualification, true);
   });
 }
 
@@ -154,7 +149,8 @@ export async function traderMeetsProductFeedCredibility(
   const wallet = walletAddress?.trim();
   if (!wallet) return false;
   const qualification = await qualifyWalletForFeed(wallet);
-  return passesPolymarketTraderCredibilityForFeed(
+  return passesPolymarketFeedTraderGate(
+    wallet,
     qualification,
     tradePassesProductFeedGates
   );
@@ -357,15 +353,13 @@ export async function enrichPolymarketFeedTradesWithIdentity<
 
     const wallet = trade.proxyWallet?.trim().toLowerCase();
     const qualification = wallet ? qualifications[wallet] : undefined;
-    if (
-      !wallet ||
-      !qualification ||
-      !passesPolymarketTraderCredibilityForFeed(qualification, true)
-    ) {
+    if (!passesPolymarketFeedTraderGate(wallet, qualification, true)) {
       return [];
     }
 
-    const identity = qualification.identity;
+    const identity =
+      qualification?.identity ??
+      resolveRegistryWhaleIdentity(wallet ?? "", null, null);
     return [
       {
         ...trade,

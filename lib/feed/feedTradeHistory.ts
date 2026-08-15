@@ -4,7 +4,7 @@ import { and, desc, gte, sql } from "drizzle-orm";
 import {
   MIN_FEED_TRADE_EV_PCT,
   MIN_PRODUCT_FEED_STAKE_USD,
-  passesPolymarketTraderCredibilityForFeed,
+  passesPolymarketFeedTraderGate,
 } from "@/lib/feedQualification";
 import { getDb, isDatabaseEnabled } from "@/lib/crossmarket/store/db";
 import { feedTrades } from "@/lib/crossmarket/store/schema";
@@ -30,16 +30,13 @@ async function filterRecordableByTraderCredibility(
     .map((trade) => trade.proxyWallet?.trim().toLowerCase())
     .filter((wallet): wallet is string => Boolean(wallet));
 
-  if (wallets.length === 0) return [];
-
-  const qualifications = await qualifyWalletsForFeed(wallets);
+  const qualifications =
+    wallets.length > 0 ? await qualifyWalletsForFeed(wallets) : {};
 
   return trades.filter((trade) => {
     const wallet = trade.proxyWallet?.trim().toLowerCase();
-    if (!wallet) return false;
-    const qualification = qualifications[wallet];
-    if (!qualification) return false;
-    return passesPolymarketTraderCredibilityForFeed(qualification, true);
+    const qualification = wallet ? qualifications[wallet] : undefined;
+    return passesPolymarketFeedTraderGate(wallet, qualification, true);
   });
 }
 
@@ -90,6 +87,7 @@ export async function recordFeedTradeHistory(
           stakeAmount: sql`excluded.stake_amount`,
           averageEv: sql`excluded.average_ev`,
           category: sql`excluded.category`,
+          proxyWallet: sql`COALESCE(excluded.proxy_wallet, feed_trades.proxy_wallet)`,
           payload: sql`excluded.payload`,
           updatedAt: sql`now()`,
         },
@@ -133,11 +131,7 @@ export async function fetchFallbackFeedTrades<T>(
     for (const row of rows) {
       const wallet = row.proxyWallet?.trim().toLowerCase();
       const qualification = wallet ? qualifications[wallet] : undefined;
-      if (
-        !wallet ||
-        !qualification ||
-        !passesPolymarketTraderCredibilityForFeed(qualification, true)
-      ) {
+      if (!passesPolymarketFeedTraderGate(wallet, qualification, true)) {
         continue;
       }
       payloads.push(row.payload as T);
