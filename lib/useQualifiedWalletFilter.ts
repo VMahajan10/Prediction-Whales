@@ -2,7 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { WalletFeedQualificationInput } from "@/lib/feedQualification";
-import type { ResolvedWhaleIdentity } from "@/lib/whaleIdentityResolver";
+import type {
+  ResolvedWhaleIdentity,
+  WalletQualificationApiResponse,
+} from "@/lib/whaleIdentityResolver";
 
 export interface WalletQualification extends WalletFeedQualificationInput {
   qualified: boolean;
@@ -60,18 +63,7 @@ export function useQualifiedWalletFilter(
       body: JSON.stringify({ wallets: missing }),
     })
       .then((response) => response.json())
-      .then(
-        (data: {
-          qualifications?: Record<
-            string,
-            {
-              qualified?: boolean;
-              avgEv?: number | null;
-              resolvedBetsCount?: number | null;
-              identity?: ResolvedWhaleIdentity;
-            }
-          >;
-        }) => {
+      .then((data: WalletQualificationApiResponse) => {
           if (cancelled) return;
           setQualifications((current) => {
             const next = new Map(current);
@@ -101,8 +93,7 @@ export function useQualifiedWalletFilter(
             }
             return next;
           });
-        }
-      )
+      })
       .catch(() => {
         if (cancelled) return;
         setQualifications((current) => {

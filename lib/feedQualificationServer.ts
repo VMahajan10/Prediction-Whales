@@ -3,6 +3,7 @@ import "server-only";
 import { mapWithConcurrency } from "@/lib/clvPriceHistory";
 import { evaluateLiveFeedTradeGate } from "@/lib/feedGate";
 import { resolveFeedFilterCategoryLabel } from "@/lib/feedFilterDiagnostics";
+import type { ResolvedWhaleIdentity } from "@/lib/whaleIdentityResolver";
 import {
   isQualifiedWalletForProductFeed,
   meetsProductFeedStakeThreshold,
@@ -22,7 +23,6 @@ import {
 } from "@/lib/marketTranslator";
 import {
   resolveWhaleIdentity,
-  type ResolvedWhaleIdentity,
   type WhaleRegistryStats,
 } from "@/lib/whaleIdentityResolver";
 import { getWhaleAlias } from "@/lib/x-agent/getWhaleAlias";
@@ -41,10 +41,17 @@ const WALLET_QUALIFICATION_CONCURRENCY = 8;
 
 function registryStats(whale: WhaleRegistry | null): WhaleRegistryStats | null {
   if (!whale) return null;
+  const avgStakeNotional = whale.avgStakeNotional;
+  const resolvedVolumeUSD = resolveTraderResolvedVolumeUsd({
+    resolvedBetsCount: whale.resolvedBetsCount,
+    avgStakeNotional,
+  });
   return {
     winRate: whale.winRate,
     resolvedBetsCount: whale.resolvedBetsCount,
     avgEv: whale.avgEv,
+    avgStakeNotional,
+    resolvedVolumeUSD,
   };
 }
 

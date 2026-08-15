@@ -39,6 +39,7 @@ const WHALE_NOUNS = [
   "Paragon",
 ] as const;
 
+import type { WalletFeedQualificationInput } from "@/lib/feedQualification";
 import { resolveWalletClvScore } from "@/lib/metrics/clv";
 import { WHALE_TRADER_FALLBACK_ALIAS } from "@/lib/trades/whaleAliasConstants";
 
@@ -50,6 +51,8 @@ export interface WhaleRegistryStats {
   avgEv?: number | null;
   roi?: number | null;
   clvScore?: number | null;
+  avgStakeNotional?: number | null;
+  resolvedVolumeUSD?: number | null;
 }
 
 export interface ResolvedWhaleIdentity {
@@ -60,7 +63,20 @@ export interface ResolvedWhaleIdentity {
   avgEv: number | null;
   roi: number | null;
   clvScore?: number;
+  avgStakeNotional?: number | null;
+  resolvedVolumeUSD?: number | null;
 }
+
+/** `/api/whales/wallet-qualification` entry shape. */
+export type WalletQualificationApiEntry = WalletFeedQualificationInput & {
+  qualified?: boolean;
+  identity?: ResolvedWhaleIdentity;
+};
+
+export type WalletQualificationApiResponse = {
+  qualifications?: Record<string, WalletQualificationApiEntry>;
+  error?: string;
+};
 
 function normalizeWallet(wallet: string): string {
   return wallet.trim().toLowerCase();
@@ -360,6 +376,8 @@ export function resolveWhaleIdentity(
       resolvedBetsCount: null,
       avgEv: null,
       roi: null,
+      avgStakeNotional: null,
+      resolvedVolumeUSD: null,
     };
   }
 
@@ -378,6 +396,16 @@ export function resolveWhaleIdentity(
     stats?.clvScore != null && Number.isFinite(stats.clvScore)
       ? stats.clvScore
       : resolveWalletClvScore({ roi, avgEv }) ?? undefined;
+  const avgStakeNotional =
+    stats?.avgStakeNotional != null &&
+    Number.isFinite(stats.avgStakeNotional)
+      ? stats.avgStakeNotional
+      : null;
+  const resolvedVolumeUSD =
+    stats?.resolvedVolumeUSD != null &&
+    Number.isFinite(stats.resolvedVolumeUSD)
+      ? stats.resolvedVolumeUSD
+      : null;
 
   return {
     pseudonym: sanitizeWhaleDisplayName(pseudonym, normalized),
@@ -393,6 +421,8 @@ export function resolveWhaleIdentity(
         : null,
     avgEv,
     roi,
+    avgStakeNotional,
+    resolvedVolumeUSD,
     ...(clvScore != null ? { clvScore } : {}),
   };
 }
