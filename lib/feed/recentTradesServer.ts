@@ -23,6 +23,7 @@ import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import {
   enrichTradesWithWhaleAlias,
 } from "@/lib/trades/getTrades";
+import { qualifyWalletsForFeed } from "@/lib/feedQualificationServer";
 import { extractTraderWalletAddress } from "@/lib/whaleIdentityResolver";
 import { initGlobalLocalEvCache } from "@/lib/evPipeline/redisCache";
 import { ensureFullyComputedTradeEv } from "@/lib/evPipeline/resolveTradeEv";
@@ -445,6 +446,17 @@ async function resolveCachedKalshiPipelineEv(
   return index;
 }
 
+function filterRecentPolymarketByTraderCredibility(
+  trades: RecentFeedTrade[],
+  qualifications: Record<string, { qualified: boolean }>
+): RecentFeedTrade[] {
+  return trades.filter((trade) => {
+    const wallet = trade.proxyWallet?.trim().toLowerCase();
+    if (!wallet) return false;
+    return qualifications[wallet]?.qualified === true;
+  });
+}
+
 async function fetchRecentPolymarketTrades(
   options: RecentFetchOptions = {}
 ): Promise<RecentFeedTrade[]> {
@@ -487,7 +499,16 @@ async function fetchRecentPolymarketTrades(
         (trade) => !options.excludeKeys?.has(recentTradeDedupeKey(trade))
       );
 
-    return applyRecentCategoryFilter(trades, categoryFilter);
+    const wallets = trades
+      .map((trade) => trade.proxyWallet?.trim().toLowerCase())
+      .filter((wallet): wallet is string => Boolean(wallet));
+    const qualifications = await qualifyWalletsForFeed(wallets);
+    const credible = filterRecentPolymarketByTraderCredibility(
+      trades,
+      qualifications
+    );
+
+    return applyRecentCategoryFilter(credible, categoryFilter);
   } catch (error) {
     console.error(
       "[recentTrades] polymarket read failed",

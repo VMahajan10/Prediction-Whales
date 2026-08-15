@@ -35,8 +35,83 @@ export const MIN_STAKE_THRESHOLD = CREDIBILITY_CONFIG.MIN_STAKE_USD;
 /** Minimum wallet historical avg EV for qualified feed (+1.0%). */
 export const MIN_AVG_EV_THRESHOLD = CREDIBILITY_CONFIG.MIN_AVG_EV;
 
-/** Minimum resolved bets for wallet credibility in qualified feeds. */
+/** Minimum resolved bets for wallet credibility in qualified feeds (X-agent / legacy). */
 export const MIN_FEED_RESOLVED_BETS = CREDIBILITY_CONFIG.MIN_RESOLVED_BETS;
+
+/** Product feed trader credibility — minimum resolved bet count. */
+export const MIN_PRODUCT_FEED_RESOLVED_BETS = 10;
+
+/** Product feed trader credibility — minimum total resolved stake volume (USD). */
+export const MIN_PRODUCT_FEED_RESOLVED_VOLUME_USD = 300;
+
+export function meetsProductFeedResolvedBetsThreshold(
+  resolvedCount: number | null | undefined
+): boolean {
+  return (
+    resolvedCount != null &&
+    Number.isFinite(resolvedCount) &&
+    resolvedCount >= MIN_PRODUCT_FEED_RESOLVED_BETS
+  );
+}
+
+export function meetsProductFeedResolvedVolumeThreshold(
+  volumeUsd: number | null | undefined
+): boolean {
+  return (
+    volumeUsd != null &&
+    Number.isFinite(volumeUsd) &&
+    volumeUsd >= MIN_PRODUCT_FEED_RESOLVED_VOLUME_USD
+  );
+}
+
+export interface ProductFeedTraderStats {
+  resolvedBetCount?: number | null;
+  /** @deprecated Use resolvedBetCount */
+  resolvedBetsCount?: number | null;
+  avgStakeNotional?: number | null;
+  resolvedVolumeUSD?: number | null;
+}
+
+/** Estimate resolved volume from registry stats when explicit volume is absent. */
+export function resolveTraderResolvedVolumeUsd(
+  stats: ProductFeedTraderStats
+): number {
+  if (
+    stats.resolvedVolumeUSD != null &&
+    Number.isFinite(stats.resolvedVolumeUSD)
+  ) {
+    return stats.resolvedVolumeUSD;
+  }
+
+  const count =
+    stats.resolvedBetCount ?? stats.resolvedBetsCount ?? null;
+  const avgStake = stats.avgStakeNotional ?? null;
+  if (
+    count != null &&
+    Number.isFinite(count) &&
+    count > 0 &&
+    avgStake != null &&
+    Number.isFinite(avgStake) &&
+    avgStake > 0
+  ) {
+    return count * avgStake;
+  }
+
+  return 0;
+}
+
+/** Product feed trader gate — resolved bet count + resolved volume only (no wallet avg EV). */
+export function isQualifiedTraderForProductFeed(
+  stats: ProductFeedTraderStats
+): boolean {
+  const resolvedBetCount =
+    stats.resolvedBetCount ?? stats.resolvedBetsCount ?? null;
+  const volumeUsd = resolveTraderResolvedVolumeUsd(stats);
+  return (
+    meetsProductFeedResolvedBetsThreshold(resolvedBetCount) &&
+    meetsProductFeedResolvedVolumeThreshold(volumeUsd)
+  );
+}
 
 export function meetsFeedStakeThreshold(stakeUsd: number): boolean {
   return Number.isFinite(stakeUsd) && stakeUsd >= CREDIBILITY_CONFIG.MIN_STAKE_USD;
@@ -235,6 +310,8 @@ export interface WalletFeedQualificationInput {
   resolvedBetCount?: number | null;
   /** @deprecated Use resolvedBetCount */
   resolvedBetsCount?: number | null;
+  avgStakeNotional?: number | null;
+  resolvedVolumeUSD?: number | null;
 }
 
 export function isQualifiedWalletForFeed(
@@ -246,4 +323,11 @@ export function isQualifiedWalletForFeed(
     meetsFeedResolvedBetsThreshold(resolvedBetCount) &&
     meetsWalletAvgEvThreshold(input.avgEv)
   );
+}
+
+/** Product feed wallet gate — 10+ resolved bets and $300+ resolved volume. */
+export function isQualifiedWalletForProductFeed(
+  input: WalletFeedQualificationInput
+): boolean {
+  return isQualifiedTraderForProductFeed(input);
 }

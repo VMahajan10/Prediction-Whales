@@ -18,8 +18,15 @@ import {
   MIN_PRODUCT_FEED_STAKE_USD,
   MIN_RAW_INGESTION_STAKE_USD,
   MIN_STAKE_THRESHOLD,
+  isQualifiedWalletForProductFeed,
+  isQualifiedTraderForProductFeed,
+  meetsProductFeedResolvedBetsThreshold,
+  meetsProductFeedResolvedVolumeThreshold,
+  MIN_PRODUCT_FEED_RESOLVED_BETS,
+  MIN_PRODUCT_FEED_RESOLVED_VOLUME_USD,
   meetsRawIngestionStakeThreshold,
   resolvePolymarketTradeNotionalUsd,
+  resolveTraderResolvedVolumeUsd,
 } from "@/lib/feedQualification";
 import {
   evaluateLiveFeedTradeGate,
@@ -238,6 +245,62 @@ describe("feedQualification", () => {
         resolvedBetCount: 400,
         title: "Will the Lakers win the NBA Finals?",
         tradeEvPercent: MIN_FEED_TRADE_EV_PCT,
+      })
+    ).toBe(true);
+  });
+
+  it("enforces product feed trader credibility (10+ resolved bets, $300+ volume)", () => {
+    expect(meetsProductFeedResolvedBetsThreshold(MIN_PRODUCT_FEED_RESOLVED_BETS)).toBe(
+      true
+    );
+    expect(
+      meetsProductFeedResolvedBetsThreshold(MIN_PRODUCT_FEED_RESOLVED_BETS - 1)
+    ).toBe(false);
+
+    expect(
+      meetsProductFeedResolvedVolumeThreshold(
+        MIN_PRODUCT_FEED_RESOLVED_VOLUME_USD
+      )
+    ).toBe(true);
+    expect(
+      meetsProductFeedResolvedVolumeThreshold(
+        MIN_PRODUCT_FEED_RESOLVED_VOLUME_USD - 1
+      )
+    ).toBe(false);
+
+    expect(
+      resolveTraderResolvedVolumeUsd({
+        resolvedBetsCount: 10,
+        avgStakeNotional: 50,
+      })
+    ).toBe(500);
+
+    expect(
+      isQualifiedTraderForProductFeed({
+        resolvedBetsCount: 10,
+        avgStakeNotional: 30,
+      })
+    ).toBe(true);
+
+    expect(
+      isQualifiedTraderForProductFeed({
+        resolvedBetsCount: 9,
+        avgStakeNotional: 50,
+      })
+    ).toBe(false);
+
+    expect(
+      isQualifiedTraderForProductFeed({
+        resolvedBetsCount: 10,
+        avgStakeNotional: 20,
+      })
+    ).toBe(false);
+
+    expect(
+      isQualifiedWalletForProductFeed({
+        avgEv: null,
+        resolvedBetsCount: 10,
+        avgStakeNotional: 30,
       })
     ).toBe(true);
   });

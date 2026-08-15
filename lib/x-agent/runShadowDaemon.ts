@@ -14,6 +14,7 @@ import {
   meetsFeedTradeEvThreshold,
 } from "@/lib/feedQualification";
 import { recordFeedTradeHistory } from "@/lib/feed/feedTradeHistory";
+import { qualifyWalletForFeed } from "@/lib/feedQualificationServer";
 import { coalesceDisplayEvPercent } from "@/lib/evPipeline/tradeEvRecord";
 import { ensureFullyComputedTradeEv } from "@/lib/evPipeline/resolveTradeEv";
 import { pipelineEvLookupKey } from "@/lib/evPipeline/types";
@@ -326,6 +327,11 @@ export class ShadowCronDaemon {
     );
     const evPercent = coalesceDisplayEvPercent(pipeline);
     if (!meetsFeedTradeEvThreshold(evPercent)) return;
+
+    const wallet = whale.proxyWallet?.trim();
+    if (!wallet) return;
+    const traderQualification = await qualifyWalletForFeed(wallet);
+    if (!traderQualification.qualified) return;
 
     await recordFeedTradeHistory([
       {

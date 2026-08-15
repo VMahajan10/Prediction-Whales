@@ -82,6 +82,8 @@ export function useQualifiedWalletFilter(
                 qualified: result.qualified === true,
                 avgEv: result.avgEv ?? null,
                 resolvedBetsCount: result.resolvedBetsCount ?? null,
+                avgStakeNotional: result.avgStakeNotional ?? null,
+                resolvedVolumeUSD: result.resolvedVolumeUSD ?? null,
                 identity: result.identity ?? EMPTY_IDENTITY,
               });
             }
@@ -91,6 +93,8 @@ export function useQualifiedWalletFilter(
                   qualified: false,
                   avgEv: null,
                   resolvedBetsCount: null,
+                  avgStakeNotional: null,
+                  resolvedVolumeUSD: null,
                   identity: EMPTY_IDENTITY,
                 });
               }
@@ -108,6 +112,8 @@ export function useQualifiedWalletFilter(
               qualified: false,
               avgEv: null,
               resolvedBetsCount: null,
+              avgStakeNotional: null,
+              resolvedVolumeUSD: null,
               identity: EMPTY_IDENTITY,
             });
           }

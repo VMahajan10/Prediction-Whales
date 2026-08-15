@@ -565,13 +565,17 @@ export function useWhaleFeed() {
   const qualifiedPolymarketWhales = useMemo(
     () =>
       polymarketWhales
-        .filter((trade) =>
-          isPolymarketTradeEligibleForFeed(
+        .filter((trade) => {
+          const wallet = trade.proxyWallet?.trim().toLowerCase();
+          if (!wallet) return false;
+          const qualification = walletQualifications.get(wallet);
+          if (!qualification?.qualified) return false;
+          return isPolymarketTradeEligibleForFeed(
             trade,
             pipelineEvIndex,
             loggedFilterRejects.current
-          )
-        )
+          );
+        })
         .map((trade) => {
           const pipelineKey = pipelineEvKeyForWhale(trade);
           const withIdentity = attachWhaleIdentity(
@@ -611,6 +615,9 @@ export function useWhaleFeed() {
       if (!key || whaleBufferSeen.current.has(key)) continue;
 
       if (!meetsProductFeedStakeThreshold(whale.usdNotional)) continue;
+
+      const wallet = whale.proxyWallet?.trim().toLowerCase();
+      if (!wallet || !walletQualifications.get(wallet)?.qualified) continue;
 
       const admitted = stampWhaleForFeedAdmission(whale, pipelineEvIndex);
       if (!admitted) continue;
@@ -667,6 +674,7 @@ export function useWhaleFeed() {
     qualifiedPolymarketWhales,
     backfillLoaded,
     pipelineEvIndex,
+    walletQualifications,
   ]);
 
   useEffect(() => {
@@ -805,11 +813,11 @@ export function useWhaleFeed() {
       )
         continue;
 
-      qualifiedNotified.current.add(key);
       const wallet = whale.proxyWallet?.trim().toLowerCase();
-      const qualification = wallet
-        ? walletQualifications.get(wallet)
-        : undefined;
+      if (!wallet || !walletQualifications.get(wallet)?.qualified) continue;
+
+      qualifiedNotified.current.add(key);
+      const qualification = walletQualifications.get(wallet);
       const enriched = attachWhaleIdentity(whale, qualification);
       setNewWhale(enriched);
       queueWhaleTweetNotify(enriched);

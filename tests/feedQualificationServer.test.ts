@@ -5,6 +5,12 @@ vi.mock("@/lib/feedTradeEvServer", () => ({
   resolveFeedTradeEvPercents: vi.fn(),
   resolveCachedFeedTradeEvPercents: vi.fn(),
 }));
+vi.mock("@/lib/x-agent/getWhaleAlias", () => ({
+  getWhaleAlias: vi.fn(async () => null),
+}));
+vi.mock("@/lib/x-agent/whaleRegistryDb", () => ({
+  findWhaleByWalletCaseInsensitive: vi.fn(),
+}));
 
 import {
   collectPolymarketFeedCandidates,
@@ -14,6 +20,15 @@ import {
   resolveCachedFeedTradeEvPercents,
   resolveFeedTradeEvPercents,
 } from "@/lib/feedTradeEvServer";
+import { findWhaleByWalletCaseInsensitive } from "@/lib/x-agent/whaleRegistryDb";
+
+const qualifiedWhale = {
+  resolvedBetsCount: 10,
+  avgStakeNotional: 50,
+  avgEv: 0.05,
+  winRate: 0.55,
+  pseudonym: "qualified-whale",
+};
 
 const baseTrade = {
   id: "t1",
@@ -29,6 +44,10 @@ const baseTrade = {
 describe("filterQualifiedPolymarketFeedTrades", () => {
   beforeEach(() => {
     vi.mocked(resolveFeedTradeEvPercents).mockReset();
+    vi.mocked(findWhaleByWalletCaseInsensitive).mockReset();
+    vi.mocked(findWhaleByWalletCaseInsensitive).mockResolvedValue(
+      qualifiedWhale as never
+    );
   });
 
   it("attaches netEvPercent and averageEv for client hydration on page load", async () => {
@@ -62,11 +81,29 @@ describe("filterQualifiedPolymarketFeedTrades", () => {
 
     expect(trades).toHaveLength(0);
   });
+  it("drops trades from traders below product-feed credibility", async () => {
+    vi.mocked(resolveFeedTradeEvPercents).mockResolvedValue(
+      new Map([[baseTrade.id, 4.2]])
+    );
+    vi.mocked(findWhaleByWalletCaseInsensitive).mockResolvedValue({
+      ...qualifiedWhale,
+      resolvedBetsCount: 5,
+      avgStakeNotional: 20,
+    } as never);
+
+    const trades = await filterQualifiedPolymarketFeedTrades([baseTrade]);
+
+    expect(trades).toHaveLength(0);
+  });
 });
 
 describe("collectPolymarketFeedCandidates", () => {
   beforeEach(() => {
     vi.mocked(resolveCachedFeedTradeEvPercents).mockReset();
+    vi.mocked(findWhaleByWalletCaseInsensitive).mockReset();
+    vi.mocked(findWhaleByWalletCaseInsensitive).mockResolvedValue(
+      qualifiedWhale as never
+    );
   });
 
   it("drops trades with uncached EV instead of returning null placeholders", async () => {

@@ -4,10 +4,11 @@ import { mapWithConcurrency } from "@/lib/clvPriceHistory";
 import { evaluateLiveFeedTradeGate } from "@/lib/feedGate";
 import { resolveFeedFilterCategoryLabel } from "@/lib/feedFilterDiagnostics";
 import {
-  isQualifiedWalletForFeed,
+  isQualifiedWalletForProductFeed,
   meetsProductFeedStakeThreshold,
   meetsFeedTradeEvThreshold,
   resolvePolymarketTradeNotionalUsd,
+  resolveTraderResolvedVolumeUsd,
   type WalletFeedQualificationInput,
 } from "@/lib/feedQualification";
 import {
@@ -31,6 +32,7 @@ import { enrichTradesWithWhaleAlias } from "@/lib/trades/getTrades";
 
 export interface WalletFeedQualification extends WalletFeedQualificationInput {
   qualified: boolean;
+  resolvedVolumeUSD: number | null;
   identity: ResolvedWhaleIdentity;
 }
 
@@ -74,6 +76,8 @@ export async function qualifyWalletForFeed(
       qualified: false,
       avgEv: null,
       resolvedBetsCount: null,
+      avgStakeNotional: null,
+      resolvedVolumeUSD: null,
       identity,
     };
   }
@@ -81,11 +85,16 @@ export async function qualifyWalletForFeed(
   const stats = {
     avgEv: whale.avgEv,
     resolvedBetsCount: whale.resolvedBetsCount,
+    avgStakeNotional: whale.avgStakeNotional,
   };
+  const resolvedVolumeUSD = resolveTraderResolvedVolumeUsd(stats);
 
   return {
-    qualified: isQualifiedWalletForFeed(stats),
-    ...stats,
+    qualified: isQualifiedWalletForProductFeed(stats),
+    avgEv: whale.avgEv,
+    resolvedBetsCount: whale.resolvedBetsCount,
+    avgStakeNotional: whale.avgStakeNotional,
+    resolvedVolumeUSD,
     identity,
   };
 }
@@ -108,6 +117,33 @@ export async function qualifyWalletsForFeed(
   );
 
   return Object.fromEntries(entries);
+}
+
+async function filterPolymarketFeedTradesByTraderCredibility<
+  T extends PolymarketFeedTradeLike,
+>(trades: T[]): Promise<T[]> {
+  const wallets = trades
+    .map((trade) => trade.proxyWallet?.trim().toLowerCase())
+    .filter((wallet): wallet is string => Boolean(wallet));
+
+  if (wallets.length === 0) return [];
+
+  const qualifications = await qualifyWalletsForFeed(wallets);
+
+  return trades.filter((trade) => {
+    const wallet = trade.proxyWallet?.trim().toLowerCase();
+    if (!wallet) return false;
+    return qualifications[wallet]?.qualified === true;
+  });
+}
+
+export async function traderMeetsProductFeedCredibility(
+  walletAddress: string | null | undefined
+): Promise<boolean> {
+  const wallet = walletAddress?.trim();
+  if (!wallet) return false;
+  const qualification = await qualifyWalletForFeed(wallet);
+  return qualification.qualified;
 }
 
 export interface PolymarketFeedTradeLike {
@@ -205,15 +241,19 @@ export async function collectPolymarketFeedCandidates<
     });
   }
 
+  const traderQualified = await filterPolymarketFeedTradesByTraderCredibility(
+    candidates
+  );
+
   recordFeedMetrics({
     tradesDetected: trades.length,
-    gatePassedTrades: candidates.length,
-    whaleWallets: candidates
+    gatePassedTrades: traderQualified.length,
+    whaleWallets: traderQualified
       .map((trade) => trade.proxyWallet)
       .filter((wallet): wallet is string => Boolean(wallet)),
   });
 
-  return candidates;
+  return traderQualified;
 }
 
 export async function filterQualifiedPolymarketFeedTrades<
@@ -262,15 +302,19 @@ export async function filterQualifiedPolymarketFeedTrades<
     });
   }
 
+  const traderQualified = await filterPolymarketFeedTradesByTraderCredibility(
+    qualified
+  );
+
   recordFeedMetrics({
     tradesDetected: trades.length,
-    gatePassedTrades: qualified.length,
-    whaleWallets: qualified
+    gatePassedTrades: traderQualified.length,
+    whaleWallets: traderQualified
       .map((trade) => trade.proxyWallet)
       .filter((wallet): wallet is string => Boolean(wallet)),
   });
 
-  return qualified;
+  return traderQualified;
 }
 
 export async function enrichPolymarketFeedTradesWithIdentity<
@@ -298,11 +342,9 @@ export async function enrichPolymarketFeedTradesWithIdentity<
     if (!marketTranslation) return [];
 
     const wallet = trade.proxyWallet?.trim().toLowerCase();
-    const identity =
-      wallet && qualifications[wallet]
-        ? qualifications[wallet]!.identity
-        : resolveWhaleIdentity(wallet ?? null);
+    if (!wallet || !qualifications[wallet]?.qualified) return [];
 
+    const identity = qualifications[wallet]!.identity;
     return [
       {
         ...trade,
