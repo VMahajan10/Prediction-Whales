@@ -46,3 +46,4 @@ ios/App/Pods/
 *.jks
 *.keystore
 .env*
+backup.sql
