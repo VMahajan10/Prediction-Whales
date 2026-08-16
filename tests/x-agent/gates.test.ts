@@ -115,25 +115,34 @@ describe("evaluateDeterministicPreGates", () => {
     expect(result.reason).toBe("BELOW_STAKE_FLOOR");
   });
 
-  it("applies the sports tier stake floor", () => {
-    const belowSportsFloor = evaluateDeterministicPreGates(
+  it("uses a flat $500 post-queue stake floor for all categories", () => {
+    const belowFlatFloor = evaluateDeterministicPreGates(
       makeTrade({
         title: "Lakers vs Celtics NBA",
-        stakeNotional: STAKE_FLOOR_SPORTS_ENTERTAINMENT_USD - 1,
+        stakeNotional: STAKE_FLOOR_DEFAULT_USD - 1,
       }),
       Date.now()
     );
-    expect(belowSportsFloor.passed).toBe(false);
-    expect(belowSportsFloor.failedStep).toBe("stake");
+    expect(belowFlatFloor.passed).toBe(false);
+    expect(belowFlatFloor.failedStep).toBe("stake");
 
-    const aboveSportsFloor = evaluateDeterministicPreGates(
+    const aboveFlatFloor = evaluateDeterministicPreGates(
       makeTrade({
         title: "Lakers vs Celtics NBA",
-        stakeNotional: STAKE_FLOOR_SPORTS_ENTERTAINMENT_USD,
+        stakeNotional: STAKE_FLOOR_DEFAULT_USD,
       }),
       Date.now()
     );
-    expect(aboveSportsFloor.passed).toBe(true);
+    expect(aboveFlatFloor.passed).toBe(true);
+
+    const macroBelowFlatFloor = evaluateDeterministicPreGates(
+      makeTrade({
+        title: "Will Trump win the election?",
+        stakeNotional: STAKE_FLOOR_MACRO_POLITICAL_USD - 1,
+      }),
+      Date.now()
+    );
+    expect(macroBelowFlatFloor.passed).toBe(true);
   });
 
   it("returns translation when freshness, stake, and alignment pass", () => {
@@ -148,19 +157,18 @@ describe("evaluateDeterministicPreGates", () => {
 });
 
 describe("evaluateWalletCredibilityPreGate", () => {
-  it("fails when whale is missing from registry below unindexed stake bypass", () => {
+  it("passes when whale is missing from registry while metrics are uncalculated", () => {
     const result = withStrictCredibilityGates(() =>
       evaluateWalletCredibilityPreGate(
         makeTrade({
           title: "Lakers vs Celtics NBA",
-          stakeNotional: STAKE_FLOOR_SPORTS_ENTERTAINMENT_USD,
+          stakeNotional: STAKE_FLOOR_DEFAULT_USD,
         }),
         null
       )
     );
 
-    expect(result.passed).toBe(false);
-    expect(result.failedStep).toBe("credibility");
+    expect(result.passed).toBe(true);
   });
 });
 
@@ -250,7 +258,7 @@ describe("evaluateTradeGateMatrix", () => {
         trade: makeTrade({
           title: "Lakers vs Celtics NBA",
           walletAddress: ANONYMOUS_WALLET_ADDRESS,
-          stakeNotional: STAKE_FLOOR_SPORTS_ENTERTAINMENT_USD,
+          stakeNotional: STAKE_FLOOR_DEFAULT_USD,
         }),
         whale: null,
         tradeEvPercent: 3.0,
@@ -276,17 +284,17 @@ describe("evaluateTradeGateMatrix", () => {
     expect(result.passed).toBe(true);
   });
 
-  it("applies the macro/political stake tier", () => {
+  it("uses the flat post-queue stake floor in the gate matrix", () => {
     const matrix = evaluateTradeGateMatrix({
       trade: makeTrade({
         title: "Will Trump win the election?",
-        stakeNotional: STAKE_FLOOR_MACRO_POLITICAL_USD - 1,
+        stakeNotional: STAKE_FLOOR_DEFAULT_USD - 1,
       }),
       whale: makeWhale(),
       tradeEvPercent: 3.0,
     });
 
-    expect(matrix.stakeFloorTier).toBe("macro_political");
+    expect(matrix.stakeFloorTier).toBe("default");
     expect(matrix.passesStake).toBe(false);
   });
 
@@ -369,7 +377,7 @@ describe("evaluateTradeEligibility", () => {
         makeTrade({
           title: "Lakers vs Celtics NBA",
           walletAddress: ANONYMOUS_WALLET_ADDRESS,
-          stakeNotional: STAKE_FLOOR_SPORTS_ENTERTAINMENT_USD,
+          stakeNotional: STAKE_FLOOR_DEFAULT_USD,
         }),
         null,
         Date.now(),
@@ -387,7 +395,7 @@ describe("evaluateTradeEligibility", () => {
       evaluateTradeEligibility(
         makeTrade({
           title: "Lakers vs Celtics NBA",
-          stakeNotional: STAKE_FLOOR_SPORTS_ENTERTAINMENT_USD,
+          stakeNotional: STAKE_FLOOR_DEFAULT_USD,
         }),
         makeWhale({ resolvedBetsCount: MIN_RESOLVED_BETS - 1 }),
         Date.now(),

@@ -32,7 +32,8 @@ import {
 } from "@/lib/x-agent/xAgentTradeEv";
 import {
   formatStakeFloorTierLabel,
-  resolveStakeFloorUsd,
+  resolvePostQueueStakeFloorUsd,
+  STAKE_FLOOR_DEFAULT_USD,
   type StakeFloorTier,
 } from "@/lib/x-agent/stakeFloor";
 import {
@@ -136,8 +137,8 @@ export interface PreGateShortCircuitResult {
 export const MIN_RESOLVED_BETS = MIN_WALLET_RESOLVED_BETS;
 export const MIN_RESOLVED_THRESHOLD = MIN_WALLET_RESOLVED_BETS;
 export const MIN_AVG_EV = MIN_WALLET_AVG_EV_DECIMAL;
-/** Default-tier stake floor; tiered floors use `resolveStakeFloorUsd()`. */
-export const MIN_STAKE_NOTIONAL = STAKE_FLOOR_USD;
+/** Default-tier stake floor; post-queue uses flat {@link resolvePostQueueStakeFloorUsd}. */
+export const MIN_STAKE_NOTIONAL = STAKE_FLOOR_DEFAULT_USD;
 export const MAX_TRADE_AGE_MS = 30 * 60 * 1000;
 
 function gateLog(
@@ -210,7 +211,11 @@ function formatGateDropReason(
 }
 
 function resolveTradeStakeFloor(trade: TradePayload) {
-  return resolveStakeFloorUsd(trade.title, trade.slug, trade.eventSlug);
+  return resolvePostQueueStakeFloorUsd(
+    trade.title,
+    trade.slug,
+    trade.eventSlug
+  );
 }
 
 function tradeTimestampMs(timestamp: number): number {
@@ -420,6 +425,7 @@ export function evaluateTradeGateMatrix(
     resolvedBetCount: isAnonymousWalletAddress(trade.walletAddress)
       ? 0
       : whale?.resolvedBetsCount ?? null,
+    whale: whale ?? null,
   }).passed;
 
   const translation = passesSource

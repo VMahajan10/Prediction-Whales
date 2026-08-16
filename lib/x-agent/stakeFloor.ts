@@ -91,6 +91,22 @@ export function classifyStakeFloorTier(
   return "default";
 }
 
+/**
+ * Flat post-queue stake floor — aligned with product feed ($500 all categories).
+ * Tiered classification remains available via {@link classifyStakeFloorTier} for legacy helpers.
+ */
+export function resolvePostQueueStakeFloorUsd(
+  _title?: string,
+  _slug?: string | null,
+  _eventSlug?: string | null,
+  _category?: string | null
+): StakeFloorResolution {
+  return {
+    tier: "default",
+    floorUsd: STAKE_FLOOR_DEFAULT_USD,
+  };
+}
+
 export function resolveStakeFloorUsd(
   title: string,
   slug?: string | null,
@@ -136,5 +152,5 @@ export function formatStakeFloorTierLabel(tier: StakeFloorTier): string {
 }
 
 export function formatStakeFloorSummaryLabel(): string {
-  return "tiered ($250 sports/culture · $500 default · $1k macro/politics)";
+  return `$${STAKE_FLOOR_DEFAULT_USD.toLocaleString("en-US")} flat (all categories)`;
 }

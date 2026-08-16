@@ -43,7 +43,7 @@ export const MIN_WALLET_AVG_EV_DECIMAL = MIN_AVG_EV_THRESHOLD;
 /** Minimum wallet historical avg EV as display percent (+1.0%). */
 export const MIN_WALLET_AVG_EV_THRESHOLD_PCT = MIN_AVG_EV_THRESHOLD_PCT;
 
-/** Minimum resolved bets on wallet registry for credibility (default 100). */
+/** Minimum resolved bets on wallet registry for credibility (default 10). */
 export const MIN_WALLET_RESOLVED_BETS = (() => {
   const parsed = Number(process.env.RESOLVED_BETS_FLOOR);
   return Number.isFinite(parsed) && parsed > 0

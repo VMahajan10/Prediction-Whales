@@ -7,6 +7,7 @@ import {
   CREDIBILITY_CONFIG,
   meetsFeedResolvedBetsThreshold,
   meetsWalletAvgEvThreshold,
+  isTraderMetricsUncalculated,
 } from "@/lib/feedQualification";
 import {
   MIN_TRADE_EV_DECIMAL,
@@ -315,6 +316,21 @@ export function evaluateResolvedBetsCredibilityFloor(input: {
   }
 
   if (
+    isTraderMetricsUncalculated({
+      resolvedBetCount: input.resolvedBetCount,
+      resolvedBetsCount: input.resolvedBetCount,
+      avgStakeNotional: input.whale?.avgStakeNotional ?? null,
+      avgEv: input.whale?.avgEv ?? null,
+    })
+  ) {
+    gateLog(
+      input.tradeId,
+      "[Pass: Credibility] Trader metrics uncalculated — resolved-bets check bypassed (product feed parity)"
+    );
+    return { passed: true, unverifiedWhale: true };
+  }
+
+  if (
     shouldApplyUnverifiedWhaleCredibilityBypass({
       whaleNotInRegistry: input.whaleNotInRegistry,
       whale: input.whale,
@@ -555,6 +571,21 @@ export function evaluatePostQueueCredibilityGate(
   const avgEv = input.walletAvgEv;
 
   if (!meetsFeedResolvedBetsThreshold(resolvedBetCount)) {
+    if (
+      isTraderMetricsUncalculated({
+        resolvedBetCount,
+        resolvedBetsCount: resolvedBetCount,
+        avgStakeNotional: input.whale?.avgStakeNotional ?? null,
+        avgEv,
+      })
+    ) {
+      gateLog(
+        input.tradeId,
+        "[Pass: Credibility] Trader metrics uncalculated — resolved-bets check bypassed (product feed parity)"
+      );
+      return { passed: true, unverifiedWhale: true };
+    }
+
     if (
       shouldApplyUnverifiedWhaleCredibilityBypass({
         whaleNotInRegistry: input.whaleNotInRegistry,

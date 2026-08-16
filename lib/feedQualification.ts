@@ -5,11 +5,10 @@ import {
 
 /**
  * Shared credibility thresholds for product feed and X-agent post queue.
- * MIN_RESOLVED_BETS matches the current Polymarket closed-positions API capture
- * ceiling — wallets below this lack enough resolved history for reliable scoring.
+ * MIN_RESOLVED_BETS aligns with MIN_PRODUCT_FEED_RESOLVED_BETS (10).
  */
 export const CREDIBILITY_CONFIG = {
-  MIN_RESOLVED_BETS: 100,
+  MIN_RESOLVED_BETS: 10,
   MIN_STAKE_USD: 250,
   MIN_AVG_EV: 0.01,
 } as const;
@@ -35,11 +34,11 @@ export const MIN_STAKE_THRESHOLD = CREDIBILITY_CONFIG.MIN_STAKE_USD;
 /** Minimum wallet historical avg EV for qualified feed (+1.0%). */
 export const MIN_AVG_EV_THRESHOLD = CREDIBILITY_CONFIG.MIN_AVG_EV;
 
-/** Minimum resolved bets for wallet credibility in qualified feeds (X-agent / legacy). */
-export const MIN_FEED_RESOLVED_BETS = CREDIBILITY_CONFIG.MIN_RESOLVED_BETS;
-
 /** Product feed trader credibility — minimum resolved bet count. */
 export const MIN_PRODUCT_FEED_RESOLVED_BETS = 10;
+
+/** Minimum resolved bets for wallet credibility in qualified feeds (X-agent / legacy). */
+export const MIN_FEED_RESOLVED_BETS = MIN_PRODUCT_FEED_RESOLVED_BETS;
 
 /** Product feed trader credibility — minimum total resolved stake volume (USD). */
 export const MIN_PRODUCT_FEED_RESOLVED_VOLUME_USD = 300;

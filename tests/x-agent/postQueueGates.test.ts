@@ -107,6 +107,10 @@ describe("postQueueGates", () => {
         stakeNotional: MIN_STAKE_THRESHOLD,
         walletAvgEv: MIN_AVG_EV_THRESHOLD,
         resolvedBetCount: CREDIBILITY_CONFIG.MIN_RESOLVED_BETS - 1,
+        whale: {
+          avgStakeNotional: 30,
+          resolvedBetsCount: CREDIBILITY_CONFIG.MIN_RESOLVED_BETS - 1,
+        } as never,
       })
     );
 
@@ -154,7 +158,7 @@ describe("postQueueGates", () => {
     expect(result.reason).toBeUndefined();
   });
 
-  it("rejects missing resolved bets in shadow even when stake >= $500", () => {
+  it("allows missing resolved bets in shadow when metrics are uncalculated", () => {
     const previous = process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
     process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW = "true";
 
@@ -166,8 +170,8 @@ describe("postQueueGates", () => {
         resolvedBetCount: null,
       });
 
-      expect(result.passed).toBe(false);
-      expect(result.reason).toBe(BELOW_RESOLVED_BETS);
+      expect(result.passed).toBe(true);
+      expect(result.unverifiedWhale).toBe(true);
       expect(isAllowUnregisteredWalletsInShadow()).toBe(true);
     } finally {
       if (previous === undefined) {
@@ -249,7 +253,7 @@ describe("postQueueGates", () => {
     }
   });
 
-  it("rejects high-stake wallets with zero resolved bets when indexed", () => {
+  it("allows indexed wallets with zero resolved bets while metrics are uncalculated", () => {
     const previousNodeEnv = process.env.NODE_ENV;
     const previousShadow = process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
     const previousUnindexed = process.env.ALLOW_UNINDEXED_WALLETS;
@@ -266,8 +270,8 @@ describe("postQueueGates", () => {
         whaleNotInRegistry: false,
       });
 
-      expect(result.passed).toBe(false);
-      expect(result.reason).toBe(BELOW_RESOLVED_BETS);
+      expect(result.passed).toBe(true);
+      expect(result.unverifiedWhale).toBe(true);
     } finally {
       process.env.NODE_ENV = previousNodeEnv;
       if (previousShadow === undefined) {
@@ -283,7 +287,7 @@ describe("postQueueGates", () => {
     }
   });
 
-  it("rejects sub-bypass stake with zero resolved bets in production", () => {
+  it("allows sub-bypass stake when trader metrics are uncalculated", () => {
     const previousNodeEnv = process.env.NODE_ENV;
     const previousShadow = process.env.ALLOW_UNREGISTERED_WALLETS_IN_SHADOW;
     const previousUnindexed = process.env.ALLOW_UNINDEXED_WALLETS;
@@ -299,8 +303,8 @@ describe("postQueueGates", () => {
         resolvedBetCount: 0,
       });
 
-      expect(result.passed).toBe(false);
-      expect(result.reason).toBe(BELOW_RESOLVED_BETS);
+      expect(result.passed).toBe(true);
+      expect(result.unverifiedWhale).toBe(true);
     } finally {
       process.env.NODE_ENV = previousNodeEnv;
       if (previousShadow === undefined) {
@@ -316,7 +320,7 @@ describe("postQueueGates", () => {
     }
   });
 
-  it("rejects missing resolved bets even when ALLOW_UNINDEXED_WALLETS is true", () => {
+  it("allows missing resolved bets when ALLOW_UNINDEXED_WALLETS is true and metrics are uncalculated", () => {
     const previousNodeEnv = process.env.NODE_ENV;
     const previousUnindexed = process.env.ALLOW_UNINDEXED_WALLETS;
     process.env.NODE_ENV = "production";
@@ -331,8 +335,8 @@ describe("postQueueGates", () => {
         resolvedBetCount: null,
       });
 
-      expect(result.passed).toBe(false);
-      expect(result.reason).toBe(BELOW_RESOLVED_BETS);
+      expect(result.passed).toBe(true);
+      expect(result.unverifiedWhale).toBe(true);
     } finally {
       process.env.NODE_ENV = previousNodeEnv;
       if (previousUnindexed === undefined) {
@@ -355,15 +359,15 @@ describe("postQueueGates", () => {
     expect(result.unverifiedWhale).toBe(true);
   });
 
-  it("logs and rejects wallets with zero resolved bets after hydration", () => {
+  it("allows wallets with zero resolved bets after hydration while metrics are uncalculated", () => {
     const result = evaluateResolvedBetsCredibilityFloor({
       tradeId: "trade-zero-bets",
       walletAddress: "0xabc123",
       resolvedBetCount: 0,
     });
 
-    expect(result.passed).toBe(false);
-    expect(result.reason).toBe(BELOW_RESOLVED_BETS);
+    expect(result.passed).toBe(true);
+    expect(result.unverifiedWhale).toBe(true);
   });
 
   it("fails closed when only fallback translation is available", () => {
@@ -419,17 +423,20 @@ describe("postQueueGates", () => {
     expect(result.reason).toBeUndefined();
   });
 
-  it("rejects unregistered whales below the unverified EV floor", () => {
+  it("rejects unregistered whales below the unverified EV floor when metrics are calculated", () => {
     const result = withStrictCredibilityGates(() =>
       evaluatePostQueueCredibilityGate({
         tradeId: "trade-unverified-ev-low",
         walletAddress: "0xabc123",
         stakeNotional: UNVERIFIED_WHALE_STAKE_FLOOR_USD,
         walletAvgEv: null,
-        resolvedBetCount: 0,
+        resolvedBetCount: CREDIBILITY_CONFIG.MIN_RESOLVED_BETS - 1,
         calculatedEvDecimal: UNVERIFIED_WHALE_MIN_TRADE_EV_DECIMAL - 0.001,
         whaleNotInRegistry: true,
-        whale: null,
+        whale: {
+          avgStakeNotional: 30,
+          resolvedBetsCount: CREDIBILITY_CONFIG.MIN_RESOLVED_BETS - 1,
+        } as never,
       })
     );
 
