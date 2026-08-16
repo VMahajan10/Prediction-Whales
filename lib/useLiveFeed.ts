@@ -5,7 +5,7 @@ import type { LiveFeedPlatform } from "@/lib/liveFeedPlatform";
 import { filterFeedByPlatform } from "@/lib/liveFeedMerge";
 import {
   meetsProductFeedStakeThreshold,
-  meetsFeedTradeEvThreshold,
+  meetsProductFeedEvThreshold,
   passesStrictFeedTradeEv,
 } from "@/lib/feedQualification";
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
@@ -68,7 +68,7 @@ function passesLiveFeedTradeGate(
         { price: trade.price, netEvPercent: trade.netEvPercent },
         pipeline ?? null
       ) ?? resolveKalshiContractEvFallback(trade.price, pipeline ?? null);
-    return meetsFeedTradeEvThreshold(tradeEvPercent);
+    return meetsProductFeedEvThreshold(tradeEvPercent);
   }
 
   const tradeEvPercent = resolveFeedTradeEvPercent(
@@ -76,7 +76,7 @@ function passesLiveFeedTradeGate(
     pipeline ?? null
   );
 
-  return meetsFeedTradeEvThreshold(tradeEvPercent);
+  return meetsProductFeedEvThreshold(tradeEvPercent);
 }
 
 /** Prepend new trades, dedupe by id, cap at LIVE_FEED_RETENTION. */

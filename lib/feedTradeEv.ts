@@ -5,7 +5,7 @@ import {
 } from "@/lib/evPipeline/tradeEvRecord";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import { formatEvPercent } from "@/lib/crossMarketEvDisplay";
-import { meetsFeedTradeEvThreshold } from "@/lib/feedQualification";
+import { meetsProductFeedEvThreshold } from "@/lib/feedQualification";
 
 export interface TradeEvPercentInput {
   tradeEvPercent?: number | null;
@@ -108,7 +108,7 @@ export function passesFeedTradeEvGate(
   if (tradeEvPercent == null || !Number.isFinite(tradeEvPercent)) {
     return false;
   }
-  return meetsFeedTradeEvThreshold(tradeEvPercent);
+  return meetsProductFeedEvThreshold(tradeEvPercent);
 }
 
 export interface FeedTradeEvDisplay {

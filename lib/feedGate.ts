@@ -1,8 +1,9 @@
 import {
-  isQualifiedLiveFeedTrade,
   MIN_FEED_TRADE_EV_DECIMAL,
   MIN_FEED_TRADE_EV_PCT,
+  getProductFeedMinEvPercentForLog,
   meetsFeedTradeEvThreshold,
+  meetsProductFeedEvThreshold,
   meetsProductFeedStakeThreshold,
   resolveLiveFeedStakeFloorUsd,
   type LiveFeedQualificationTrade,
@@ -58,8 +59,12 @@ function rejectionReasonLabel(reason: FeedGateRejectReason): string {
       return "stake/notional below product feed minimum";
     case "missing_trade_ev":
       return "missing calculated trade EV";
-    case "trade_ev":
-      return `calculatedEv below minimum (+${MIN_FEED_TRADE_EV_PCT}% / ${MIN_FEED_TRADE_EV_DECIMAL})`;
+    case "trade_ev": {
+      const minEv = getProductFeedMinEvPercentForLog();
+      return minEv == null
+        ? "calculatedEv below relaxed product feed minimum"
+        : `calculatedEv below minimum (+${minEv}% / ${(minEv / 100).toFixed(4)})`;
+    }
     default:
       return reason;
   }
@@ -76,7 +81,7 @@ export function logFeedGateReject(
   const source = context.source ?? "unknown";
 
   console.log(
-    `[Feed Gate Reject] id=${id} | source=${source} | calculatedEv=${formatEvForLog(result.calculatedEvPercent)} | stake=${formatStakeForLog(result.stakeUsd)} | notional=${formatStakeForLog(result.stakeUsd)} | requiredEv>=${MIN_FEED_TRADE_EV_PCT}% (${MIN_FEED_TRADE_EV_DECIMAL}) | requiredStake>=${formatStakeForLog(result.requiredStakeFloorUsd)} | category=${category} | reason=${result.reason} (${rejectionReasonLabel(result.reason!)})`
+    `[Feed Gate Reject] id=${id} | source=${source} | calculatedEv=${formatEvForLog(result.calculatedEvPercent)} | stake=${formatStakeForLog(result.stakeUsd)} | notional=${formatStakeForLog(result.stakeUsd)} | requiredEv>=${result.requiredEvPercent}% (${result.requiredEvDecimal}) | requiredStake>=${formatStakeForLog(result.requiredStakeFloorUsd)} | category=${category} | reason=${result.reason} (${rejectionReasonLabel(result.reason!)})`
   );
 }
 
@@ -89,6 +94,9 @@ export function diagnoseLiveFeedTradeGate(
     ...trade,
     category,
   });
+  const requiredEvPercent =
+    getProductFeedMinEvPercentForLog() ?? MIN_FEED_TRADE_EV_PCT;
+  const requiredEvDecimal = requiredEvPercent / 100;
   const calculatedEvPercent = trade.tradeEvPercent ?? null;
 
   if (!meetsProductFeedStakeThreshold(trade.stakeUsd)) {
@@ -98,32 +106,35 @@ export function diagnoseLiveFeedTradeGate(
       calculatedEvPercent,
       stakeUsd: trade.stakeUsd,
       requiredStakeFloorUsd,
-      requiredEvPercent: MIN_FEED_TRADE_EV_PCT,
-      requiredEvDecimal: MIN_FEED_TRADE_EV_DECIMAL,
+      requiredEvPercent,
+      requiredEvDecimal,
     };
   }
 
-  if (calculatedEvPercent == null || !Number.isFinite(calculatedEvPercent)) {
+  if (
+    !meetsProductFeedEvThreshold(calculatedEvPercent) &&
+    (calculatedEvPercent == null || !Number.isFinite(calculatedEvPercent))
+  ) {
     return {
       passed: false,
       reason: "missing_trade_ev",
       calculatedEvPercent,
       stakeUsd: trade.stakeUsd,
       requiredStakeFloorUsd,
-      requiredEvPercent: MIN_FEED_TRADE_EV_PCT,
-      requiredEvDecimal: MIN_FEED_TRADE_EV_DECIMAL,
+      requiredEvPercent,
+      requiredEvDecimal,
     };
   }
 
-  if (!meetsFeedTradeEvThreshold(calculatedEvPercent)) {
+  if (!meetsProductFeedEvThreshold(calculatedEvPercent)) {
     return {
       passed: false,
       reason: "trade_ev",
       calculatedEvPercent,
       stakeUsd: trade.stakeUsd,
       requiredStakeFloorUsd,
-      requiredEvPercent: MIN_FEED_TRADE_EV_PCT,
-      requiredEvDecimal: MIN_FEED_TRADE_EV_DECIMAL,
+      requiredEvPercent,
+      requiredEvDecimal,
     };
   }
 
@@ -133,8 +144,8 @@ export function diagnoseLiveFeedTradeGate(
     calculatedEvPercent,
     stakeUsd: trade.stakeUsd,
     requiredStakeFloorUsd,
-    requiredEvPercent: MIN_FEED_TRADE_EV_PCT,
-    requiredEvDecimal: MIN_FEED_TRADE_EV_DECIMAL,
+    requiredEvPercent,
+    requiredEvDecimal,
   };
 }
 

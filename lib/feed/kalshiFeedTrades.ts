@@ -1,8 +1,9 @@
 import {
-  MIN_FEED_TRADE_EV_DECIMAL,
   MIN_FEED_TRADE_EV_PCT,
+  FEED_ALLOW_MISSING_EV,
+  getProductFeedMinEvPercentForLog,
+  meetsProductFeedEvThreshold,
   MIN_PRODUCT_FEED_STAKE_USD,
-  meetsFeedTradeEvThreshold,
   meetsProductFeedStakeThreshold,
 } from "@/lib/feedQualification";
 import {
@@ -188,8 +189,12 @@ function rejectionReasonLabel(reason: KalshiFeedGateRejectReason): string {
       return "missing Kalshi ticker — cannot resolve pipeline EV";
     case "missing_trade_ev":
       return "missing calculated trade EV after pipeline + contract mid fallback";
-    case "trade_ev":
-      return `calculatedEv below minimum (+${MIN_FEED_TRADE_EV_PCT}% / ${MIN_FEED_TRADE_EV_DECIMAL})`;
+    case "trade_ev": {
+      const minEv = getProductFeedMinEvPercentForLog();
+      return minEv == null
+        ? "calculatedEv below relaxed product feed minimum"
+        : `calculatedEv below minimum (+${minEv}% / ${(minEv / 100).toFixed(4)})`;
+    }
     default:
       return reason;
   }
@@ -203,7 +208,7 @@ export function logKalshiFeedGateReject(
 ): void {
   const id = context.id ?? trade.id ?? "unknown";
   console.log(
-    `[Kalshi Feed Gate Reject] id=${id} | ticker=${result.ticker ?? "none"} | calculatedEv=${formatEvForLog(result.calculatedEvPercent)} | stake=${formatStakeForLog(result.stakeUsd)} | requiredEv>=${MIN_FEED_TRADE_EV_PCT}% (${MIN_FEED_TRADE_EV_DECIMAL}) | requiredStake>=${formatStakeForLog(result.requiredStakeFloorUsd)} | pipelineStatus=${result.pipelineStatus ?? "missing"} | reason=${result.reason} (${rejectionReasonLabel(result.reason!)}) | title=${trade.title?.slice(0, 80) ?? ""}`
+    `[Kalshi Feed Gate Reject] id=${id} | ticker=${result.ticker ?? "none"} | calculatedEv=${formatEvForLog(result.calculatedEvPercent)} | stake=${formatStakeForLog(result.stakeUsd)} | requiredEv>=${getProductFeedMinEvPercentForLog() ?? "any"}${FEED_ALLOW_MISSING_EV ? " (missing allowed)" : ""} | requiredStake>=${formatStakeForLog(result.requiredStakeFloorUsd)} | pipelineStatus=${result.pipelineStatus ?? "missing"} | reason=${result.reason} (${rejectionReasonLabel(result.reason!)}) | title=${trade.title?.slice(0, 80) ?? ""}`
   );
 }
 
@@ -211,10 +216,12 @@ export function diagnoseKalshiFeedTradeGate(
   trade: WhaleTrade,
   pipelineEvIndex: Map<string, PipelineTradeEv>
 ): KalshiFeedGateResult {
+  const requiredEvPercent =
+    getProductFeedMinEvPercentForLog() ?? MIN_FEED_TRADE_EV_PCT;
   const base = {
     stakeUsd: trade.usdNotional,
     requiredStakeFloorUsd: MIN_PRODUCT_FEED_STAKE_USD,
-    requiredEvPercent: MIN_FEED_TRADE_EV_PCT,
+    requiredEvPercent,
     ticker: trade.ticker?.trim() || null,
     pipelineStatus: null as KalshiFeedGateResult["pipelineStatus"],
   };
@@ -237,7 +244,7 @@ export function diagnoseKalshiFeedTradeGate(
     };
   }
 
-  if (!base.ticker) {
+  if (!base.ticker && !FEED_ALLOW_MISSING_EV) {
     return {
       passed: false,
       reason: "unmapped_ticker",
@@ -246,12 +253,25 @@ export function diagnoseKalshiFeedTradeGate(
     };
   }
 
-  const pipeline = resolvePipelineEvForWhale(pipelineEvIndex, trade);
+  const pipeline = base.ticker
+    ? resolvePipelineEvForWhale(pipelineEvIndex, trade)
+    : null;
   base.pipelineStatus = pipeline?.status ?? "missing";
 
   const tradeEvPercent = resolveKalshiFeedTradeEvPercent(trade, pipeline);
 
-  if (tradeEvPercent == null || !Number.isFinite(tradeEvPercent)) {
+  if (
+    !meetsProductFeedEvThreshold(tradeEvPercent) &&
+    (tradeEvPercent == null || !Number.isFinite(tradeEvPercent))
+  ) {
+    if (FEED_ALLOW_MISSING_EV) {
+      return {
+        passed: true,
+        reason: null,
+        calculatedEvPercent: tradeEvPercent,
+        ...base,
+      };
+    }
     return {
       passed: false,
       reason: "missing_trade_ev",
@@ -260,7 +280,7 @@ export function diagnoseKalshiFeedTradeGate(
     };
   }
 
-  if (!meetsFeedTradeEvThreshold(tradeEvPercent)) {
+  if (!meetsProductFeedEvThreshold(tradeEvPercent)) {
     return {
       passed: false,
       reason: "trade_ev",
@@ -278,7 +298,7 @@ export function diagnoseKalshiFeedTradeGate(
 }
 
 /**
- * Kalshi product-feed gate — flat $500 stake + trade EV >= +3.0%.
+ * Kalshi product-feed gate — flat $500 stake + relaxed product feed EV floor.
  * Uses contract mid fallback when pipeline ensemble EV is unmapped.
  */
 export function evaluateKalshiFeedTradeGate(

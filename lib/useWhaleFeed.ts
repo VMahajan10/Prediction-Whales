@@ -11,11 +11,15 @@ import {
 } from "@/lib/feedGate";
 import {
   meetsProductFeedStakeThreshold,
-  meetsFeedTradeEvThreshold,
+  meetsProductFeedEvThreshold,
   passesPolymarketFeedTraderGate,
   resolvePolymarketTradeNotionalUsd,
 } from "@/lib/feedQualification";
 import { retainLastNonEmpty } from "@/lib/feed/feedRetention";
+import {
+  logFeedVolumeDiagnostics,
+  summarizeFeedVolumeDrops,
+} from "@/lib/feed/feedVolumeDiagnostics";
 import { recentTradeToWhale } from "@/lib/feed/whaleFeedHydration";
 import type { FeedTrade } from "@/lib/feedTradeTypes";
 import {
@@ -318,17 +322,17 @@ function stampWhaleForFeedAdmission(
   pipelineEvIndex: Map<string, PipelineTradeEv>
 ): WhaleTrade | null {
   if (whaleHasStampedFeedEv(trade)) {
-    return meetsFeedTradeEvThreshold(trade.netEvPercent) ? trade : null;
+    return meetsProductFeedEvThreshold(trade.netEvPercent) ? trade : null;
   }
   const tradeEvPercent = resolveWhaleTradeEvPercent(trade, pipelineEvIndex);
-  if (!meetsFeedTradeEvThreshold(tradeEvPercent)) return null;
-  return stampWhaleFeedAdmissionEv(trade, tradeEvPercent!);
+  if (!meetsProductFeedEvThreshold(tradeEvPercent)) return null;
+  return stampWhaleFeedAdmissionEv(trade, tradeEvPercent ?? 0);
 }
 
 function isRenderableFeedWhale(trade: WhaleTrade): boolean {
   return (
     whaleHasStampedFeedEv(trade) &&
-    meetsFeedTradeEvThreshold(trade.netEvPercent)
+    meetsProductFeedEvThreshold(trade.netEvPercent)
   );
 }
 
@@ -366,6 +370,7 @@ export function useWhaleFeed() {
   const metricsFinalized = useRef<Set<string>>(new Set());
   const qualifiedNotified = useRef<Set<string>>(new Set());
   const loggedFilterRejects = useRef<Set<string>>(new Set());
+  const lastVolumeSummaryKey = useRef<string>("");
   const [whaleBuffer, setWhaleBuffer] = useState<WhaleTrade[]>([]);
   const whaleBufferSeen = useRef<Set<string>>(new Set());
   const [newWhale, setNewWhale] = useState<WhaleTrade | null>(null);
@@ -382,10 +387,8 @@ export function useWhaleFeed() {
 
     const applyBackfill = (payload: BackfillPayload) => {
       const whales = payload.polymarket
-        .filter(
-          (t) =>
-            t.netEvPercent != null &&
-            meetsFeedTradeEvThreshold(t.netEvPercent ?? t.averageEv)
+        .filter((t) =>
+          meetsProductFeedEvThreshold(t.netEvPercent ?? t.averageEv)
         )
         .map((t) => ({
         ...tradeToWhale(t, {
@@ -440,7 +443,7 @@ export function useWhaleFeed() {
           if (abort.signal.aborted) return;
           if (seeded.length > 0) {
             const hydrated = seeded
-              .filter((trade) => meetsFeedTradeEvThreshold(trade.netEvPercent))
+              .filter((trade) => meetsProductFeedEvThreshold(trade.netEvPercent))
               .sort(byDetectedDesc)
               .slice(0, WHALE_FEED_SEED_LIMIT);
             setWhaleBuffer((prev) => prependWhaleBuffer(prev, hydrated));
@@ -638,6 +641,38 @@ export function useWhaleFeed() {
         ),
     [kalshiWhales, pipelineEvIndex]
   );
+
+  useEffect(() => {
+    if (!backfillLoaded) return;
+
+    const counts = summarizeFeedVolumeDrops({
+      polymarketWhales,
+      kalshiWhales,
+      pipelineEvIndex,
+      walletQualifications,
+    });
+    const summaryKey = [
+      counts.incomingPolymarket,
+      counts.incomingKalshi,
+      counts.admittedPolymarket,
+      counts.admittedKalshi,
+      counts.stakeFloor,
+      counts.evGate,
+      counts.walletCredibility,
+      counts.marketTranslation,
+      counts.unmappedTicker,
+      pipelineEvIndex.size,
+    ].join(":");
+    if (summaryKey === lastVolumeSummaryKey.current) return;
+    lastVolumeSummaryKey.current = summaryKey;
+    logFeedVolumeDiagnostics(counts);
+  }, [
+    backfillLoaded,
+    polymarketWhales,
+    kalshiWhales,
+    pipelineEvIndex,
+    walletQualifications,
+  ]);
 
   useEffect(() => {
     if (!backfillLoaded) return;

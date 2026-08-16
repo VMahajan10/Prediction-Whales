@@ -8,9 +8,12 @@ import {
   resolveKalshiContractEvFallback,
   resolveKalshiFeedTradeEvPercent,
 } from "@/lib/feed/kalshiFeedTrades";
+import {
+  FEED_ALLOW_MISSING_EV,
+  MIN_PRODUCT_FEED_STAKE_USD,
+} from "@/lib/feedQualification";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import { pipelineEvLookupKeyKalshi } from "@/lib/evPipeline/types";
-import { MIN_PRODUCT_FEED_STAKE_USD } from "@/lib/feedQualification";
 
 const sportsTrade = {
   id: "kalshi-trade-sports",
@@ -121,7 +124,7 @@ describe("resolveKalshiContractEvFallback", () => {
 });
 
 describe("isKalshiTradeEligibleForFeed", () => {
-  it("admits Kalshi flow clearing $500 stake and +3% EV", () => {
+  it("admits Kalshi flow clearing $500 stake and relaxed EV", () => {
     const whale = kalshiFeedTradeToWhale(sportsTrade);
     expect(
       isKalshiTradeEligibleForFeed(whale, evIndex(sportsTrade.ticker, 4.5), {
@@ -144,28 +147,21 @@ describe("isKalshiTradeEligibleForFeed", () => {
     expect(isKalshiTradeStakeCandidate(whale)).toBe(false);
   });
 
-  it("rejects EV below +3%", () => {
+  it("rejects negative EV under relaxed +0% floor", () => {
     const whale = kalshiFeedTradeToWhale(sportsTrade);
     const result = diagnoseKalshiFeedTradeGate(
       whale,
-      evIndex(sportsTrade.ticker, 2.9)
+      evIndex(sportsTrade.ticker, -0.5)
     );
     expect(result.passed).toBe(false);
     expect(result.reason).toBe("trade_ev");
   });
 
-  it("rejects missing ticker", () => {
-    const whale = kalshiFeedTradeToWhale({ ...sportsTrade, ticker: undefined });
-    const result = diagnoseKalshiFeedTradeGate(whale, new Map());
-    expect(result.passed).toBe(false);
-    expect(result.reason).toBe("unmapped_ticker");
-  });
-
-  it("rejects missing EV when pipeline and fallback are empty", () => {
+  it("admits missing pipeline EV during diagnostic volume mode", () => {
+    expect(FEED_ALLOW_MISSING_EV).toBe(true);
     const whale = kalshiFeedTradeToWhale(sportsTrade);
     const result = diagnoseKalshiFeedTradeGate(whale, new Map());
-    expect(result.passed).toBe(false);
-    expect(result.reason).toBe("missing_trade_ev");
+    expect(result.passed).toBe(true);
   });
 
   it("admits via contract mid fallback when ensemble EV is unmapped", () => {

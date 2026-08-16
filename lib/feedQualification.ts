@@ -25,6 +25,44 @@ export const MIN_FEED_TRADE_EV_PCT = 3;
 /** Minimum trade-level EV as decimal (0.03). */
 export const MIN_FEED_TRADE_EV_DECIMAL = MIN_FEED_TRADE_EV_PCT / 100;
 
+/**
+ * TEMPORARY product-feed EV floor for live UI volume audit.
+ * Restore to {@link MIN_FEED_TRADE_EV_PCT} (3) after diagnosing feed volume.
+ * Set to `null` with {@link FEED_ALLOW_MISSING_EV} to skip numeric EV checks entirely.
+ */
+export const FEED_MIN_EV_PERCENT: number | null = 0;
+
+/**
+ * TEMPORARY — admit stake-qualified feed rows without resolved pipeline EV.
+ * Keeps stake + market validation; only relaxes EV hydration requirements.
+ */
+export const FEED_ALLOW_MISSING_EV = true;
+
+/** Effective minimum EV % shown in feed diagnostic logs. */
+export function getProductFeedMinEvPercentForLog(): number | null {
+  return FEED_ALLOW_MISSING_EV && FEED_MIN_EV_PERCENT == null
+    ? null
+    : (FEED_MIN_EV_PERCENT ?? MIN_FEED_TRADE_EV_PCT);
+}
+
+/** Product feed display gate — uses temporary {@link FEED_MIN_EV_PERCENT} override. */
+export function meetsProductFeedEvThreshold(
+  tradeEvPercent: number | null | undefined
+): boolean {
+  if (
+    FEED_ALLOW_MISSING_EV &&
+    (tradeEvPercent == null || !Number.isFinite(tradeEvPercent))
+  ) {
+    return true;
+  }
+
+  const floor = FEED_MIN_EV_PERCENT ?? MIN_FEED_TRADE_EV_PCT;
+  if (tradeEvPercent == null || !Number.isFinite(tradeEvPercent)) {
+    return false;
+  }
+  return tradeEvPercent >= floor;
+}
+
 /** Lowest tiered stake floor — used to pre-filter candidates before wallet/EV checks. */
 export const MIN_FEED_STAKE_PREFILTER_USD = STAKE_FLOOR_SPORTS_ENTERTAINMENT_USD;
 
@@ -236,13 +274,17 @@ export function meetsFeedTradeEvDecimal(
   );
 }
 
-/** Trade-level EV in percent or decimal — rejects N/A and values below +3.0%. */
+/** Trade-level EV in percent or decimal — uses product feed diagnostic override when set. */
 export function passesStrictFeedTradeEv(input: {
   netEvPercent?: number | null;
   ev?: number | null;
 }): boolean {
-  if (meetsFeedTradeEvThreshold(input.netEvPercent)) return true;
-  return meetsFeedTradeEvDecimal(input.ev);
+  if (meetsProductFeedEvThreshold(input.netEvPercent)) return true;
+  if (input.ev != null && Number.isFinite(input.ev)) {
+    const asPercent = Math.abs(input.ev) <= 1 ? input.ev * 100 : input.ev;
+    return meetsProductFeedEvThreshold(asPercent);
+  }
+  return false;
 }
 
 export function meetsWalletAvgEvThreshold(
