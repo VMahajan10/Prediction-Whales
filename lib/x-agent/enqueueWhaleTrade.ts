@@ -56,6 +56,7 @@ import { selectPostTemplate } from "@/lib/x-agent/templateEngine";
 import {
   fetchLastTemplateFamily,
   hasActiveWhaleMarketQueueItem,
+  hasExistingTradeIdInQueue,
 } from "@/lib/templates/queueHelpers";
 import { generateMarketContextSummary } from "@/lib/x-agent/marketContextSummary";
 import {
@@ -198,6 +199,44 @@ export async function processWhaleTradeForXAgent(
   }
   const translation = preGate.translation;
 
+  if (!isPrismaEnabled()) {
+    logEnqueueSkip(trade, "[Skip: Setup] Prisma/DATABASE_URL not configured");
+    return;
+  }
+
+  const prisma = getPrisma();
+  if (!prisma) {
+    logEnqueueSkip(trade, "[Skip: Setup] Prisma client unavailable");
+    return;
+  }
+
+  // Step 3.5: trade_id dedupe — skip hydration/EV when already queued.
+  const duplicateTradeId = await hasExistingTradeIdInQueue(
+    prisma,
+    payload.tradeId
+  );
+  if (duplicateTradeId) {
+    logEnqueueSkip(
+      trade,
+      `[Skip: Dedupe] trade_id already exists in x_post_queue (${payload.tradeId})`
+    );
+    await handlePreGateRejection(
+      payload,
+      {
+        passed: false,
+        reason: "DUPLICATE_TRADE",
+        failedStep: "dedupe",
+      },
+      metricsOptions
+    );
+    return;
+  }
+  if (isVerboseXAgentLoggingEnabled()) {
+    console.log(
+      `[Gate] tradeId=${payload.tradeId} [Pass: Dedupe] trade_id not in x_post_queue`
+    );
+  }
+
   // Step 4: wallet credibility — always await registry + Polymarket API hydration
   // for identified wallets so gate metrics use computed stats, not a null whale.
   let whaleForGates: Awaited<
@@ -269,17 +308,6 @@ export async function processWhaleTradeForXAgent(
       );
       return;
     }
-  }
-
-  if (!isPrismaEnabled()) {
-    logEnqueueSkip(trade, "[Skip: Setup] Prisma/DATABASE_URL not configured");
-    return;
-  }
-
-  const prisma = getPrisma();
-  if (!prisma) {
-    logEnqueueSkip(trade, "[Skip: Setup] Prisma client unavailable");
-    return;
   }
 
   // Step 5: dedupe — active x_post_queue row for whale-market pair.

@@ -205,6 +205,8 @@ function formatGateDropReason(
       return "Kalshi public posting disabled";
     case "RECENT_MARKET_POST":
       return "Active x_post_queue row exists for whale-market pair";
+    case "DUPLICATE_TRADE":
+      return "Trade already exists in x_post_queue";
     default:
       return reason;
   }

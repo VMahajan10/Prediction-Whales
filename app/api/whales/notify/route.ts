@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { checkWhalesNotifyRateLimit } from "@/lib/rateLimit/whalesNotifyRateLimit";
 import { processWhaleTradeForXAgent } from "@/lib/x-agent/enqueueWhaleTrade";
 import { notifyHighEvWhalePush } from "@/lib/push/notifyHighEvWhale";
 import { notifyWhaleTradeIfEligible } from "@/lib/whaleTweetNotifier";
@@ -12,6 +13,19 @@ export const dynamic = "force-dynamic";
  */
 export async function POST(request: NextRequest) {
   try {
+    const rateLimit = await checkWhalesNotifyRateLimit(request);
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { error: "Too many requests" },
+        {
+          status: 429,
+          headers: rateLimit.retryAfterSec
+            ? { "Retry-After": String(rateLimit.retryAfterSec) }
+            : undefined,
+        }
+      );
+    }
+
     const body = (await request.json()) as Partial<WhaleTrade>;
 
     if (

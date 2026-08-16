@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APP_URL } from "@/lib/appBaseUrl";
 import {
   buildTelegramTradeAlertMessage,
   isTelegramConfigured,
+  sendTelegramAlert,
 } from "@/lib/notifications/telegram";
 
 describe("telegram notifications", () => {
@@ -92,5 +93,22 @@ describe("telegram notifications", () => {
     });
 
     expect(message).toContain(`${DEFAULT_APP_URL}/review/queue-prod-tg`);
+  });
+
+  it("returns skipped result on Telegram HTTP 429 without throwing", async () => {
+    process.env.TELEGRAM_BOT_TOKEN = "123456:ABC";
+    process.env.TELEGRAM_CHAT_ID = "-1001234567890";
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("Too Many Requests", { status: 429 }))
+    );
+
+    const result = await sendTelegramAlert("hello");
+    expect(result.sent).toBe(false);
+    expect(result.skipped).toBe(true);
+    expect(result.error).toContain("429");
+
+    vi.unstubAllGlobals();
   });
 });

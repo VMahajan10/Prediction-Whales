@@ -49,6 +49,18 @@ export async function fetchLastTemplateFamily(
   return row?.templateFamily ?? undefined;
 }
 
+/** True when any x_post_queue row already exists for this trade id. */
+export async function hasExistingTradeIdInQueue(
+  prisma: PrismaClient,
+  tradeId: string
+): Promise<boolean> {
+  const existing = await prisma.xPostQueue.findFirst({
+    where: { tradeId },
+    select: { id: true },
+  });
+  return existing != null;
+}
+
 /** True when an active queue row already exists for this whale-market pair. */
 export async function hasActiveWhaleMarketQueueItem(
   prisma: PrismaClient,

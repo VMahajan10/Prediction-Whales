@@ -98,6 +98,15 @@ export async function sendTelegramAlert(
       timeoutMs: 12_000,
     });
 
+    if (response.status === 429) {
+      console.warn("[Telegram Alert] Rate limited (429)");
+      return {
+        sent: false,
+        skipped: true,
+        error: "Telegram rate limit reached (429)",
+      };
+    }
+
     const body = (await response.json().catch(() => null)) as {
       ok?: boolean;
       description?: string;
@@ -105,9 +114,18 @@ export async function sendTelegramAlert(
 
     if (!response.ok || !body?.ok) {
       const detail = body?.description ?? "";
-      throw new Error(
-        `HTTP ${response.status}${detail ? `: ${String(detail).slice(0, 200)}` : ""}`
-      );
+      const message = `HTTP ${response.status}${detail ? `: ${String(detail).slice(0, 200)}` : ""}`;
+
+      if (/too many requests|retry after/i.test(detail)) {
+        console.warn("[Telegram Alert] Rate limited:", message);
+        return {
+          sent: false,
+          skipped: true,
+          error: "Telegram rate limit reached",
+        };
+      }
+
+      throw new Error(message);
     }
 
     console.log("[Telegram Alert Sent]");
