@@ -325,8 +325,9 @@ function stampWhaleForFeedAdmission(
     return meetsProductFeedEvThreshold(trade.netEvPercent) ? trade : null;
   }
   const tradeEvPercent = resolveWhaleTradeEvPercent(trade, pipelineEvIndex);
+  if (tradeEvPercent == null || !Number.isFinite(tradeEvPercent)) return null;
   if (!meetsProductFeedEvThreshold(tradeEvPercent)) return null;
-  return stampWhaleFeedAdmissionEv(trade, tradeEvPercent ?? 0);
+  return stampWhaleFeedAdmissionEv(trade, tradeEvPercent);
 }
 
 function isRenderableFeedWhale(trade: WhaleTrade): boolean {

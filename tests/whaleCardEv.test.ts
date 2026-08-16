@@ -122,6 +122,7 @@ describe("stampWhaleFeedAdmissionEv", () => {
 
   it("detects stamped feed EV on the trade", () => {
     expect(whaleHasStampedFeedEv(whaleTrade())).toBe(false);
+    expect(whaleHasStampedFeedEv(whaleTrade({ averageEv: 0 }))).toBe(false);
     expect(
       whaleHasStampedFeedEv(
         stampWhaleFeedAdmissionEv(whaleTrade(), 4.2)

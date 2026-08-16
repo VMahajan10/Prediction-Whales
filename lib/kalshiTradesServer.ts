@@ -9,10 +9,13 @@ import {
 } from "@/lib/evPipeline/types";
 import type { FeedTrade } from "@/lib/feedTradeTypes";
 import {
-  meetsFeedTradeEvThreshold,
+  kalshiFeedTradeToWhale,
+  resolveKalshiFeedTradeEvPercent,
+} from "@/lib/feed/kalshiFeedTrades";
+import {
+  meetsProductFeedEvThreshold,
   meetsProductFeedStakeThreshold,
 } from "@/lib/feedQualification";
-import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import {
   KALSHI_TRADES_MAX_PAGES_INCREMENTAL,
   KALSHI_TRADES_MAX_PAGES_INITIAL,
@@ -171,7 +174,54 @@ function kalshiTradeEvPercent(
   const ticker = trade.ticker.trim().toUpperCase();
   const lookupKey = normalizePipelineLookupKey(`kalshi:${ticker}`, "kalshi");
   const pipeline = pipelineEvIndex.get(lookupKey);
-  return resolveFeedTradeEvPercent({ price: trade.price }, pipeline ?? null);
+  const whale = kalshiFeedTradeToWhale({
+    id: trade.id,
+    title: trade.title,
+    outcome: trade.outcome,
+    side: trade.side,
+    price: trade.price,
+    usdNotional: trade.usdNotional,
+    timestamp: trade.timestamp,
+    ticker: trade.ticker,
+    selectionLabel: trade.selectionLabel,
+    category: trade.category,
+  });
+  return resolveKalshiFeedTradeEvPercent(whale, pipeline ?? null);
+}
+
+async function hydrateKalshiTradeEvPercent(
+  trade: FeedTrade,
+  pipelineEvIndex: Map<string, PipelineTradeEv>
+): Promise<number | null> {
+  const cached = kalshiTradeEvPercent(trade, pipelineEvIndex);
+  if (meetsProductFeedEvThreshold(cached)) return cached;
+
+  if (!trade.ticker?.trim()) return cached;
+  const ticker = trade.ticker.trim().toUpperCase();
+  const lookupKey = normalizePipelineLookupKey(`kalshi:${ticker}`, "kalshi");
+
+  try {
+    const pipeline = await ensureFullyComputedTradeEv(
+      lookupKey,
+      {
+        source: "kalshi",
+        kalshiTicker: ticker,
+        tradePrice: trade.price,
+      },
+      null
+    );
+    const key = pipelineEvLookupKey({
+      source: "kalshi",
+      kalshiTicker: ticker,
+      tradePrice: trade.price,
+    });
+    if (key) pipelineEvIndex.set(key, pipeline);
+    pipelineEvIndex.set(lookupKey, pipeline);
+  } catch {
+    return cached;
+  }
+
+  return kalshiTradeEvPercent(trade, pipelineEvIndex);
 }
 
 const KALSHI_TRADES_PAGE_SIZE = KALSHI_TRADES_PAGE_LIMIT;
@@ -285,8 +335,11 @@ async function fetchKalshiTradesFromApi(
     const { categorizeMarket } = await import("@/lib/categorizer");
 
     for (const { raw, normalized } of shadowCandidates) {
-      const tradeEvPercent = kalshiTradeEvPercent(normalized, pipelineEvIndex);
-      if (!meetsFeedTradeEvThreshold(tradeEvPercent)) continue;
+      const tradeEvPercent = await hydrateKalshiTradeEvPercent(
+        normalized,
+        pipelineEvIndex
+      );
+      if (!meetsProductFeedEvThreshold(tradeEvPercent)) continue;
 
       const category = await categorizeMarket(normalized.title, normalized.ticker, {
         backfillDb: true,

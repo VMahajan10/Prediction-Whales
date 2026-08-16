@@ -1,6 +1,8 @@
 import { isAuthoritativePipelineTradeEv } from "@/lib/evPipeline/pTrueAuthority";
 import {
   deriveEvPercentFromPTrue,
+  isStaleZeroAverageEvPayload,
+  isStaleZeroTradeEvPayload,
   normalizeIncomingTradePrice,
 } from "@/lib/evPipeline/tradeEvRecord";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
@@ -28,20 +30,72 @@ export function coalesceTradeEvPercent(
 ): number | null {
   if (!trade) return null;
 
-  for (const value of [
-    trade.tradeEvPercent,
-    trade.netEvPercent,
-    trade.averageEv,
-    trade.grossEvPercent,
-    trade.evPercent,
-    trade.tradeEv,
-  ]) {
-    if (value != null && Number.isFinite(value)) return value;
+  const evFields = {
+    netEvPercent: trade.netEvPercent ?? null,
+    grossEvPercent: trade.grossEvPercent ?? null,
+    averageEv: trade.averageEv ?? null,
+  };
+
+  if (trade.tradeEvPercent != null && Number.isFinite(trade.tradeEvPercent)) {
+    return trade.tradeEvPercent;
+  }
+  if (trade.netEvPercent != null && Number.isFinite(trade.netEvPercent)) {
+    if (!isStaleZeroTradeEvPayload(evFields)) {
+      return trade.netEvPercent;
+    }
+  }
+  if (trade.evPercent != null && Number.isFinite(trade.evPercent)) {
+    return trade.evPercent;
+  }
+  if (trade.tradeEv != null && Number.isFinite(trade.tradeEv)) {
+    return trade.tradeEv;
+  }
+  if (trade.grossEvPercent != null && Number.isFinite(trade.grossEvPercent)) {
+    return trade.grossEvPercent;
+  }
+  if (
+    trade.averageEv != null &&
+    Number.isFinite(trade.averageEv) &&
+    !isStaleZeroAverageEvPayload(evFields)
+  ) {
+    return trade.averageEv;
   }
 
   const ev = trade.ev;
   if (ev != null && Number.isFinite(ev)) {
     return Math.abs(ev) <= 1 ? ev * 100 : ev;
+  }
+
+  return null;
+}
+
+/**
+ * Cross-venue / standalone contract mid vs execution price — used when ensemble
+ * EV is unmapped but order-book mids are present on the pipeline row.
+ */
+export function resolveContractMidEvFallback(
+  entryPrice: number,
+  pipeline?: PipelineTradeEv | null
+): number | null {
+  if (!pipeline) return null;
+
+  const executionPrice = normalizeIncomingTradePrice(entryPrice);
+  if (executionPrice == null || executionPrice <= 0) return null;
+
+  if (pipeline.pmMid != null && Number.isFinite(pipeline.pmMid)) {
+    return entryPriceEvPercent(pipeline.pmMid, executionPrice);
+  }
+
+  if (pipeline.kalshiMid != null && Number.isFinite(pipeline.kalshiMid)) {
+    return entryPriceEvPercent(pipeline.kalshiMid, executionPrice);
+  }
+
+  if (
+    pipeline.netEvPercent != null &&
+    Number.isFinite(pipeline.netEvPercent) &&
+    !isStaleZeroTradeEvPayload(pipeline)
+  ) {
+    return pipeline.netEvPercent;
   }
 
   return null;
@@ -60,20 +114,29 @@ export function resolveFeedTradeEvPercent(
   const fromTrade = tradeLevelEvPercent(trade);
   if (fromTrade != null) return fromTrade;
 
-  if (
-    !pipeline ||
-    pipeline.status === "unmapped" ||
-    pipeline.status === "timeout"
-  ) {
-    return null;
+  if (!pipeline) return null;
+
+  if (pipeline.status === "unmapped" || pipeline.status === "timeout") {
+    return resolveContractMidEvFallback(trade.price, pipeline);
   }
+
   if (!isAuthoritativePipelineTradeEv(pipeline)) return null;
 
   const fromPipeline = tradeLevelEvPercent({
     netEvPercent: pipeline.netEvPercent,
     grossEvPercent: pipeline.grossEvPercent,
   });
-  if (fromPipeline != null) return fromPipeline;
+  if (fromPipeline != null) {
+    if (
+      fromPipeline === 0 &&
+      isStaleZeroTradeEvPayload(pipeline)
+    ) {
+      const fromMid = resolveContractMidEvFallback(trade.price, pipeline);
+      if (fromMid != null) return fromMid;
+      return null;
+    }
+    return fromPipeline;
+  }
 
   if (pipeline.pTrue != null && Number.isFinite(pipeline.pTrue)) {
     const fromEntry = entryPriceEvPercent(pipeline.pTrue, trade.price);

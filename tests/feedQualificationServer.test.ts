@@ -17,7 +17,6 @@ import {
   filterQualifiedPolymarketFeedTrades,
 } from "@/lib/feedQualificationServer";
 import {
-  resolveCachedFeedTradeEvPercents,
   resolveFeedTradeEvPercents,
 } from "@/lib/feedTradeEvServer";
 import { findWhaleByWalletCaseInsensitive } from "@/lib/x-agent/whaleRegistryDb";
@@ -138,15 +137,15 @@ describe("filterQualifiedPolymarketFeedTrades", () => {
 
 describe("collectPolymarketFeedCandidates", () => {
   beforeEach(() => {
-    vi.mocked(resolveCachedFeedTradeEvPercents).mockReset();
+    vi.mocked(resolveFeedTradeEvPercents).mockReset();
     vi.mocked(findWhaleByWalletCaseInsensitive).mockReset();
     vi.mocked(findWhaleByWalletCaseInsensitive).mockResolvedValue(
       qualifiedWhale as never
     );
   });
 
-  it("drops trades with uncached EV instead of returning null placeholders", async () => {
-    vi.mocked(resolveCachedFeedTradeEvPercents).mockResolvedValue(
+  it("drops trades when pipeline cannot resolve trade EV", async () => {
+    vi.mocked(resolveFeedTradeEvPercents).mockResolvedValue(
       new Map([[baseTrade.id, null]])
     );
 
@@ -155,8 +154,8 @@ describe("collectPolymarketFeedCandidates", () => {
     expect(candidates).toHaveLength(0);
   });
 
-  it("attaches cached EV when the pipeline has already scored the asset", async () => {
-    vi.mocked(resolveCachedFeedTradeEvPercents).mockResolvedValue(
+  it("attaches hydrated EV when the pipeline scores the asset", async () => {
+    vi.mocked(resolveFeedTradeEvPercents).mockResolvedValue(
       new Map([[baseTrade.id, 4.2]])
     );
 
@@ -168,7 +167,7 @@ describe("collectPolymarketFeedCandidates", () => {
   });
 
   it("drops trades already known to be below the +3% threshold", async () => {
-    vi.mocked(resolveCachedFeedTradeEvPercents).mockResolvedValue(
+    vi.mocked(resolveFeedTradeEvPercents).mockResolvedValue(
       new Map([[baseTrade.id, 1.5]])
     );
 
@@ -178,7 +177,7 @@ describe("collectPolymarketFeedCandidates", () => {
   });
 
   it("drops trades below the tiered stake floor", async () => {
-    vi.mocked(resolveCachedFeedTradeEvPercents).mockResolvedValue(
+    vi.mocked(resolveFeedTradeEvPercents).mockResolvedValue(
       new Map([[baseTrade.id, 9]])
     );
 

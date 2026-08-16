@@ -40,7 +40,9 @@ export function isAuthoritativePipelineTradeEv(
   }
 
   const hasPipelineEv =
-    pipeline.netEvPercent != null && Number.isFinite(pipeline.netEvPercent);
+    pipeline.netEvPercent != null &&
+    Number.isFinite(pipeline.netEvPercent) &&
+    !(pipeline.netEvPercent === 0 && pipeline.pmMid == null && pipeline.kalshiMid == null);
   const hasAuthoritativePTrue =
     pipeline.pTrue != null && Number.isFinite(pipeline.pTrue);
 

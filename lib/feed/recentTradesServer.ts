@@ -11,9 +11,10 @@ import {
 import {
   isKalshiTradeEligibleForFeed,
   kalshiFeedTradeToWhale,
+  resolveKalshiFeedTradeEvPercent,
 } from "@/lib/feed/kalshiFeedTrades";
 import {
-  meetsFeedTradeEvThreshold,
+  meetsProductFeedEvThreshold,
   meetsProductFeedStakeThreshold,
   MIN_FEED_TRADE_EV_PCT,
   MIN_PRODUCT_FEED_STAKE_USD,
@@ -21,7 +22,6 @@ import {
   resolvePolymarketTradeNotionalUsd,
   type WalletFeedQualificationInput,
 } from "@/lib/feedQualification";
-import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import {
   enrichTradesWithWhaleAlias,
 } from "@/lib/trades/getTrades";
@@ -284,9 +284,9 @@ function filterKalshiEligible(
       ? normalizePipelineLookupKey(`kalshi:${trade.ticker}`, "kalshi")
       : null;
     const pipeline = lookupKey ? pipelineEvIndex.get(lookupKey) : undefined;
-    const netEvPercent = resolveFeedTradeEvPercent(
-      { price: trade.price, netEvPercent: trade.netEvPercent },
-      pipeline
+    const netEvPercent = resolveKalshiFeedTradeEvPercent(
+      whale,
+      pipeline ?? null
     );
 
     return [{ ...trade, netEvPercent }];
@@ -585,7 +585,8 @@ async function fetchRecentKalshiTrades(
         );
 
       const pipelineQualified = await qualifyKalshiRecentTrades(candidates, {
-        cacheOnly: true,
+        cacheOnly: false,
+        computeEvLimit: KALSHI_EV_COMPUTE_LIMIT,
       });
 
       merged = [...merged, ...pipelineQualified]
@@ -669,11 +670,8 @@ export async function fetchRecentFeedTrades(options?: {
     normalizeRecentFeedTrade
   );
   const enriched = await enrichTradesWithWhaleAlias(filtered);
-  const qualified = enriched.filter(
-    (trade) =>
-      trade.netEvPercent != null &&
-      Number.isFinite(trade.netEvPercent) &&
-      meetsFeedTradeEvThreshold(trade.netEvPercent)
+  const qualified = enriched.filter((trade) =>
+    meetsProductFeedEvThreshold(trade.netEvPercent)
   );
 
   return {

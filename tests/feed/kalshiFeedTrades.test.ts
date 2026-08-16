@@ -9,7 +9,6 @@ import {
   resolveKalshiFeedTradeEvPercent,
 } from "@/lib/feed/kalshiFeedTrades";
 import {
-  FEED_ALLOW_MISSING_EV,
   MIN_PRODUCT_FEED_STAKE_USD,
 } from "@/lib/feedQualification";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
@@ -147,7 +146,7 @@ describe("isKalshiTradeEligibleForFeed", () => {
     expect(isKalshiTradeStakeCandidate(whale)).toBe(false);
   });
 
-  it("rejects negative EV under relaxed +0% floor", () => {
+  it("rejects negative EV under the +3% product feed floor", () => {
     const whale = kalshiFeedTradeToWhale(sportsTrade);
     const result = diagnoseKalshiFeedTradeGate(
       whale,
@@ -157,11 +156,11 @@ describe("isKalshiTradeEligibleForFeed", () => {
     expect(result.reason).toBe("trade_ev");
   });
 
-  it("admits missing pipeline EV during diagnostic volume mode", () => {
-    expect(FEED_ALLOW_MISSING_EV).toBe(true);
+  it("rejects missing pipeline EV when product feed requires resolved edge", () => {
     const whale = kalshiFeedTradeToWhale(sportsTrade);
     const result = diagnoseKalshiFeedTradeGate(whale, new Map());
-    expect(result.passed).toBe(true);
+    expect(result.passed).toBe(false);
+    expect(result.reason).toBe("missing_trade_ev");
   });
 
   it("admits via contract mid fallback when ensemble EV is unmapped", () => {

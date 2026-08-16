@@ -1,5 +1,6 @@
 import {
   coalesceDisplayEvPercent,
+  isStaleZeroAverageEvPayload,
   resolveDetailPanelDisplayEv,
 } from "@/lib/evPipeline/tradeEvRecord";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
@@ -14,15 +15,15 @@ export interface WhaleCardAvgEvDisplay {
   lowConfidence: boolean;
 }
 
-/** True when the trade already carries a stamped feed EV for card display. */
+/** True when the trade carries a real stamped trade EV (not schema-default 0). */
 export function whaleHasStampedFeedEv(trade: WhaleTrade): boolean {
-  return (
-    coalesceDisplayEvPercent({
-      netEvPercent: trade.netEvPercent ?? null,
-      grossEvPercent: trade.grossEvPercent ?? null,
-      averageEv: trade.averageEv ?? null,
-    }) != null
-  );
+  const fields = {
+    netEvPercent: trade.netEvPercent ?? null,
+    grossEvPercent: trade.grossEvPercent ?? null,
+    averageEv: trade.averageEv ?? null,
+  };
+  if (isStaleZeroAverageEvPayload(fields)) return false;
+  return coalesceDisplayEvPercent(fields) != null;
 }
 
 /**

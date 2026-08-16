@@ -7,12 +7,11 @@ import {
   meetsProductFeedStakeThreshold,
 } from "@/lib/feedQualification";
 import {
-  entryPriceEvPercent,
+  resolveContractMidEvFallback,
   resolveFeedTradeEvPercent,
 } from "@/lib/feedTradeEv";
 import { KALSHI_TRADER_ALIAS } from "@/lib/trades/whaleAliasConstants";
 import { normalizeFeedPlatform } from "@/lib/liveFeedMerge";
-import { normalizeIncomingTradePrice } from "@/lib/evPipeline/tradeEvRecord";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import { resolvePipelineEvForWhale } from "@/lib/pipelineEvClient";
 import { tradeToWhale, type WhaleTrade } from "@/lib/whaleTrades";
@@ -130,27 +129,7 @@ export function resolveKalshiContractEvFallback(
   entryPrice: number,
   pipeline?: PipelineTradeEv | null
 ): number | null {
-  if (!pipeline) return null;
-
-  const executionPrice = normalizeIncomingTradePrice(entryPrice);
-  if (executionPrice == null || executionPrice <= 0) return null;
-
-  if (pipeline.pmMid != null && Number.isFinite(pipeline.pmMid)) {
-    return entryPriceEvPercent(pipeline.pmMid, executionPrice);
-  }
-
-  if (pipeline.kalshiMid != null && Number.isFinite(pipeline.kalshiMid)) {
-    return entryPriceEvPercent(pipeline.kalshiMid, executionPrice);
-  }
-
-  if (
-    pipeline.netEvPercent != null &&
-    Number.isFinite(pipeline.netEvPercent)
-  ) {
-    return pipeline.netEvPercent;
-  }
-
-  return null;
+  return resolveContractMidEvFallback(entryPrice, pipeline);
 }
 
 /** Resolve Kalshi feed trade EV — authoritative pipeline first, then contract mid fallback. */

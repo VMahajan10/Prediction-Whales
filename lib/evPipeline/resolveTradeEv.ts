@@ -570,7 +570,14 @@ async function buildPersistedEnsembleTradeEv(
   lookupKey: string,
   item: PipelineTradeEvInput
 ): Promise<PipelineTradeEv | null> {
-  const tokenId = normalizePmTokenId(item.tokenId);
+  let tokenId = normalizePmTokenId(item.tokenId);
+  if (!tokenId) {
+    const kalshiTicker = normalizeKalshiTicker(item.kalshiTicker);
+    if (kalshiTicker) {
+      const mapping = await loadMappingForTradeEv(null, kalshiTicker);
+      tokenId = normalizePmTokenId(mapping?.polymarketTokenId);
+    }
+  }
   if (!tokenId) return null;
 
   const executionPrice = normalizeIncomingTradePrice(item.tradePrice);
@@ -678,7 +685,17 @@ export async function ensureFullyComputedTradeEv(
       await cacheTradeEvLookup(lookupKey, persisted);
       return persisted;
     }
-    return createUnmappedPipelineTradeEv(lookupKey, item);
+    const books = await loadOrderBookContext(
+      normalizePmTokenId(item.tokenId),
+      normalizeKalshiTicker(item.kalshiTicker),
+      { liveFallback: false }
+    );
+    return {
+      ...createUnmappedPipelineTradeEv(lookupKey, item),
+      pmMid: books.pmMid,
+      kalshiMid: books.kalshiMid,
+      pMarket: books.pmMid ?? books.kalshiMid ?? null,
+    };
   }
 
   const syncPriced = tryFinalize(

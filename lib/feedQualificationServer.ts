@@ -14,7 +14,6 @@ import {
   type WalletFeedQualificationInput,
 } from "@/lib/feedQualification";
 import {
-  resolveCachedFeedTradeEvPercents,
   resolveFeedTradeEvPercents,
 } from "@/lib/feedTradeEvServer";
 import { recordFeedMetrics } from "@/lib/feedMetrics";
@@ -201,15 +200,13 @@ export type PolymarketFeedCandidateTrade<T extends PolymarketFeedTradeLike> =
   };
 
 /**
- * Page-load feed candidates: stake floor + cached trade EV >= +3.0% only.
- *
- * Trades without a cached authoritative EV are dropped — the product feed never
- * surfaces N/A or sub-threshold rows while the pipeline hydrates.
+ * Page-load feed candidates: stake floor + trade EV >= +3.0%.
+ * Hydrates pipeline EV on cache miss so cold assets are not dropped at ingest.
  */
 export async function collectPolymarketFeedCandidates<
   T extends PolymarketFeedTradeLike,
 >(trades: T[]): Promise<Array<QualifiedPolymarketFeedTrade<T>>> {
-  const tradeEvPercents = await resolveCachedFeedTradeEvPercents(
+  const tradeEvPercents = await resolveFeedTradeEvPercents(
     trades.map((trade) => ({
       id: trade.id,
       price: trade.price,

@@ -6,7 +6,7 @@ import {
   filterTranslatablePolymarketFeedTrades,
 } from "@/lib/feedQualificationServer";
 import {
-  MIN_FEED_TRADE_EV_PCT,
+  meetsProductFeedEvThreshold,
   resolvePolymarketTradeNotionalUsd,
 } from "@/lib/feedQualification";
 import { collectKalshiFeedCandidates } from "@/lib/feed/kalshiFeedCandidatesServer";
@@ -41,11 +41,8 @@ export async function GET() {
     const translatable = filterTranslatablePolymarketFeedTrades(candidates);
     const enriched = await enrichPolymarketFeedTradesWithIdentity(translatable);
 
-    const qualified = enriched.filter(
-      (trade) =>
-        trade.netEvPercent != null &&
-        Number.isFinite(trade.netEvPercent) &&
-        trade.netEvPercent >= MIN_FEED_TRADE_EV_PCT
+    const qualified = enriched.filter((trade) =>
+      meetsProductFeedEvThreshold(trade.netEvPercent)
     );
 
     await recordFeedTradeHistory(

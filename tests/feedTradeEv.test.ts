@@ -95,6 +95,32 @@ describe("resolveFeedTradeEvPercent", () => {
 
     expect(resolveFeedTradeEvPercent({ price: 0.5 }, pipeline)).toBe(9);
   });
+
+  it("derives EV from pmMid when pipeline is unmapped", () => {
+    const pipeline = {
+      key: "kalshi:TICK",
+      status: "unmapped",
+      netEvPercent: null,
+      grossEvPercent: null,
+      averageEv: null,
+      pmMid: 0.5,
+      kalshiMid: null,
+    } as PipelineTradeEv;
+
+    expect(resolveFeedTradeEvPercent({ price: 0.4 }, pipeline)).toBeCloseTo(
+      25,
+      1
+    );
+  });
+
+  it("ignores schema-default averageEv=0 on trade rows", () => {
+    expect(
+      resolveFeedTradeEvPercent(
+        { price: 0.5, netEvPercent: null, averageEv: 0 },
+        null
+      )
+    ).toBeNull();
+  });
 });
 
 describe("passesRawIngestionSocketStakeGate", () => {

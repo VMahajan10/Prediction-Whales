@@ -68,21 +68,85 @@ export function sanitizeProbDelta(value: number): number {
   return value;
 }
 
+export function isStaleZeroAverageEvPayload(
+  ev: Pick<PipelineTradeEv, "netEvPercent" | "grossEvPercent" | "averageEv">
+): boolean {
+  return (
+    ev.averageEv === 0 &&
+    ev.netEvPercent == null &&
+    ev.grossEvPercent == null
+  );
+}
+
+const STALE_FALLBACK_PROB_EPS = 1e-6;
+
+/** Cached 0% EV without book mids or with p_true collapsed to market mid. */
+export function isStaleZeroTradeEvPayload(
+  ev: Pick<
+    PipelineTradeEv,
+    | "netEvPercent"
+    | "averageEv"
+    | "grossEvPercent"
+    | "pTrue"
+    | "pMarket"
+    | "pmMid"
+    | "kalshiMid"
+  >
+): boolean {
+  const netEv = ev.netEvPercent ?? ev.averageEv ?? null;
+  if (netEv == null || !Number.isFinite(netEv)) return false;
+  if (netEv !== 0 && !Object.is(netEv, -0)) return false;
+
+  if (isStaleZeroAverageEvPayload(ev)) return true;
+
+  const lacksBookMids = ev.pmMid == null && ev.kalshiMid == null;
+  const pTrue = ev.pTrue;
+  const pMarket = ev.pMarket;
+  const collapsedFairValue =
+    pTrue != null &&
+    pMarket != null &&
+    Number.isFinite(pTrue) &&
+    Number.isFinite(pMarket) &&
+    Math.abs(pTrue - pMarket) <= STALE_FALLBACK_PROB_EPS;
+
+  return lacksBookMids || collapsedFairValue;
+}
+
 /**
  * Prefer netEvPercent for card display — averageEv can be a stale zero from cache
  * while netEvPercent still carries the signed edge.
  */
 export function coalesceDisplayEvPercent(
   ev:
-    | Pick<PipelineTradeEv, "netEvPercent" | "grossEvPercent" | "averageEv">
+    | Pick<
+        PipelineTradeEv,
+        | "netEvPercent"
+        | "grossEvPercent"
+        | "averageEv"
+        | "pTrue"
+        | "pMarket"
+        | "pmMid"
+        | "kalshiMid"
+      >
     | null
     | undefined
 ): number | null {
   if (!ev) return null;
-  for (const value of [ev.netEvPercent, ev.grossEvPercent, ev.averageEv]) {
-    if (value != null && Number.isFinite(value)) {
-      return sanitizeEvPercent(value);
+
+  if (ev.netEvPercent != null && Number.isFinite(ev.netEvPercent)) {
+    if (!isStaleZeroTradeEvPayload(ev)) {
+      return sanitizeEvPercent(ev.netEvPercent);
     }
+  }
+  if (ev.grossEvPercent != null && Number.isFinite(ev.grossEvPercent)) {
+    return sanitizeEvPercent(ev.grossEvPercent);
+  }
+  if (
+    ev.averageEv != null &&
+    Number.isFinite(ev.averageEv) &&
+    !isStaleZeroAverageEvPayload(ev)
+  ) {
+    return sanitizeEvPercent(ev.averageEv);
   }
   return null;
 }
@@ -110,16 +174,6 @@ export function resolvePipelineDisplayEv(
     pMarket: ev.pMarket ?? ev.pmMid ?? ev.kalshiMid ?? null,
     pTrueSource: ev.pTrueSource ?? null,
   };
-}
-
-export function isStaleZeroAverageEvPayload(
-  ev: Pick<PipelineTradeEv, "netEvPercent" | "grossEvPercent" | "averageEv">
-): boolean {
-  return (
-    ev.averageEv === 0 &&
-    ev.netEvPercent == null &&
-    ev.grossEvPercent == null
-  );
 }
 
 /**
@@ -282,6 +336,9 @@ export function strictApiTradeEvPayload(
       grossEv: 0,
       pTrue: null,
       pTrueLowConfidence: true,
+      pmMid: readOptionalNumber(item.pmMid),
+      kalshiMid: readOptionalNumber(item.kalshiMid),
+      pMarket: readOptionalNumber(item.pMarket),
     };
   }
 
@@ -395,10 +452,11 @@ export function normalizePipelineTradeEv(
       netEv: 0,
       grossEv: 0,
       grossEvPercent: null,
+      averageEv: null,
       pTrue: null,
-      pMarket: null,
-      pmMid: null,
-      kalshiMid: null,
+      pMarket,
+      pmMid,
+      kalshiMid,
     };
   }
 

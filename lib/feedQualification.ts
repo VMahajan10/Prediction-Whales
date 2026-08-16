@@ -26,17 +26,14 @@ export const MIN_FEED_TRADE_EV_PCT = 3;
 export const MIN_FEED_TRADE_EV_DECIMAL = MIN_FEED_TRADE_EV_PCT / 100;
 
 /**
- * TEMPORARY product-feed EV floor for live UI volume audit.
- * Restore to {@link MIN_FEED_TRADE_EV_PCT} (3) after diagnosing feed volume.
- * Set to `null` with {@link FEED_ALLOW_MISSING_EV} to skip numeric EV checks entirely.
+ * Optional override for the product-feed EV floor. `null` uses
+ * {@link MIN_FEED_TRADE_EV_PCT}. Set to `null` with
+ * {@link FEED_ALLOW_MISSING_EV} to skip numeric EV checks entirely (audit only).
  */
-export const FEED_MIN_EV_PERCENT: number | null = 0;
+export const FEED_MIN_EV_PERCENT: number | null = null;
 
-/**
- * TEMPORARY — admit stake-qualified feed rows without resolved pipeline EV.
- * Keeps stake + market validation; only relaxes EV hydration requirements.
- */
-export const FEED_ALLOW_MISSING_EV = true;
+/** Product feed requires resolved trade-level EV before admission. */
+export const FEED_ALLOW_MISSING_EV = false;
 
 /** Effective minimum EV % shown in feed diagnostic logs. */
 export function getProductFeedMinEvPercentForLog(): number | null {
