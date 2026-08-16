@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { processWhaleTradeForXAgent } from "@/lib/x-agent/enqueueWhaleTrade";
+import { notifyHighEvWhalePush } from "@/lib/push/notifyHighEvWhale";
 import { notifyWhaleTradeIfEligible } from "@/lib/whaleTweetNotifier";
 import type { WhaleTrade } from "@/lib/whaleTrades";
 
@@ -33,6 +34,12 @@ export async function POST(request: NextRequest) {
     void processWhaleTradeForXAgent(body as WhaleTrade).catch((error) => {
       console.error(
         "[api/whales/notify] x-agent enqueue failed",
+        error instanceof Error ? error.message : error
+      );
+    });
+    void notifyHighEvWhalePush(body as WhaleTrade).catch((error) => {
+      console.error(
+        "[api/whales/notify] push dispatch failed",
         error instanceof Error ? error.message : error
       );
     });

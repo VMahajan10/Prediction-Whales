@@ -232,3 +232,14 @@ model FeedTrade {
   @@index([stakeAmount, averageEv, tradedAt(sort: Desc)], map: "feed_trades_fallback_idx")
   @@map("feed_trades")
 }
+
+/// Native mobile push tokens (APNs / FCM) for whale alerts.
+model DeviceToken {
+  token     String   @id
+  platform  String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([platform])
+  @@map("device_tokens")
+}
