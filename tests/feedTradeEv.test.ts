@@ -121,6 +121,35 @@ describe("resolveFeedTradeEvPercent", () => {
       )
     ).toBeNull();
   });
+
+  it("ignores dual netEvPercent=0 and averageEv=0 on trade rows", () => {
+    expect(
+      resolveFeedTradeEvPercent(
+        { price: 0.5, netEvPercent: 0, averageEv: 0 },
+        null
+      )
+    ).toBeNull();
+  });
+
+  it("prefers entry-anchored EV when pipeline netEvPercent is a mid-based zero", () => {
+    const pipeline = {
+      key: "pm:1",
+      status: "ok",
+      netEvPercent: 0,
+      grossEvPercent: null,
+      averageEv: 0,
+      pTrue: 0.5,
+      pMarket: 0.5,
+      pmMid: 0.5,
+      kalshiMid: null,
+      pTrueLowConfidence: false,
+      pTrueSource: "cached_ensemble",
+    } as PipelineTradeEv;
+
+    expect(
+      resolveFeedTradeEvPercent({ price: 0.4 }, pipeline)
+    ).toBeCloseTo(25, 1);
+  });
 });
 
 describe("passesRawIngestionSocketStakeGate", () => {

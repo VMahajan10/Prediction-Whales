@@ -70,6 +70,31 @@ describe("resolveFeedTradeEvDisplay", () => {
     expect(display.label).toBe("TRADE EV");
     expect(display.value).toBe("N/A");
   });
+
+  it("uses pipeline EV when trade row carries stale zero EV", () => {
+    const display = resolveFeedTradeEvDisplay(
+      {
+        price: 0.4,
+        source: "polymarket",
+        netEvPercent: 0,
+        averageEv: 0,
+      },
+      {
+        key: "pm:1",
+        status: "ok",
+        netEvPercent: 0,
+        grossEvPercent: null,
+        averageEv: 0,
+        pTrue: 0.5,
+        pMarket: 0.5,
+        pmMid: 0.5,
+        pTrueLowConfidence: false,
+        pTrueSource: "cached_ensemble",
+      } as import("@/lib/evPipeline/types").PipelineTradeEv
+    );
+
+    expect(display.value).toBe("+25.0% EV");
+  });
 });
 
 describe("coalesceTradeEvPercent", () => {

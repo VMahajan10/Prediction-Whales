@@ -584,6 +584,25 @@ export function useWhaleFeed() {
   const walletQualifications = useQualifiedWalletFilter(polymarketWalletAddresses);
   const { index: pipelineEvIndex } = usePipelineEvForWhales(evTargetWhales);
 
+  useEffect(() => {
+    if (pipelineEvIndex.size === 0) return;
+    setWhaleBuffer((prev) => {
+      let changed = false;
+      const next = prev.map((trade) => {
+        const pipeline = resolvePipelineEvForWhale(pipelineEvIndex, trade);
+        const merged = mergePipelineEvOntoWhale(trade, pipeline ?? undefined);
+        if (
+          merged.netEvPercent !== trade.netEvPercent ||
+          merged.averageEv !== trade.averageEv
+        ) {
+          changed = true;
+        }
+        return merged;
+      });
+      return changed ? next : prev;
+    });
+  }, [pipelineEvIndex]);
+
   const qualifiedPolymarketWhales = useMemo(
     () =>
       polymarketWhales

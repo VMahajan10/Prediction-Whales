@@ -45,9 +45,11 @@ import {
   deriveEvPercentFromPTrue,
   coalesceDisplayEvPercent,
   DEFAULT_P_MARKET_FALLBACK,
+  isStaleZeroTradeEvPayload,
   normalizeIncomingTradePrice,
   normalizePipelineTradeEv,
   pipelineEvTone,
+  sanitizeEvPercent,
   strictApiTradeEvPayload,
 } from "@/lib/evPipeline/tradeEvRecord";
 import type {
@@ -257,16 +259,22 @@ export function attachAverageEvField(
 ): PipelineTradeEv {
   if (payload.status !== "ok") return payload;
   const displayEv = coalesceDisplayEvPercent(payload);
+  const netEvPercent =
+    payload.netEvPercent != null &&
+    Number.isFinite(payload.netEvPercent) &&
+    !isStaleZeroTradeEvPayload(payload)
+      ? sanitizeEvPercent(payload.netEvPercent)
+      : displayEv;
   const grossEvPercent =
     payload.grossEvPercent ??
-    payload.netEvPercent ??
+    netEvPercent ??
     displayEv;
   return {
     ...payload,
-    averageEv: displayEv,
+    averageEv: netEvPercent ?? displayEv,
     grossEvPercent,
     grossEv: payload.grossEv ?? payload.netEv ?? 0,
-    netEvPercent: payload.netEvPercent ?? displayEv,
+    netEvPercent,
   };
 }
 

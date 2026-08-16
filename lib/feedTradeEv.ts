@@ -56,7 +56,8 @@ export function coalesceTradeEvPercent(
   if (
     trade.averageEv != null &&
     Number.isFinite(trade.averageEv) &&
-    !isStaleZeroAverageEvPayload(evFields)
+    !isStaleZeroAverageEvPayload(evFields) &&
+    !(trade.averageEv === 0 && isStaleZeroTradeEvPayload(evFields))
   ) {
     return trade.averageEv;
   }
@@ -101,6 +102,44 @@ export function resolveContractMidEvFallback(
   return null;
 }
 
+/** Prefer entry-anchored EV when pipeline netEvPercent is a stale mid-based zero. */
+function resolveAuthoritativePipelineEvPercent(
+  tradePrice: number,
+  pipeline: PipelineTradeEv
+): number | null {
+  const fromPipeline = tradeLevelEvPercent({
+    netEvPercent: pipeline.netEvPercent,
+    grossEvPercent: pipeline.grossEvPercent,
+  });
+
+  if (fromPipeline != null && fromPipeline !== 0) {
+    return fromPipeline;
+  }
+
+  if (fromPipeline === 0) {
+    const fromMid = resolveContractMidEvFallback(tradePrice, pipeline);
+    if (fromMid != null && Math.abs(fromMid) > 0.05) return fromMid;
+
+    if (pipeline.pTrue != null && Number.isFinite(pipeline.pTrue)) {
+      const fromEntry = entryPriceEvPercent(pipeline.pTrue, tradePrice);
+      if (fromEntry != null && Math.abs(fromEntry) > 0.05) return fromEntry;
+
+      const derived = deriveEvPercentFromPTrue(
+        pipeline.pTrue,
+        tradePrice,
+        pipeline.pMarket ?? pipeline.pmMid ?? pipeline.kalshiMid
+      );
+      if (derived != null && Math.abs(derived) > 0.05) return derived;
+    }
+
+    if (isStaleZeroTradeEvPayload(pipeline)) {
+      return fromMid ?? null;
+    }
+  }
+
+  return fromPipeline;
+}
+
 /** Trade-level EV % for feed gates — never uses wallet averageEv / traderAvgEv. */
 export function resolveFeedTradeEvPercent(
   trade: {
@@ -122,21 +161,8 @@ export function resolveFeedTradeEvPercent(
 
   if (!isAuthoritativePipelineTradeEv(pipeline)) return null;
 
-  const fromPipeline = tradeLevelEvPercent({
-    netEvPercent: pipeline.netEvPercent,
-    grossEvPercent: pipeline.grossEvPercent,
-  });
-  if (fromPipeline != null) {
-    if (
-      fromPipeline === 0 &&
-      isStaleZeroTradeEvPayload(pipeline)
-    ) {
-      const fromMid = resolveContractMidEvFallback(trade.price, pipeline);
-      if (fromMid != null) return fromMid;
-      return null;
-    }
-    return fromPipeline;
-  }
+  const fromPipeline = resolveAuthoritativePipelineEvPercent(trade.price, pipeline);
+  if (fromPipeline != null) return fromPipeline;
 
   if (pipeline.pTrue != null && Number.isFinite(pipeline.pTrue)) {
     const fromEntry = entryPriceEvPercent(pipeline.pTrue, trade.price);

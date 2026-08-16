@@ -71,11 +71,8 @@ export function sanitizeProbDelta(value: number): number {
 export function isStaleZeroAverageEvPayload(
   ev: Pick<PipelineTradeEv, "netEvPercent" | "grossEvPercent" | "averageEv">
 ): boolean {
-  return (
-    ev.averageEv === 0 &&
-    ev.netEvPercent == null &&
-    ev.grossEvPercent == null
-  );
+  if (ev.averageEv !== 0) return false;
+  return ev.netEvPercent == null || ev.netEvPercent === 0;
 }
 
 const STALE_FALLBACK_PROB_EPS = 1e-6;
@@ -361,11 +358,15 @@ export function strictApiTradeEvPayload(
     pMarketFallback: pMarket,
   });
 
-  let netEvPercent = sanitizeEvPercent(
-    item.netEvPercent ?? evDisplay.netEvPercent
-  );
+  const preserveNetEv =
+    item.netEvPercent != null &&
+    Number.isFinite(item.netEvPercent) &&
+    !isStaleZeroTradeEvPayload(item);
+  let netEvPercent = preserveNetEv
+    ? sanitizeEvPercent(item.netEvPercent as number)
+    : sanitizeEvPercent(evDisplay.netEvPercent);
   let grossEvPercent = sanitizeEvPercent(
-    item.grossEvPercent ?? evDisplay.grossEvPercent
+    item.grossEvPercent ?? netEvPercent ?? evDisplay.grossEvPercent
   );
   let netEv = sanitizeProbDelta(item.netEv ?? evDisplay.netEv);
   let grossEv = sanitizeProbDelta(item.grossEv ?? evDisplay.grossEv);
@@ -462,6 +463,44 @@ export function normalizePipelineTradeEv(
 
   if (pTrue != null) {
     const resolvedPMarket = resolveTradeMarketReference(pMarket, pmMid, kalshiMid);
+    const candidate = {
+      key,
+      status: "ok" as const,
+      tokenId,
+      kalshiTicker,
+      mappingPairKey,
+      pTrue,
+      pMarket: resolvedPMarket,
+      pmMid,
+      kalshiMid,
+      netEvPercent,
+      grossEvPercent,
+      averageEv: readOptionalNumber(raw.averageEv),
+      pTrueSource: raw.pTrueSource ?? undefined,
+      pTrueConfidence: raw.pTrueConfidence ?? undefined,
+      pTrueLowConfidence: raw.pTrueLowConfidence ?? undefined,
+      evFormulaVersion: raw.evFormulaVersion ?? undefined,
+    };
+
+    if (
+      netEvPercent != null &&
+      Number.isFinite(netEvPercent) &&
+      !isStaleZeroTradeEvPayload(candidate)
+    ) {
+      const display = sanitizeEvPercent(netEvPercent);
+      return strictApiTradeEvPayload(
+        {
+          ...candidate,
+          grossEv: grossEv ?? 0,
+          netEv: netEv ?? 0,
+          grossEvPercent: grossEvPercent ?? display,
+          netEvPercent: display,
+          averageEv: display,
+        },
+        key
+      );
+    }
+
     const platform: EvPlatform =
       kalshiTicker && !tokenId ? "kalshi" : "polymarket";
     const evDisplay = computeTradeEvDisplay({
@@ -473,22 +512,11 @@ export function normalizePipelineTradeEv(
 
     return strictApiTradeEvPayload(
       {
-        key,
-        status: "ok",
-        tokenId,
-        kalshiTicker,
-        mappingPairKey,
-        pTrue,
-        pMarket: resolvedPMarket,
-        pmMid,
-        kalshiMid,
+        ...candidate,
         grossEv: grossEv ?? evDisplay.grossEv,
         netEv: netEv ?? evDisplay.netEv,
         grossEvPercent: grossEvPercent ?? evDisplay.grossEvPercent,
         netEvPercent: netEvPercent ?? evDisplay.netEvPercent,
-        pTrueSource: raw.pTrueSource ?? undefined,
-        pTrueConfidence: raw.pTrueConfidence ?? undefined,
-        pTrueLowConfidence: raw.pTrueLowConfidence ?? undefined,
         evFormulaVersion: raw.evFormulaVersion ?? evDisplay.formula,
       },
       key

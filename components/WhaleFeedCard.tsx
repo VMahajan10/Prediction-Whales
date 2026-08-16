@@ -17,6 +17,7 @@ import {
 } from "@/lib/whaleIdentityResolver";
 import { KALSHI_TRADER_ALIAS } from "@/lib/trades/whaleAliasConstants";
 import type { WhaleTrade } from "@/lib/whaleTrades";
+import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 
 export interface WhaleFeedCardProps {
   trade: WhaleTrade;
@@ -24,6 +25,8 @@ export interface WhaleFeedCardProps {
   detailHref: string | null;
   onNavigate?: () => void;
   currentPrice?: number;
+  /** Hydrated pipeline EV row — used when stamped trade fields are stale or missing. */
+  pipelineEv?: PipelineTradeEv | null;
 }
 
 /**
@@ -118,6 +121,7 @@ export default function WhaleFeedCard({
   detailHref,
   onNavigate,
   currentPrice,
+  pipelineEv,
 }: WhaleFeedCardProps) {
   const isKalshi = trade.source === "kalshi";
   const isBuy = isKalshi ? trade.outcome === "Yes" : trade.side === "BUY";
@@ -130,13 +134,16 @@ export default function WhaleFeedCard({
 
   const winRateLabel = formatWhaleWinRatePercent(whale.winRate);
 
-  const tradeEvDisplay = resolveFeedTradeEvDisplay({
-    price: trade.price,
-    source: trade.source,
-    netEvPercent: trade.netEvPercent ?? null,
-    grossEvPercent: trade.grossEvPercent ?? null,
-    averageEv: trade.averageEv ?? null,
-  });
+  const tradeEvDisplay = resolveFeedTradeEvDisplay(
+    {
+      price: trade.price,
+      source: trade.source,
+      netEvPercent: trade.netEvPercent ?? null,
+      grossEvPercent: trade.grossEvPercent ?? null,
+      averageEv: trade.averageEv ?? null,
+    },
+    pipelineEv ?? null
+  );
   const tradeEvStatLabel = tradeEvDisplay.label;
   const tradeEvLabel = tradeEvDisplay.value;
   const tradeEvClass = tradeEvDisplay.positive

@@ -23,6 +23,11 @@ import {
   formatProductFeedStakeLabel,
   MIN_FEED_TRADE_EV_PCT,
 } from "@/lib/feedQualification";
+import {
+  pipelineEvKeyForWhale,
+  resolvePipelineEvForWhale,
+} from "@/lib/pipelineEvClient";
+import { usePipelineEvForWhales } from "@/lib/usePipelineEvIndex";
 import type { WhaleTrade } from "@/lib/whaleTrades";
 
 interface WhaleTrackerProps {
@@ -87,6 +92,8 @@ export default function WhaleTracker({
     }
     return rows;
   }, [filteredWhales, categoryTab]);
+
+  const { index: pipelineEvIndex } = usePipelineEvForWhales(sortedWhales);
 
   return (
     <div>
@@ -155,6 +162,10 @@ export default function WhaleTracker({
         <ul className="space-y-3">
           {sortedWhales.map((trade) => {
             const detailHref = getWhaleTradeDetailHref(trade);
+            const pipelineKey = pipelineEvKeyForWhale(trade);
+            const pipelineEv =
+              resolvePipelineEvForWhale(pipelineEvIndex, trade) ??
+              (pipelineKey ? pipelineEvIndex.get(pipelineKey) : null);
             return (
               <li key={
                 trade.source === "kalshi"
@@ -166,6 +177,7 @@ export default function WhaleTracker({
                   now={now}
                   detailHref={detailHref}
                   onNavigate={() => stashTradeForDetailNavigation(trade)}
+                  pipelineEv={pipelineEv}
                 />
               </li>
             );

@@ -1,6 +1,7 @@
 import {
   coalesceDisplayEvPercent,
   isStaleZeroAverageEvPayload,
+  isStaleZeroTradeEvPayload,
   resolveDetailPanelDisplayEv,
 } from "@/lib/evPipeline/tradeEvRecord";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
@@ -22,7 +23,18 @@ export function whaleHasStampedFeedEv(trade: WhaleTrade): boolean {
     grossEvPercent: trade.grossEvPercent ?? null,
     averageEv: trade.averageEv ?? null,
   };
-  if (isStaleZeroAverageEvPayload(fields)) return false;
+  if (
+    isStaleZeroAverageEvPayload(fields) ||
+    isStaleZeroTradeEvPayload({
+      ...fields,
+      pmMid: null,
+      kalshiMid: null,
+      pTrue: null,
+      pMarket: null,
+    })
+  ) {
+    return false;
+  }
   return coalesceDisplayEvPercent(fields) != null;
 }
 
@@ -54,12 +66,22 @@ export function mergePipelineEvOntoWhale(
   trade: WhaleTrade,
   pipeline: PipelineTradeEv | null | undefined
 ): WhaleTrade {
-  const existing = coalesceDisplayEvPercent({
+  const fields = {
     netEvPercent: trade.netEvPercent ?? null,
     grossEvPercent: trade.grossEvPercent ?? null,
     averageEv: trade.averageEv ?? null,
-  });
-  if (existing != null) return trade;
+  };
+  const existing = coalesceDisplayEvPercent(fields);
+  const staleStamped =
+    existing != null &&
+    isStaleZeroTradeEvPayload({
+      ...fields,
+      pmMid: null,
+      kalshiMid: null,
+      pTrue: pipeline?.pTrue ?? null,
+      pMarket: pipeline?.pMarket ?? null,
+    });
+  if (existing != null && !staleStamped) return trade;
 
   const tradeEvPercent = resolveFeedTradeEvPercent(
     {
