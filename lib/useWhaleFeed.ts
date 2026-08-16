@@ -19,8 +19,10 @@ import { retainLastNonEmpty } from "@/lib/feed/feedRetention";
 import { recentTradeToWhale } from "@/lib/feed/whaleFeedHydration";
 import type { FeedTrade } from "@/lib/feedTradeTypes";
 import {
+  evaluateKalshiFeedTradeGate,
   isKalshiTradeEligibleForFeed,
   kalshiFeedTradeToWhale,
+  resolveKalshiFeedTradeEvPercent,
   type KalshiFeedTradeInput,
 } from "@/lib/feed/kalshiFeedTrades";
 import { resolveFeedFilterCategoryLabel } from "@/lib/feedFilterDiagnostics";
@@ -111,21 +113,18 @@ function kalshiFeedTradeFromApi(trade: KalshiFeedTradeInput): KalshiFeedTradeInp
 
 function isKalshiWhaleEligibleForLiveFeed(
   whale: WhaleTrade,
-  pipelineEvIndex: Map<string, PipelineTradeEv>
+  pipelineEvIndex: Map<string, PipelineTradeEv>,
+  loggedRejects?: Set<string>
 ): boolean {
-  if (!meetsProductFeedStakeThreshold(whale.usdNotional)) return false;
-
-  const pipeline = resolvePipelineEvForWhale(pipelineEvIndex, whale);
-  const tradeEvPercent = resolveFeedTradeEvPercent(
-    {
-      price: whale.price,
-      netEvPercent: whale.netEvPercent,
-      grossEvPercent: whale.grossEvPercent,
-    },
-    pipeline
-  );
-
-  return meetsFeedTradeEvThreshold(tradeEvPercent);
+  const logKey = `${whale.id}:kalshi`;
+  const result = evaluateKalshiFeedTradeGate(whale, pipelineEvIndex, {
+    id: whale.id,
+    logRejection: !loggedRejects?.has(logKey),
+  });
+  if (!result.passed) {
+    loggedRejects?.add(logKey);
+  }
+  return result.passed;
 }
 
 async function fetchRecentSeedTrades(signal: AbortSignal): Promise<WhaleTrade[]> {
@@ -298,6 +297,11 @@ function resolveWhaleTradeEvPercent(
   trade: WhaleTrade,
   pipelineEvIndex: Map<string, PipelineTradeEv>
 ): number | null {
+  if (trade.source === "kalshi") {
+    const pipeline = resolvePipelineEvForWhale(pipelineEvIndex, trade);
+    return resolveKalshiFeedTradeEvPercent(trade, pipeline);
+  }
+
   const pipeline = resolvePipelineEvForWhale(pipelineEvIndex, trade);
   return resolveFeedTradeEvPercent(
     {
@@ -615,7 +619,17 @@ export function useWhaleFeed() {
   const qualifiedKalshiWhales = useMemo(
     () =>
       kalshiWhales
-        .filter((trade) => isKalshiTradeEligibleForFeed(trade, pipelineEvIndex))
+        .filter((trade) => {
+          const logKey = `${trade.id}:kalshi`;
+          const eligible = isKalshiTradeEligibleForFeed(trade, pipelineEvIndex, {
+            id: trade.id,
+            logRejection: !loggedFilterRejects.current.has(logKey),
+          });
+          if (!eligible) {
+            loggedFilterRejects.current.add(logKey);
+          }
+          return eligible;
+        })
         .map((trade) =>
           mergePipelineEvOntoWhale(
             trade,
@@ -670,7 +684,7 @@ export function useWhaleFeed() {
       });
       const key = whaleKey(whale);
       if (!key || whaleBufferSeen.current.has(key)) continue;
-      if (!isKalshiWhaleEligibleForLiveFeed(whale, pipelineEvIndex)) continue;
+      if (!isKalshiWhaleEligibleForLiveFeed(whale, pipelineEvIndex, loggedFilterRejects.current)) continue;
       const admitted = stampWhaleForFeedAdmission(whale, pipelineEvIndex);
       if (!admitted) continue;
       whaleBufferSeen.current.add(key);

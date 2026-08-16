@@ -11,6 +11,9 @@ import {
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import type { FeedTrade } from "@/lib/feedTradeTypes";
 import { pipelineEvKeyForTrade } from "@/lib/pipelineEvClient";
+import {
+  resolveKalshiContractEvFallback,
+} from "@/lib/feed/kalshiFeedTrades";
 import { usePolymarketSocketContext } from "@/lib/PolymarketSocketProvider";
 import type { SocketTrade } from "@/lib/usePolymarketSocket";
 import { useKalshiTrades } from "@/lib/useKalshiTrades";
@@ -58,6 +61,16 @@ function passesLiveFeedTradeGate(
 
   const pipelineKey = pipelineEvKeyForTrade(trade);
   const pipeline = pipelineKey ? pipelineEvIndex.get(pipelineKey) : undefined;
+
+  if (trade.source === "kalshi") {
+    const tradeEvPercent =
+      resolveFeedTradeEvPercent(
+        { price: trade.price, netEvPercent: trade.netEvPercent },
+        pipeline ?? null
+      ) ?? resolveKalshiContractEvFallback(trade.price, pipeline ?? null);
+    return meetsFeedTradeEvThreshold(tradeEvPercent);
+  }
+
   const tradeEvPercent = resolveFeedTradeEvPercent(
     { price: trade.price, netEvPercent: trade.netEvPercent },
     pipeline ?? null

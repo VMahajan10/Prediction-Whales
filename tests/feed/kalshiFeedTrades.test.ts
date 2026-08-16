@@ -1,23 +1,23 @@
 import { describe, expect, it } from "vitest";
 import {
+  diagnoseKalshiFeedTradeGate,
   isKalshiTradeEligibleForFeed,
   isKalshiTradeStakeCandidate,
   kalshiFeedTradeToWhale,
   meetsKalshiFeedStakeThreshold,
+  resolveKalshiContractEvFallback,
+  resolveKalshiFeedTradeEvPercent,
 } from "@/lib/feed/kalshiFeedTrades";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import { pipelineEvLookupKeyKalshi } from "@/lib/evPipeline/types";
-import {
-  STAKE_FLOOR_DEFAULT_USD,
-  STAKE_FLOOR_SPORTS_ENTERTAINMENT_USD,
-} from "@/lib/x-agent/stakeFloor";
+import { MIN_PRODUCT_FEED_STAKE_USD } from "@/lib/feedQualification";
 
 const sportsTrade = {
   id: "kalshi-trade-sports",
   title: "Will the Lakers win the NBA Finals?",
   outcome: "Yes",
   price: 0.42,
-  usdNotional: 300,
+  usdNotional: 600,
   timestamp: 1_700_000_000,
   ticker: "NBA-LAL-FINALS",
 };
@@ -47,6 +47,21 @@ function evIndex(ticker: string, evPercent: number) {
   return new Map<string, PipelineTradeEv>([[key, entry]]);
 }
 
+function unmappedWithPmMid(ticker: string, pmMid: number) {
+  const key = pipelineEvLookupKeyKalshi(ticker);
+  const entry = {
+    key,
+    status: "unmapped",
+    kalshiTicker: ticker,
+    pmMid,
+    kalshiMid: null,
+    netEvPercent: null,
+    pTrueLowConfidence: true,
+  } as unknown as PipelineTradeEv;
+
+  return new Map<string, PipelineTradeEv>([[key, entry]]);
+}
+
 describe("kalshiFeedTradeToWhale", () => {
   it("maps a Kalshi feed trade without any trader identity", () => {
     const whale = kalshiFeedTradeToWhale(sportsTrade);
@@ -54,7 +69,7 @@ describe("kalshiFeedTradeToWhale", () => {
     expect(whale.source).toBe("kalshi");
     expect(whale.platform).toBe("KALSHI");
     expect(whale.ticker).toBe("NBA-LAL-FINALS");
-    expect(whale.usdNotional).toBe(300);
+    expect(whale.usdNotional).toBe(600);
     expect(whale.detectedAt).toBe(1_700_000_000_000);
     expect(whale.proxyWallet).toBeFalsy();
     expect(whale.whaleIdentity).toBeUndefined();
@@ -69,68 +84,106 @@ describe("kalshiFeedTradeToWhale", () => {
 });
 
 describe("meetsKalshiFeedStakeThreshold", () => {
-  it("uses $250 for sports/culture and $500 default", () => {
-    const sportsWhale = kalshiFeedTradeToWhale(sportsTrade);
-    const macroWhale = kalshiFeedTradeToWhale(macroTrade);
-
-    expect(meetsKalshiFeedStakeThreshold(sportsWhale)).toBe(true);
-    expect(meetsKalshiFeedStakeThreshold(macroWhale)).toBe(true);
+  it("uses flat $500 product feed stake floor", () => {
+    expect(
+      meetsKalshiFeedStakeThreshold(kalshiFeedTradeToWhale(sportsTrade))
+    ).toBe(true);
 
     expect(
       meetsKalshiFeedStakeThreshold(
         kalshiFeedTradeToWhale({
           ...sportsTrade,
-          usdNotional: STAKE_FLOOR_SPORTS_ENTERTAINMENT_USD - 1,
+          usdNotional: MIN_PRODUCT_FEED_STAKE_USD,
         })
       )
-    ).toBe(false);
+    ).toBe(true);
 
     expect(
       meetsKalshiFeedStakeThreshold(
         kalshiFeedTradeToWhale({
-          ...macroTrade,
-          usdNotional: STAKE_FLOOR_DEFAULT_USD - 1,
+          ...sportsTrade,
+          usdNotional: MIN_PRODUCT_FEED_STAKE_USD - 1,
         })
       )
     ).toBe(false);
   });
 });
 
+describe("resolveKalshiContractEvFallback", () => {
+  it("derives EV from PM mid when pipeline ensemble is unmapped", () => {
+    const ev = resolveKalshiContractEvFallback(0.4, {
+      status: "unmapped",
+      pmMid: 0.5,
+      kalshiMid: null,
+    } as PipelineTradeEv);
+    expect(ev).toBeCloseTo(25, 5);
+  });
+});
+
 describe("isKalshiTradeEligibleForFeed", () => {
-  it("admits Kalshi flow clearing tiered stake and +3% EV", () => {
+  it("admits Kalshi flow clearing $500 stake and +3% EV", () => {
     const whale = kalshiFeedTradeToWhale(sportsTrade);
     expect(
-      isKalshiTradeEligibleForFeed(whale, evIndex(sportsTrade.ticker, 4.5))
+      isKalshiTradeEligibleForFeed(whale, evIndex(sportsTrade.ticker, 4.5), {
+        logRejection: false,
+      })
     ).toBe(true);
   });
 
-  it("rejects stakes below the tiered floor", () => {
+  it("rejects stakes below the flat $500 floor", () => {
     const whale = kalshiFeedTradeToWhale({
       ...sportsTrade,
-      usdNotional: STAKE_FLOOR_SPORTS_ENTERTAINMENT_USD - 1,
+      usdNotional: MIN_PRODUCT_FEED_STAKE_USD - 1,
     });
-    expect(
-      isKalshiTradeEligibleForFeed(whale, evIndex(sportsTrade.ticker, 9))
-    ).toBe(false);
+    const result = diagnoseKalshiFeedTradeGate(
+      whale,
+      evIndex(sportsTrade.ticker, 9)
+    );
+    expect(result.passed).toBe(false);
+    expect(result.reason).toBe("stake_floor");
     expect(isKalshiTradeStakeCandidate(whale)).toBe(false);
   });
 
   it("rejects EV below +3%", () => {
     const whale = kalshiFeedTradeToWhale(sportsTrade);
-    expect(
-      isKalshiTradeEligibleForFeed(whale, evIndex(sportsTrade.ticker, 2.9))
-    ).toBe(false);
+    const result = diagnoseKalshiFeedTradeGate(
+      whale,
+      evIndex(sportsTrade.ticker, 2.9)
+    );
+    expect(result.passed).toBe(false);
+    expect(result.reason).toBe("trade_ev");
   });
 
-  it("rejects missing EV while hydrating", () => {
-    const whale = kalshiFeedTradeToWhale(sportsTrade);
-    expect(isKalshiTradeEligibleForFeed(whale, new Map())).toBe(false);
+  it("rejects missing ticker", () => {
+    const whale = kalshiFeedTradeToWhale({ ...sportsTrade, ticker: undefined });
+    const result = diagnoseKalshiFeedTradeGate(whale, new Map());
+    expect(result.passed).toBe(false);
+    expect(result.reason).toBe("unmapped_ticker");
   });
 
-  it("admits once pipeline EV clears +3%", () => {
+  it("rejects missing EV when pipeline and fallback are empty", () => {
     const whale = kalshiFeedTradeToWhale(sportsTrade);
+    const result = diagnoseKalshiFeedTradeGate(whale, new Map());
+    expect(result.passed).toBe(false);
+    expect(result.reason).toBe("missing_trade_ev");
+  });
+
+  it("admits via contract mid fallback when ensemble EV is unmapped", () => {
+    const whale = kalshiFeedTradeToWhale({ ...sportsTrade, price: 0.4 });
     expect(
-      isKalshiTradeEligibleForFeed(whale, evIndex(sportsTrade.ticker, 5))
+      isKalshiTradeEligibleForFeed(
+        whale,
+        unmappedWithPmMid(sportsTrade.ticker, 0.5),
+        { logRejection: false }
+      )
+    ).toBe(true);
+    expect(resolveKalshiFeedTradeEvPercent(whale, null)).toBeNull();
+  });
+
+  it("admits when trade carries precomputed netEvPercent", () => {
+    const whale = kalshiFeedTradeToWhale(sportsTrade, { netEvPercent: 4.2 });
+    expect(
+      isKalshiTradeEligibleForFeed(whale, new Map(), { logRejection: false })
     ).toBe(true);
   });
 
@@ -140,7 +193,9 @@ describe("isKalshiTradeEligibleForFeed", () => {
       source: "polymarket" as const,
     };
     expect(
-      isKalshiTradeEligibleForFeed(whale, evIndex(sportsTrade.ticker, 9))
+      isKalshiTradeEligibleForFeed(whale, evIndex(sportsTrade.ticker, 9), {
+        logRejection: false,
+      })
     ).toBe(false);
   });
 });
