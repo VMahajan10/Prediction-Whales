@@ -368,14 +368,24 @@ async function fetchKalshiTradesFromApi(
       ? await resolveCachedKalshiPipelineEv(stakeQualified)
       : new Map<string, PipelineTradeEv>();
 
-  return trades.map((trade) => {
-    if (!meetsProductFeedStakeThreshold(trade.usdNotional)) return trade;
-    const netEvPercent = kalshiTradeEvPercent(trade, pipelineEvIndex);
-    return {
-      ...trade,
-      netEvPercent,
-    };
-  });
+  const stakeQualifiedWithEv = await mapWithConcurrency(
+    stakeQualified,
+    4,
+    async (trade) => {
+      let netEvPercent = kalshiTradeEvPercent(trade, pipelineEvIndex);
+      if (!meetsProductFeedEvThreshold(netEvPercent)) {
+        netEvPercent = await hydrateKalshiTradeEvPercent(trade, pipelineEvIndex);
+      }
+      return { ...trade, netEvPercent };
+    }
+  );
+
+  const stakeQualifiedIds = new Set(stakeQualifiedWithEv.map((trade) => trade.id));
+  const belowStake = trades.filter(
+    (trade) => !stakeQualifiedIds.has(trade.id)
+  );
+
+  return [...stakeQualifiedWithEv, ...belowStake];
 }
 
 /**

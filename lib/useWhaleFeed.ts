@@ -236,7 +236,9 @@ function isPolymarketTradeQualifiedForFeed(
   if (trade.source !== "polymarket") return false;
 
   const pipelineKey = pipelineEvKeyForWhale(trade);
-  const pipeline = pipelineKey ? pipelineEvIndex.get(pipelineKey) : undefined;
+  const pipeline = pipelineKey
+    ? resolvePipelineEvForWhale(pipelineEvIndex, trade)
+    : undefined;
   const tradeEvPercent = resolveFeedTradeEvPercent(
     {
       price: trade.price,
@@ -802,7 +804,9 @@ export function useWhaleFeed() {
 
       const category = resolveFeedFilterCategoryLabel(whale);
       const pipelineKey = pipelineEvKeyForWhale(whale);
-      const pipeline = pipelineKey ? pipelineEvIndex.get(pipelineKey) : undefined;
+      const pipeline = pipelineKey
+        ? resolvePipelineEvForWhale(pipelineEvIndex, whale)
+        : undefined;
       const tradeEvPercent = resolveFeedTradeEvPercent(
         {
           price: whale.price,

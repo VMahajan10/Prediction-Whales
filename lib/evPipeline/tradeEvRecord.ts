@@ -313,10 +313,13 @@ export function deriveEvPercentFromPTrue(
 
 /**
  * Hard-assign response fields for status ok — guarantees netEvPercent is numeric.
+ * When `executionPrice` is provided, EV is anchored to the whale fill instead of
+ * the resting mid (avoids mid-vs-mid 0% artifacts).
  */
 export function strictApiTradeEvPayload(
   item: PipelineTradeEv,
-  lookupKey?: string
+  lookupKey?: string,
+  options?: { executionPrice?: number | null }
 ): PipelineTradeEv {
   const key = lookupKey ?? item.key;
   if (item.status !== "ok") return { ...item, key };
@@ -351,9 +354,11 @@ export function strictApiTradeEvPayload(
     readOptionalNumber(item.pmMid),
     readOptionalNumber(item.kalshiMid)
   );
+  const executionPrice =
+    normalizeIncomingTradePrice(options?.executionPrice) ?? pMarket;
   const evDisplay = computeTradeEvDisplay({
     pTrue,
-    executionPrice: pMarket,
+    executionPrice,
     platform,
     pMarketFallback: pMarket,
   });
@@ -398,7 +403,8 @@ function readOptionalNumber(value: unknown): number | null {
  */
 export function normalizePipelineTradeEv(
   raw: Partial<PipelineTradeEv> & { key?: string },
-  lookupKey?: string
+  lookupKey?: string,
+  options?: { executionPrice?: number | null }
 ): PipelineTradeEv | null {
   const key = lookupKey ?? raw.key;
   if (!key) return null;
@@ -497,15 +503,18 @@ export function normalizePipelineTradeEv(
           netEvPercent: display,
           averageEv: display,
         },
-        key
+        key,
+        options
       );
     }
 
     const platform: EvPlatform =
       kalshiTicker && !tokenId ? "kalshi" : "polymarket";
+    const executionPrice =
+      normalizeIncomingTradePrice(options?.executionPrice) ?? resolvedPMarket;
     const evDisplay = computeTradeEvDisplay({
       pTrue,
-      executionPrice: resolvedPMarket,
+      executionPrice,
       platform,
       pMarketFallback: resolvedPMarket,
     });
@@ -519,7 +528,8 @@ export function normalizePipelineTradeEv(
         netEvPercent: netEvPercent ?? evDisplay.netEvPercent,
         evFormulaVersion: raw.evFormulaVersion ?? evDisplay.formula,
       },
-      key
+      key,
+      options
     );
   }
 

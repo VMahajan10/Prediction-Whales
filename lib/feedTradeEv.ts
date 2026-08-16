@@ -122,14 +122,23 @@ function resolveAuthoritativePipelineEvPercent(
 
     if (pipeline.pTrue != null && Number.isFinite(pipeline.pTrue)) {
       const fromEntry = entryPriceEvPercent(pipeline.pTrue, tradePrice);
-      if (fromEntry != null && Math.abs(fromEntry) > 0.05) return fromEntry;
+      if (fromEntry != null) {
+        if (Math.abs(fromEntry) > 0.05 || isStaleZeroTradeEvPayload(pipeline)) {
+          return fromEntry;
+        }
+      }
 
       const derived = deriveEvPercentFromPTrue(
         pipeline.pTrue,
         tradePrice,
         pipeline.pMarket ?? pipeline.pmMid ?? pipeline.kalshiMid
       );
-      if (derived != null && Math.abs(derived) > 0.05) return derived;
+      if (
+        derived != null &&
+        (Math.abs(derived) > 0.05 || isStaleZeroTradeEvPayload(pipeline))
+      ) {
+        return derived;
+      }
     }
 
     if (isStaleZeroTradeEvPayload(pipeline)) {
@@ -230,7 +239,24 @@ export function resolveFeedTradeEvDisplay(
     pipeline
   );
 
-  if (tradeEvPercent != null && Number.isFinite(tradeEvPercent)) {
+  const staleZeroDisplay =
+    tradeEvPercent === 0 &&
+    (isStaleZeroTradeEvPayload({
+      netEvPercent: trade.netEvPercent ?? null,
+      grossEvPercent: trade.grossEvPercent ?? null,
+      averageEv: trade.averageEv ?? null,
+      pTrue: pipeline?.pTrue ?? null,
+      pMarket: pipeline?.pMarket ?? null,
+      pmMid: pipeline?.pmMid ?? null,
+      kalshiMid: pipeline?.kalshiMid ?? null,
+    }) ||
+      (pipeline != null && isStaleZeroTradeEvPayload(pipeline)));
+
+  if (
+    tradeEvPercent != null &&
+    Number.isFinite(tradeEvPercent) &&
+    !staleZeroDisplay
+  ) {
     return {
       label: "TRADE EV",
       value: formatFeedEvValue(tradeEvPercent),

@@ -204,8 +204,8 @@ export function isStaleFallbackZeroPayload(
 }
 
 /**
- * Zero-EV cache rows without execution context should be repriced — mirrors
- * resolvePipelineTradeEv's cached-zero rejection.
+ * Zero-EV cache rows should be repriced — especially mid-collapsed payloads
+ * that were keyed by asset/ticker without anchoring to the whale fill.
  */
 export function shouldBypassStaleEvCacheHit(
   payload: PipelineTradeEv | null | undefined,
@@ -216,7 +216,30 @@ export function shouldBypassStaleEvCacheHit(
   const netEv = payload.netEvPercent ?? payload.averageEv ?? null;
   if (!isZeroEvPercent(netEv)) return false;
 
-  if (resolvedExecutionPrice(context.executionPrice) != null) return false;
+  const executionPrice = resolvedExecutionPrice(context.executionPrice);
+  if (executionPrice != null) {
+    const pTrue = payload.pTrue;
+    if (
+      pTrue != null &&
+      Number.isFinite(pTrue) &&
+      Math.abs(pTrue - executionPrice) <= STALE_FALLBACK_PROB_EPS
+    ) {
+      return false;
+    }
+
+    if (isStaleFallbackZeroPayload(payload)) return true;
+    if (isStaleZeroTradeEvPayload(payload)) return true;
+
+    if (
+      pTrue != null &&
+      Number.isFinite(pTrue) &&
+      Math.abs(pTrue - executionPrice) > STALE_FALLBACK_PROB_EPS
+    ) {
+      return true;
+    }
+
+    return false;
+  }
 
   return true;
 }
@@ -246,7 +269,21 @@ export function isFullyComputedTradeEv(
   if (!isZeroEvPercent(netEv)) return true;
 
   const executionPrice = resolvedExecutionPrice(context.executionPrice);
-  if (executionPrice != null) return true;
+  if (executionPrice != null) {
+    if (isStaleFallbackZeroPayload(payload)) return false;
+    if (isStaleZeroTradeEvPayload(payload)) return false;
+
+    const pTrue = payload.pTrue;
+    if (
+      pTrue != null &&
+      Number.isFinite(pTrue) &&
+      Math.abs(pTrue - executionPrice) > STALE_FALLBACK_PROB_EPS
+    ) {
+      return false;
+    }
+
+    return true;
+  }
 
   if (isStaleFallbackZeroPayload(payload)) return false;
 
@@ -539,12 +576,15 @@ function finalizeApiTradeEv(
   lookupKey: string,
   item: PipelineTradeEvInput
 ): PipelineTradeEv {
-  const normalized = normalizePipelineTradeEv(record, lookupKey) ?? record;
+  const executionPrice = normalizeIncomingTradePrice(item.tradePrice);
+  const normalizeOptions =
+    executionPrice != null ? { executionPrice } : undefined;
+  const normalized =
+    normalizePipelineTradeEv(record, lookupKey, normalizeOptions) ?? record;
   let payload = attachAverageEvField(
-    strictApiTradeEvPayload(normalized, lookupKey)
+    strictApiTradeEvPayload(normalized, lookupKey, normalizeOptions)
   );
 
-  const executionPrice = normalizeIncomingTradePrice(item.tradePrice);
   if (executionPrice != null && payload.status === "ok") {
     payload = attachAverageEvField(
       applyExecutionPricingToTradeEv(payload, {

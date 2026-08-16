@@ -9,7 +9,10 @@ import { diagnoseKalshiFeedTradeGate } from "@/lib/feed/kalshiFeedTrades";
 import { diagnoseLiveFeedTradeGate } from "@/lib/feedGate";
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import { translateWhaleTradeMarket } from "@/lib/marketTranslator";
-import { pipelineEvKeyForWhale } from "@/lib/pipelineEvClient";
+import {
+  pipelineEvKeyForWhale,
+  resolvePipelineEvForWhale,
+} from "@/lib/pipelineEvClient";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import type { WalletQualification } from "@/lib/useQualifiedWalletFilter";
 import type { WhaleTrade } from "@/lib/whaleTrades";
@@ -32,7 +35,9 @@ function classifyPolymarketTradeDrop(
   walletQualifications: ReadonlyMap<string, WalletQualification>
 ): keyof FeedVolumeDropCounts | "admitted" {
   const pipelineKey = pipelineEvKeyForWhale(trade);
-  const pipeline = pipelineKey ? pipelineEvIndex.get(pipelineKey) : undefined;
+  const pipeline = pipelineKey
+    ? resolvePipelineEvForWhale(pipelineEvIndex, trade)
+    : undefined;
   const tradeEvPercent = resolveFeedTradeEvPercent(
     {
       price: trade.price,
