@@ -319,6 +319,23 @@ function resolveWhaleTradeEvPercent(
   );
 }
 
+function seedKalshiWhalesToBuffer(trades: KalshiFeedTradeInput[]): WhaleTrade[] {
+  return trades
+    .filter((trade) => meetsProductFeedStakeThreshold(trade.usdNotional))
+    .map((trade) =>
+      kalshiFeedTradeToWhale(kalshiFeedTradeFromApi(trade), {
+        isLive: false,
+        netEvPercent: trade.netEvPercent ?? null,
+      })
+    )
+    .filter((trade) => meetsProductFeedEvThreshold(trade.netEvPercent))
+    .map((trade) =>
+      stampWhaleFeedAdmissionEv(trade, trade.netEvPercent as number)
+    )
+    .sort(byDetectedDesc)
+    .slice(0, WHALE_FEED_SEED_LIMIT);
+}
+
 function stampWhaleForFeedAdmission(
   trade: WhaleTrade,
   pipelineEvIndex: Map<string, PipelineTradeEv>
@@ -429,6 +446,17 @@ export function useWhaleFeed() {
           for (const trade of payload.kalshi) merged.set(trade.id, trade);
           return Array.from(merged.values());
         });
+
+        const kalshiSeedCandidates = seedKalshiWhalesToBuffer(payload.kalshi);
+        if (kalshiSeedCandidates.length > 0) {
+          setWhaleBuffer((prev) => {
+            const merged = prependWhaleBuffer(prev, kalshiSeedCandidates);
+            for (const trade of kalshiSeedCandidates) {
+              whaleBufferSeen.current.add(whaleKey(trade));
+            }
+            return merged;
+          });
+        }
       }
       for (const w of whales) {
         if (w.transactionHash) seenHashes.current.add(w.transactionHash);
@@ -460,6 +488,16 @@ export function useWhaleFeed() {
           if (seeded.length > 0) {
             const hydrated = seeded
               .filter((trade) => meetsProductFeedEvThreshold(trade.netEvPercent))
+              .map((trade) => {
+                if (
+                  trade.source === "kalshi" &&
+                  trade.netEvPercent != null &&
+                  meetsProductFeedEvThreshold(trade.netEvPercent)
+                ) {
+                  return stampWhaleFeedAdmissionEv(trade, trade.netEvPercent);
+                }
+                return trade;
+              })
               .sort(byDetectedDesc)
               .slice(0, WHALE_FEED_SEED_LIMIT);
             setWhaleBuffer((prev) => prependWhaleBuffer(prev, hydrated));
@@ -738,23 +776,17 @@ export function useWhaleFeed() {
     }
 
     for (const whale of qualifiedKalshiWhales) {
-      if (!whale.isLive) continue;
       const key = whaleKey(whale);
       if (!key || whaleBufferSeen.current.has(key)) continue;
-      const admitted = stampWhaleForFeedAdmission(whale, pipelineEvIndex);
-      if (!admitted) continue;
-      whaleBufferSeen.current.add(key);
-      incoming.push(admitted);
-    }
-
-    for (const trade of mergedKalshiFeedTrades) {
-      const whale = kalshiFeedTradeToWhale(trade, {
-        isLive: true,
-        netEvPercent: trade.netEvPercent ?? null,
-      });
-      const key = whaleKey(whale);
-      if (!key || whaleBufferSeen.current.has(key)) continue;
-      if (!isKalshiWhaleEligibleForLiveFeed(whale, pipelineEvIndex, loggedFilterRejects.current)) continue;
+      if (
+        !isKalshiWhaleEligibleForLiveFeed(
+          whale,
+          pipelineEvIndex,
+          loggedFilterRejects.current
+        )
+      ) {
+        continue;
+      }
       const admitted = stampWhaleForFeedAdmission(whale, pipelineEvIndex);
       if (!admitted) continue;
       whaleBufferSeen.current.add(key);
@@ -782,7 +814,6 @@ export function useWhaleFeed() {
   }, [
     liveWhales,
     qualifiedKalshiWhales,
-    mergedKalshiFeedTrades,
     qualifiedPolymarketWhales,
     backfillLoaded,
     pipelineEvIndex,

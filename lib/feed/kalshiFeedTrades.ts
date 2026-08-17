@@ -277,8 +277,9 @@ export function diagnoseKalshiFeedTradeGate(
 }
 
 /**
- * Kalshi product-feed gate — flat $500 stake + relaxed product feed EV floor.
- * Uses contract mid fallback when pipeline ensemble EV is unmapped.
+ * Kalshi product-feed gate — flat $500 stake + +3.0% trade EV only.
+ * No Polymarket wallet credibility checks. Uses contract mid fallback when
+ * pipeline ensemble EV is unmapped.
  */
 export function evaluateKalshiFeedTradeGate(
   trade: WhaleTrade,
@@ -286,6 +287,21 @@ export function evaluateKalshiFeedTradeGate(
   context: KalshiFeedGateContext = {}
 ): KalshiFeedGateResult {
   const result = diagnoseKalshiFeedTradeGate(trade, pipelineEvIndex);
+  const isEligible = result.passed;
+
+  if (process.env.NODE_ENV !== "production" && isKalshiRow(trade)) {
+    console.log(
+      "[Kalshi Gate]",
+      trade.ticker ?? trade.id,
+      "Stake:",
+      trade.usdNotional,
+      "EV:",
+      result.calculatedEvPercent,
+      "Eligible:",
+      isEligible
+    );
+  }
+
   const shouldLog =
     !result.passed &&
     context.logRejection !== false &&

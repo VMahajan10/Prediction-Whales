@@ -1,6 +1,7 @@
 import "server-only";
 
 import { mapWithConcurrency } from "@/lib/clvPriceHistory";
+import { indexPipelineTradeEvAliases } from "@/lib/evPipeline/crossAssetLookup";
 import { ensureFullyComputedTradeEv } from "@/lib/evPipeline/resolveTradeEv";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import {
@@ -16,6 +17,7 @@ import {
   meetsProductFeedEvThreshold,
   meetsProductFeedStakeThreshold,
 } from "@/lib/feedQualification";
+import { pipelineEvKeyForTrade } from "@/lib/pipelineEvLookupHelpers";
 import {
   KALSHI_TRADES_MAX_PAGES_INCREMENTAL,
   KALSHI_TRADES_MAX_PAGES_INITIAL,
@@ -156,8 +158,7 @@ async function resolveCachedKalshiPipelineEv(
         kalshiTicker: bucket.ticker,
         tradePrice: bucket.price,
       });
-      if (key) index.set(key, pipeline);
-      index.set(lookupKey, pipeline);
+      indexPipelineTradeEvAliases(index, pipeline, key ?? lookupKey);
     } catch {
       // Skip tickers without cached EV.
     }
@@ -166,14 +167,21 @@ async function resolveCachedKalshiPipelineEv(
   return index;
 }
 
+function resolveKalshiPipelineFromIndex(
+  trade: FeedTrade,
+  pipelineEvIndex: Map<string, PipelineTradeEv>
+): PipelineTradeEv | null {
+  const key = pipelineEvKeyForTrade(trade);
+  if (!key) return null;
+  return pipelineEvIndex.get(key) ?? null;
+}
+
 function kalshiTradeEvPercent(
   trade: FeedTrade,
   pipelineEvIndex: Map<string, PipelineTradeEv>
 ): number | null {
   if (!trade.ticker?.trim()) return null;
-  const ticker = trade.ticker.trim().toUpperCase();
-  const lookupKey = normalizePipelineLookupKey(`kalshi:${ticker}`, "kalshi");
-  const pipeline = pipelineEvIndex.get(lookupKey);
+  const pipeline = resolveKalshiPipelineFromIndex(trade, pipelineEvIndex);
   const whale = kalshiFeedTradeToWhale({
     id: trade.id,
     title: trade.title,
@@ -215,8 +223,7 @@ async function hydrateKalshiTradeEvPercent(
       kalshiTicker: ticker,
       tradePrice: trade.price,
     });
-    if (key) pipelineEvIndex.set(key, pipeline);
-    pipelineEvIndex.set(lookupKey, pipeline);
+    indexPipelineTradeEvAliases(pipelineEvIndex, pipeline, key ?? lookupKey);
   } catch {
     return cached;
   }

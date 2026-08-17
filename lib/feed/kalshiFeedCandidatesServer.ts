@@ -1,12 +1,16 @@
 import "server-only";
 
-import { meetsProductFeedStakeThreshold } from "@/lib/feedQualification";
+import {
+  meetsProductFeedEvThreshold,
+  meetsProductFeedStakeThreshold,
+} from "@/lib/feedQualification";
 import { fetchKalshiTrades } from "@/lib/kalshiTradesServer";
 import type { FeedTrade } from "@/lib/feedTradeTypes";
 
 /**
- * Transient Kalshi product-feed candidates — stake-qualified only, no EV gate.
- * Raw Kalshi API data is not persisted (Kalshi Developer Agreement §3.1).
+ * Transient Kalshi product-feed candidates — stake + trade EV qualified only.
+ * No wallet checks (Kalshi exposes no trader identity). Raw API rows are not
+ * persisted beyond shadow logging for qualifying trades.
  */
 export async function collectKalshiFeedCandidates(
   minTs?: number
@@ -15,8 +19,11 @@ export async function collectKalshiFeedCandidates(
   const stakeQualified = trades.filter((trade) =>
     meetsProductFeedStakeThreshold(trade.usdNotional)
   );
-  console.log(
-    `[kalshi/feed] candidates stakeQualified=${stakeQualified.length} total=${trades.length}`
+  const evQualified = stakeQualified.filter((trade) =>
+    meetsProductFeedEvThreshold(trade.netEvPercent)
   );
-  return stakeQualified;
+  console.log(
+    `[kalshi/feed] candidates evQualified=${evQualified.length} stakeQualified=${stakeQualified.length} total=${trades.length}`
+  );
+  return evQualified;
 }
