@@ -9,11 +9,14 @@ import {
 import {
   resolveContractMidEvFallback,
   resolveFeedTradeEvPercent,
+  entryPriceEvPercent,
 } from "@/lib/feedTradeEv";
 import { KALSHI_TRADER_ALIAS } from "@/lib/trades/whaleAliasConstants";
 import { normalizeFeedPlatform } from "@/lib/liveFeedMerge";
+import { normalizeKalshiTicker } from "@/lib/evPipeline/crossAssetLookup";
+import { normalizeIncomingTradePrice } from "@/lib/evPipeline/tradeEvRecord";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
-import { resolvePipelineEvForWhale } from "@/lib/pipelineEvClient";
+import { resolvePipelineEvForWhale } from "@/lib/pipelineEvLookupHelpers";
 import { tradeToWhale, type WhaleTrade } from "@/lib/whaleTrades";
 
 /**
@@ -85,7 +88,7 @@ export function kalshiFeedTradeToWhale(
       isLive: options?.isLive ?? true,
       usdNotional: trade.usdNotional,
       source: "kalshi",
-      ticker: trade.ticker?.trim().toUpperCase(),
+      ticker: normalizeKalshiTicker(trade.ticker) ?? undefined,
     }
   );
 
@@ -147,7 +150,41 @@ export function resolveKalshiFeedTradeEvPercent(
   );
   if (authoritative != null) return authoritative;
 
-  return resolveKalshiContractEvFallback(trade.price, pipeline);
+  const contractFallback = resolveKalshiContractEvFallback(trade.price, pipeline);
+  if (contractFallback != null) return contractFallback;
+
+  return resolveKalshiUnmappedEntryEvFallback(trade, pipeline);
+}
+
+/**
+ * When the pipeline index misses (null) or returns unmapped without mids,
+ * use stamped poll EV or entry-anchored edge vs implied market reference.
+ */
+function resolveKalshiUnmappedEntryEvFallback(
+  trade: WhaleTrade,
+  pipeline?: PipelineTradeEv | null
+): number | null {
+  if (!meetsKalshiFeedStakeThreshold(trade)) return null;
+
+  const entry = normalizeIncomingTradePrice(trade.price);
+  if (entry == null || entry <= 0) return null;
+
+  const impliedMarket =
+    pipeline?.pMarket ??
+    pipeline?.kalshiMid ??
+    pipeline?.pmMid ??
+    null;
+
+  if (pipeline?.pTrue != null && Number.isFinite(pipeline.pTrue)) {
+    const fromPTrue = entryPriceEvPercent(pipeline.pTrue, entry);
+    if (fromPTrue != null) return fromPTrue;
+  }
+
+  if (impliedMarket != null && Number.isFinite(impliedMarket)) {
+    return entryPriceEvPercent(impliedMarket, entry);
+  }
+
+  return null;
 }
 
 function formatEvForLog(evPercent: number | null): string {
@@ -201,7 +238,7 @@ export function diagnoseKalshiFeedTradeGate(
     stakeUsd: trade.usdNotional,
     requiredStakeFloorUsd: MIN_PRODUCT_FEED_STAKE_USD,
     requiredEvPercent,
-    ticker: trade.ticker?.trim() || null,
+    ticker: normalizeKalshiTicker(trade.ticker) ?? null,
     pipelineStatus: null as KalshiFeedGateResult["pipelineStatus"],
   };
 

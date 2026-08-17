@@ -6,16 +6,19 @@ import {
 } from "@/lib/feedQualification";
 import { fetchKalshiTrades } from "@/lib/kalshiTradesServer";
 import type { FeedTrade } from "@/lib/feedTradeTypes";
+import { flushKalshiShadowTradesNow } from "@/lib/x-agent/kalshiShadowTrades";
 
 /**
  * Transient Kalshi product-feed candidates — stake + trade EV qualified only.
- * No wallet checks (Kalshi exposes no trader identity). Raw API rows are not
- * persisted beyond shadow logging for qualifying trades.
+ * No wallet checks (Kalshi exposes no trader identity). Qualifying rows are
+ * shadow-logged during {@link fetchKalshiTrades} for /api/trades/recent hydration.
  */
 export async function collectKalshiFeedCandidates(
   minTs?: number
 ): Promise<FeedTrade[]> {
   const trades = await fetchKalshiTrades(minTs);
+  await flushKalshiShadowTradesNow();
+
   const stakeQualified = trades.filter((trade) =>
     meetsProductFeedStakeThreshold(trade.usdNotional)
   );
@@ -23,7 +26,7 @@ export async function collectKalshiFeedCandidates(
     meetsProductFeedEvThreshold(trade.netEvPercent)
   );
   console.log(
-    `[kalshi/feed] candidates evQualified=${evQualified.length} stakeQualified=${stakeQualified.length} total=${trades.length}`
+    `[kalshi/feed] candidates evQualified=${evQualified.length} stakeQualified=${stakeQualified.length} total=${trades.length} shadowFlush=ok`
   );
   return evQualified;
 }

@@ -16,6 +16,7 @@ import {
 import {
   pipelineEvKeyForTrade,
   pipelineEvKeyForWhale,
+  resolvePipelineEvForWhale as resolvePipelineEvForWhaleFromIndex,
   resolvePipelineEvFromIndex,
 } from "@/lib/pipelineEvLookupHelpers";
 import type { PipelineEvRequestItem } from "@/lib/types/ev";
@@ -123,19 +124,10 @@ export function resolvePipelineEvForWhale(
   index: Map<string, PipelineTradeEv>,
   trade: WhaleTrade
 ): PipelineTradeEv | null {
-  const key = pipelineEvKeyForWhale(trade);
-  if (!key) return null;
-
-  const platform = (trade.platform ?? trade.source ?? "").toLowerCase();
-  const pipeline = resolvePipelineEvFromIndex(index, key, {
-    tokenId: platform === "polymarket" ? trade.assetId : null,
-    kalshiTicker: platform === "kalshi" ? trade.ticker ?? null : null,
-  });
-
+  const pipeline = resolvePipelineEvForWhaleFromIndex(index, trade);
   if (pipeline) {
     logPipelineEvDebug(trade, pipeline);
   }
-
   return pipeline;
 }
 

@@ -1,7 +1,10 @@
 import "server-only";
 
 import { mapWithConcurrency } from "@/lib/clvPriceHistory";
-import { indexPipelineTradeEvAliases } from "@/lib/evPipeline/crossAssetLookup";
+import {
+  indexPipelineTradeEvAliases,
+  normalizeKalshiTicker,
+} from "@/lib/evPipeline/crossAssetLookup";
 import { ENSEMBLE_LLM_TIMEOUT_MS } from "@/lib/evPipeline/ensemblePricingFallback";
 import { ensureFullyComputedTradeEv } from "@/lib/evPipeline/resolveTradeEv";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
@@ -119,7 +122,7 @@ function normalizeKalshiTrade(
     usdNotional,
     timestamp: parseTimestamp(raw.created_time, nowEpochSeconds),
     traceable: true,
-    ticker: raw.ticker.trim().toUpperCase(),
+    ticker: normalizeKalshiTicker(raw.ticker) ?? raw.ticker.trim().toUpperCase(),
     selectionLabel: market.selectionLabel ?? undefined,
     isBlockTrade: raw.is_block_trade === true,
   };
@@ -164,7 +167,7 @@ async function ensureKalshiTickerPipelineEv(
   price: number,
   pipelineEvIndex: Map<string, PipelineTradeEv>
 ): Promise<PipelineTradeEv> {
-  const normalizedTicker = ticker.trim().toUpperCase();
+  const normalizedTicker = normalizeKalshiTicker(ticker) ?? ticker.trim().toUpperCase();
   const lookupKey = normalizePipelineLookupKey(
     `kalshi:${normalizedTicker}`,
     "kalshi"
@@ -220,7 +223,7 @@ export async function resolveCachedKalshiPipelineEv(
 
   for (const trade of trades) {
     if (!trade.ticker?.trim()) continue;
-    const ticker = trade.ticker.trim().toUpperCase();
+    const ticker = normalizeKalshiTicker(trade.ticker) ?? trade.ticker.trim().toUpperCase();
     if (!byTicker.has(ticker)) {
       byTicker.set(ticker, { ticker, price: trade.price });
     }

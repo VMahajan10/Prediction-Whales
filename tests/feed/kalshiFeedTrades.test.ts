@@ -163,6 +163,26 @@ describe("isKalshiTradeEligibleForFeed", () => {
     expect(result.reason).toBe("missing_trade_ev");
   });
 
+  it("admits via entry-price fallback when pipeline index misses but pTrue is on row", () => {
+    const whale = kalshiFeedTradeToWhale({
+      ...macroTrade,
+      ticker: "KXFED-26OCT-T3.00",
+      price: 0.4,
+    });
+    const pipeline = {
+      key: pipelineEvLookupKeyKalshi("KXFED-26OCT-T3.00"),
+      status: "unmapped",
+      kalshiTicker: "KXFED-26OCT-T3.00",
+      pTrue: 0.5,
+      pMarket: null,
+      pmMid: null,
+      kalshiMid: null,
+      netEvPercent: null,
+    } as PipelineTradeEv;
+
+    expect(resolveKalshiFeedTradeEvPercent(whale, pipeline)).toBeCloseTo(25, 5);
+  });
+
   it("admits via contract mid fallback when ensemble EV is unmapped", () => {
     const whale = kalshiFeedTradeToWhale({ ...sportsTrade, price: 0.4 });
     expect(
