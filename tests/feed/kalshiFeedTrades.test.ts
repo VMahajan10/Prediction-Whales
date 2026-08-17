@@ -216,6 +216,21 @@ describe("isKalshiTradeEligibleForFeed", () => {
     expect(resolveKalshiFeedTradeEvPercent(whale, null)).toBeNull();
   });
 
+  it("admits NO-side trades via PM mid converted to NO probability space", () => {
+    const whale = kalshiFeedTradeToWhale({
+      ...sportsTrade,
+      outcome: "No",
+      price: 0.35,
+    });
+    expect(
+      isKalshiTradeEligibleForFeed(
+        whale,
+        unmappedWithPmMid(sportsTrade.ticker, 0.6),
+        { logRejection: false }
+      )
+    ).toBe(true);
+  });
+
   it("admits when trade carries precomputed netEvPercent", () => {
     const whale = kalshiFeedTradeToWhale(sportsTrade, { netEvPercent: 4.2 });
     expect(

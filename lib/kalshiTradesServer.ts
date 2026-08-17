@@ -5,6 +5,7 @@ import {
   indexPipelineTradeEvAliases,
   normalizeKalshiTicker,
 } from "@/lib/evPipeline/crossAssetLookup";
+import { normalizeKalshiOutcomeSide } from "@/lib/evPipeline/kalshiOutcomeEv";
 import { ENSEMBLE_LLM_TIMEOUT_MS } from "@/lib/evPipeline/ensemblePricingFallback";
 import { ensureFullyComputedTradeEv } from "@/lib/evPipeline/resolveTradeEv";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
@@ -154,6 +155,26 @@ function logKalshiPipelineIngest(
   });
 }
 
+function kalshiPipelineInputFromTrade(
+  trade: Pick<FeedTrade, "ticker" | "price" | "title" | "outcome">
+): {
+  source: "kalshi";
+  kalshiTicker: string;
+  tradePrice: number;
+  title: string;
+  kalshiOutcomeSide: "yes" | "no";
+} {
+  const normalizedTicker =
+    normalizeKalshiTicker(trade.ticker) ?? trade.ticker!.trim().toUpperCase();
+  return {
+    source: "kalshi",
+    kalshiTicker: normalizedTicker,
+    tradePrice: trade.price,
+    title: trade.title?.trim() || normalizedTicker,
+    kalshiOutcomeSide: normalizeKalshiOutcomeSide(trade.outcome),
+  };
+}
+
 function kalshiProbeTrade(ticker: string, price: number): FeedTrade {
   return {
     id: `probe:${ticker}`,
@@ -171,21 +192,17 @@ function kalshiProbeTrade(ticker: string, price: number): FeedTrade {
 }
 
 async function ensureKalshiTickerPipelineEv(
-  ticker: string,
-  price: number,
+  trade: Pick<FeedTrade, "ticker" | "price" | "title" | "outcome">,
   pipelineEvIndex: Map<string, PipelineTradeEv>,
   options?: { preferDynamicCompute?: boolean }
 ): Promise<PipelineTradeEv> {
-  const normalizedTicker = normalizeKalshiTicker(ticker) ?? ticker.trim().toUpperCase();
+  const normalizedTicker =
+    normalizeKalshiTicker(trade.ticker) ?? trade.ticker!.trim().toUpperCase();
   const lookupKey = normalizePipelineLookupKey(
     `kalshi:${normalizedTicker}`,
     "kalshi"
   );
-  const input = {
-    source: "kalshi" as const,
-    kalshiTicker: normalizedTicker,
-    tradePrice: price,
-  };
+  const input = kalshiPipelineInputFromTrade(trade);
   const key = pipelineEvLookupKey(input) ?? lookupKey;
 
   const applyPipeline = (pipeline: PipelineTradeEv) => {
@@ -194,7 +211,7 @@ async function ensureKalshiTickerPipelineEv(
   };
 
   const resolveProbeEv = () => {
-    const probe = kalshiProbeTrade(normalizedTicker, price);
+    const probe = kalshiProbeTrade(normalizedTicker, trade.price);
     return kalshiTradeEvPercent(probe, pipelineEvIndex);
   };
 
@@ -248,26 +265,26 @@ async function ensureKalshiTickerPipelineEv(
 
 /** Build a Kalshi pipeline EV index — cache-first, then dynamic compute on miss. */
 export async function resolveCachedKalshiPipelineEv(
-  trades: Array<Pick<FeedTrade, "ticker" | "price">>
+  trades: Array<Pick<FeedTrade, "ticker" | "price" | "title" | "outcome">>
 ): Promise<Map<string, PipelineTradeEv>> {
   const index = new Map<string, PipelineTradeEv>();
-  const byTicker = new Map<string, { ticker: string; price: number }>();
+  const byTicker = new Map<
+    string,
+    Pick<FeedTrade, "ticker" | "price" | "title" | "outcome">
+  >();
 
   for (const trade of trades) {
     if (!trade.ticker?.trim()) continue;
-    const ticker = normalizeKalshiTicker(trade.ticker) ?? trade.ticker.trim().toUpperCase();
+    const ticker =
+      normalizeKalshiTicker(trade.ticker) ?? trade.ticker.trim().toUpperCase();
     if (!byTicker.has(ticker)) {
-      byTicker.set(ticker, { ticker, price: trade.price });
+      byTicker.set(ticker, { ...trade, ticker });
     }
   }
 
   await mapWithConcurrency(Array.from(byTicker.values()), 4, async (bucket) => {
     try {
-      await ensureKalshiTickerPipelineEv(
-        bucket.ticker,
-        bucket.price,
-        index
-      );
+      await ensureKalshiTickerPipelineEv(bucket, index);
     } catch (error) {
       console.warn(
         "[Kalshi Pipeline] ticker EV resolve failed",
@@ -329,12 +346,9 @@ export async function hydrateKalshiTradeEvPercent(
   if (!trade.ticker?.trim()) return cached;
 
   try {
-    await ensureKalshiTickerPipelineEv(
-      trade.ticker,
-      trade.price,
-      pipelineEvIndex,
-      { preferDynamicCompute: meetsProductFeedStakeThreshold(trade.usdNotional) }
-    );
+    await ensureKalshiTickerPipelineEv(trade, pipelineEvIndex, {
+      preferDynamicCompute: meetsProductFeedStakeThreshold(trade.usdNotional),
+    });
   } catch {
     return cached;
   }

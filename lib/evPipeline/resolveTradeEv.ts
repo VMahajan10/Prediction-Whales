@@ -9,6 +9,11 @@ import {
   pipelineMappingPairKey,
 } from "@/lib/evPipeline/crossAssetLookup";
 import {
+  kalshiMidForOutcome,
+  kalshiOutcomeEntryEvPercent,
+  normalizeKalshiOutcomeSide,
+} from "@/lib/evPipeline/kalshiOutcomeEv";
+import {
   applyExecutionPricingToTradeEv,
   buildPipelineTradeEvFromPricing,
   resolveMarketPrior,
@@ -161,6 +166,7 @@ export async function createLowConfidencePipelineTradeEv(
       kalshiTicker,
       mappingPairKey,
       executionPrice: item.tradePrice,
+      kalshiOutcomeSide: normalizeKalshiOutcomeSide(item.kalshiOutcomeSide),
     })
   );
 }
@@ -738,6 +744,15 @@ export async function ensureFullyComputedTradeEv(
       normalizeKalshiTicker(item.kalshiTicker),
       { liveFallback: false }
     );
+    if (item.source === "kalshi") {
+      const kalshiCached = tryFinalize(
+        await buildKalshiTradeEvFallback(lookupKey, item, null)
+      );
+      if (kalshiCached) {
+        await cacheTradeEvLookup(lookupKey, kalshiCached);
+        return kalshiCached;
+      }
+    }
     return {
       ...createUnmappedPipelineTradeEv(lookupKey, item),
       pmMid: books.pmMid,
@@ -788,6 +803,19 @@ export async function ensureFullyComputedTradeEv(
     );
   }
 
+  if (item.source === "kalshi") {
+    const kalshiFallback = await buildKalshiTradeEvFallback(
+      lookupKey,
+      item,
+      resolvedMapping
+    );
+    const finalizedKalshi = tryFinalize(kalshiFallback);
+    if (finalizedKalshi) {
+      await cacheTradeEvLookup(lookupKey, finalizedKalshi);
+      return finalizedKalshi;
+    }
+  }
+
   if (canResolvePTrueAsset(item)) {
     const lowConfidence = await createLowConfidencePipelineTradeEv(
       lookupKey,
@@ -802,19 +830,6 @@ export async function ensureFullyComputedTradeEv(
     }
     await cacheTradeEvLookup(lookupKey, lowConfidence);
     return lowConfidence;
-  }
-
-  if (item.source === "kalshi") {
-    const kalshiFallback = await buildKalshiTradeEvFallback(
-      lookupKey,
-      item,
-      resolvedMapping
-    );
-    const finalizedKalshi = tryFinalize(kalshiFallback);
-    if (finalizedKalshi) {
-      await cacheTradeEvLookup(lookupKey, finalizedKalshi);
-      return finalizedKalshi;
-    }
   }
 
   return createUnmappedPipelineTradeEv(lookupKey, item);
@@ -858,6 +873,7 @@ async function buildKalshiTradeEvFallback(
   const kalshiTicker = normalizeKalshiTicker(item.kalshiTicker);
   if (!kalshiTicker) return null;
 
+  const outcome = normalizeKalshiOutcomeSide(item.kalshiOutcomeSide);
   const tokenId = normalizePmTokenId(
     item.tokenId ??
       mapping?.polymarketTokenId ??
@@ -869,6 +885,41 @@ async function buildKalshiTradeEvFallback(
     tokenId && kalshiTicker
       ? pipelineMappingPairKey(tokenId, kalshiTicker)
       : null;
+
+  if (
+    tokenId &&
+    books.pmMid != null &&
+    Number.isFinite(books.pmMid) &&
+    executionPrice != null &&
+    executionPrice > 0
+  ) {
+    const pmFair = kalshiMidForOutcome(books.pmMid, outcome);
+    if (pmFair != null) {
+      const netEvPercent = kalshiOutcomeEntryEvPercent(pmFair, executionPrice);
+      if (netEvPercent != null && Number.isFinite(netEvPercent)) {
+        return attachAverageEvField({
+          key: lookupKey,
+          status: "ok",
+          tokenId,
+          kalshiTicker,
+          mappingPairKey,
+          pTrue: pmFair,
+          pMarket: executionPrice,
+          pmMid: books.pmMid,
+          kalshiMid: books.kalshiMid,
+          netEvPercent,
+          grossEvPercent: netEvPercent,
+          averageEv: netEvPercent,
+          netEv: 0,
+          grossEv: 0,
+          pTrueSource: "cross_venue_ob",
+          pTrueConfidence: 0.55,
+          pTrueLowConfidence: false,
+          evFormulaVersion: "kalshi_cross_venue_pm",
+        });
+      }
+    }
+  }
 
   if (executionPrice != null) {
     const pTrueResult = await resolvePTrue({
@@ -886,8 +937,8 @@ async function buildKalshiTradeEvFallback(
       ensemblePTrue: authoritativeMappingEnsemblePTrue(mapping),
       fetchEnsemble: true,
       fetchExchangeConsensus: true,
-      computeEnsembleIfMissing: false,
-      computeRagIfMissing: false,
+      computeEnsembleIfMissing: Boolean(item.title?.trim() || item.kalshiTicker),
+      computeRagIfMissing: Boolean(item.title?.trim() || item.kalshiTicker),
     });
 
     const fromPTrue = attachAverageEvField(
@@ -898,50 +949,21 @@ async function buildKalshiTradeEvFallback(
           kalshiTicker,
           mappingPairKey,
           executionPrice,
+          kalshiOutcomeSide: outcome,
         }),
         lookupKey
       )
     );
+    const standaloneMidOnly =
+      fromPTrue.pTrueSource === "standalone_ob" ||
+      fromPTrue.pTrueSource === "execution_price";
     if (
       fromPTrue.status === "ok" &&
       fromPTrue.netEvPercent != null &&
-      Number.isFinite(fromPTrue.netEvPercent)
+      Number.isFinite(fromPTrue.netEvPercent) &&
+      !standaloneMidOnly
     ) {
       return fromPTrue;
-    }
-  }
-
-  if (
-    tokenId &&
-    books.pmMid != null &&
-    Number.isFinite(books.pmMid) &&
-    executionPrice != null &&
-    executionPrice > 0
-  ) {
-    const pTrue = books.pmMid;
-    const netEvPercent =
-      ((pTrue - executionPrice) / executionPrice) * 100;
-    if (netEvPercent != null && Number.isFinite(netEvPercent)) {
-      return attachAverageEvField({
-        key: lookupKey,
-        status: "ok",
-        tokenId,
-        kalshiTicker,
-        mappingPairKey,
-        pTrue,
-        pMarket: executionPrice,
-        pmMid: books.pmMid,
-        kalshiMid: books.kalshiMid,
-        netEvPercent,
-        grossEvPercent: netEvPercent,
-        averageEv: netEvPercent,
-        netEv: 0,
-        grossEv: 0,
-        pTrueSource: "cross_venue_ob",
-        pTrueConfidence: 0.55,
-        pTrueLowConfidence: false,
-        evFormulaVersion: "kalshi_cross_venue_pm",
-      });
     }
   }
 
@@ -1061,6 +1083,7 @@ async function resolveTradeEvViaEnsemblePricing(
         kalshiTicker,
         mappingPairKey,
         executionPrice: enriched.tradePrice,
+        kalshiOutcomeSide: normalizeKalshiOutcomeSide(enriched.kalshiOutcomeSide),
       }),
       lookupKey
     )

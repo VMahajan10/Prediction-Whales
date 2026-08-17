@@ -14,6 +14,10 @@ import {
 import { KALSHI_TRADER_ALIAS } from "@/lib/trades/whaleAliasConstants";
 import { normalizeFeedPlatform } from "@/lib/liveFeedMerge";
 import { normalizeKalshiTicker } from "@/lib/evPipeline/crossAssetLookup";
+import {
+  normalizeKalshiOutcomeSide,
+  pipelineFairMidsForKalshiOutcome,
+} from "@/lib/evPipeline/kalshiOutcomeEv";
 import { normalizeIncomingTradePrice } from "@/lib/evPipeline/tradeEvRecord";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import { resolvePipelineEvForWhale } from "@/lib/pipelineEvLookupHelpers";
@@ -131,9 +135,17 @@ export function isKalshiTradeStakeCandidate(trade: WhaleTrade): boolean {
  */
 export function resolveKalshiContractEvFallback(
   entryPrice: number,
-  pipeline?: PipelineTradeEv | null
+  pipeline?: PipelineTradeEv | null,
+  outcome?: string | null
 ): number | null {
-  return resolveContractMidEvFallback(entryPrice, pipeline);
+  const outcomeSide = normalizeKalshiOutcomeSide(outcome);
+  const adjusted = pipeline
+    ? {
+        ...pipeline,
+        ...pipelineFairMidsForKalshiOutcome(pipeline, outcomeSide),
+      }
+    : null;
+  return resolveContractMidEvFallback(entryPrice, adjusted);
 }
 
 /** Resolve Kalshi feed trade EV — authoritative pipeline first, then contract mid fallback. */
@@ -151,7 +163,11 @@ export function resolveKalshiFeedTradeEvPercent(
   );
   if (authoritative != null) return authoritative;
 
-  const contractFallback = resolveKalshiContractEvFallback(trade.price, pipeline);
+  const contractFallback = resolveKalshiContractEvFallback(
+    trade.price,
+    pipeline,
+    trade.outcome
+  );
   if (contractFallback != null) return contractFallback;
 
   return resolveKalshiUnmappedEntryEvFallback(trade, pipeline);
@@ -170,14 +186,19 @@ function resolveKalshiUnmappedEntryEvFallback(
   const entry = normalizeIncomingTradePrice(trade.price);
   if (entry == null || entry <= 0) return null;
 
+  const outcomeSide = normalizeKalshiOutcomeSide(trade.outcome);
+  const fairMids = pipeline
+    ? pipelineFairMidsForKalshiOutcome(pipeline, outcomeSide)
+    : null;
+
   const impliedMarket =
-    pipeline?.pMarket ??
-    pipeline?.kalshiMid ??
-    pipeline?.pmMid ??
+    fairMids?.pMarket ??
+    fairMids?.kalshiMid ??
+    fairMids?.pmMid ??
     null;
 
-  if (pipeline?.pTrue != null && Number.isFinite(pipeline.pTrue)) {
-    const fromPTrue = entryPriceEvPercent(pipeline.pTrue, entry);
+  if (fairMids?.pTrue != null && Number.isFinite(fairMids.pTrue)) {
+    const fromPTrue = entryPriceEvPercent(fairMids.pTrue, entry);
     if (fromPTrue != null) return fromPTrue;
   }
 

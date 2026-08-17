@@ -16,6 +16,11 @@ import {
   normalizeKalshiTicker,
   normalizePmTokenId,
 } from "@/lib/evPipeline/crossAssetLookup";
+import {
+  kalshiMidForOutcome,
+  normalizeKalshiOutcomeSide,
+  type KalshiOutcomeSide,
+} from "@/lib/evPipeline/kalshiOutcomeEv";
 
 export interface TradeEvDisplayResult {
   grossEv: number;
@@ -98,10 +103,12 @@ export function buildPipelineTradeEvFromPTrue(
     kalshiTicker?: string | null;
     mappingPairKey?: string | null;
     executionPrice?: number | null;
+    kalshiOutcomeSide?: KalshiOutcomeSide;
   }
 ): PipelineTradeEv {
   const tokenId = normalizePmTokenId(params.tokenId);
   const kalshiTicker = normalizeKalshiTicker(params.kalshiTicker);
+  const outcome = normalizeKalshiOutcomeSide(params.kalshiOutcomeSide);
 
   if (!isAuthoritativePTrueForEv(pTrueResult)) {
     return abstainPipelineTradeEvFromPTrue(lookupKey, pTrueResult, {
@@ -114,26 +121,34 @@ export function buildPipelineTradeEvFromPTrue(
   const platformMid =
     params.platform === "polymarket"
       ? pTrueResult.pmMid
-      : pTrueResult.kalshiMid;
+      : kalshiMidForOutcome(pTrueResult.kalshiMid, outcome);
+
+  const fairPTrue =
+    params.platform === "kalshi"
+      ? kalshiMidForOutcome(pTrueResult.pTrue, outcome) ?? pTrueResult.pTrue
+      : pTrueResult.pTrue;
 
   const evDisplay = computeTradeEvDisplay({
-    pTrue: pTrueResult.pTrue,
+    pTrue: fairPTrue,
     executionPrice: params.executionPrice,
     platform: params.platform,
     pMarketFallback: platformMid ?? pTrueResult.marketPrior,
   });
 
-  return attachEvMetadata(
-    {
-      key: lookupKey,
-      status: "ok",
-      tokenId,
-      kalshiTicker,
-      mappingPairKey: params.mappingPairKey ?? null,
-      netEvPercent: null,
-      netEv: 0,
-    },
-    pTrueResult,
-    evDisplay
-  );
+  return {
+    ...attachEvMetadata(
+      {
+        key: lookupKey,
+        status: "ok",
+        tokenId,
+        kalshiTicker,
+        mappingPairKey: params.mappingPairKey ?? null,
+        netEvPercent: null,
+        netEv: 0,
+      },
+      pTrueResult,
+      evDisplay
+    ),
+    pTrue: fairPTrue,
+  };
 }

@@ -86,6 +86,8 @@ export interface PipelineTradeEvInput {
   title?: string;
   /** Polymarket slug for sportsbook / RAG context. */
   slug?: string;
+  /** Kalshi contract side — YES mids are converted to NO space when `no`. */
+  kalshiOutcomeSide?: "yes" | "no";
 }
 
 export type PipelineTradeEvStatus = "ok" | "unmapped" | "error" | "timeout";

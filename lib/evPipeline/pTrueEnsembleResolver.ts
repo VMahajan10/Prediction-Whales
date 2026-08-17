@@ -335,7 +335,7 @@ export async function resolvePTrue(
 
   if (
     ensemblePTrue == null &&
-    (input.title || input.tokenId || input.slug)
+    (input.title || input.tokenId || input.slug || input.kalshiTicker)
   ) {
     const consensusUnresolved =
       Boolean(input.fetchExchangeConsensus) &&
