@@ -72,6 +72,8 @@ export interface PTrueResolveInput extends PTrueResolveSyncInput {
    * Pass `null` to disable the cap (cron / pipeline warm).
    */
   ensembleLlmTimeoutMs?: number | null;
+  /** Live Kalshi feed — use order-book tiers only, never block on OpenAI ensemble. */
+  skipEnsembleLlm?: boolean;
 }
 
 export const EV_FORMULA_VERSION = "binary_true_ev_v1" as const;

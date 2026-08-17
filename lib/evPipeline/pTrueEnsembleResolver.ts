@@ -337,14 +337,19 @@ export async function resolvePTrue(
     ensemblePTrue == null &&
     (input.title || input.tokenId || input.slug || input.kalshiTicker)
   ) {
+    const kalshiObFastPath =
+      input.platform === "kalshi" &&
+      (isFiniteProb(input.pmMid) || isFiniteProb(input.kalshiMid));
     const consensusUnresolved =
       Boolean(input.fetchExchangeConsensus) &&
       input.platform === "polymarket" &&
       !isFiniteProb(exchangeMid);
     const needsRag =
-      input.computeEnsembleIfMissing ||
-      input.computeRagIfMissing ||
-      consensusUnresolved;
+      !input.skipEnsembleLlm &&
+      !kalshiObFastPath &&
+      (input.computeEnsembleIfMissing ||
+        input.computeRagIfMissing ||
+        consensusUnresolved);
 
     if (needsRag) {
       try {

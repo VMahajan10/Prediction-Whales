@@ -22,6 +22,7 @@ import { buildPipelineTradeEvFromPTrue } from "@/lib/evPipeline/computeTradeEv";
 import {
   canResolvePTrueAsset,
   resolvePTrue,
+  resolvePTrueSync,
 } from "@/lib/evPipeline/pTrueEnsembleResolver";
 import {
   pickAuthoritativeEnsemblePTrue,
@@ -130,34 +131,50 @@ export async function createLowConfidencePipelineTradeEv(
       : null;
 
   const books = await loadOrderBookContext(tokenId, kalshiTicker);
-  const exchangeMid = await resolveSportsExchangeMid(
-    item,
-    tokenId,
-    mappingPairKey,
-    books,
-    ensembleLlmTimeoutMs
-  );
+  const exchangeMid =
+    platform === "polymarket"
+      ? await resolveSportsExchangeMid(
+          item,
+          tokenId,
+          mappingPairKey,
+          books,
+          ensembleLlmTimeoutMs
+        )
+      : null;
 
-  const pTrueResult = await resolvePTrue({
-    mappingPairKey,
-    platform,
-    tokenId,
-    kalshiTicker,
-    title: item.title,
-    slug: item.slug,
-    pmOb: books.pmOb,
-    kalshiOb: books.kalshiOb,
-    pmMid: books.pmMid,
-    kalshiMid: books.kalshiMid,
-    exchangeMid,
-    executionPrice: item.tradePrice,
-    ensemblePTrue: authoritativeMappingEnsemblePTrue(mapping),
-    fetchEnsemble: true,
-    fetchExchangeConsensus: platform === "polymarket" && exchangeMid == null,
-    computeEnsembleIfMissing: true,
-    computeRagIfMissing: true,
-    ensembleLlmTimeoutMs,
-  });
+  const pTrueResult =
+    platform === "kalshi"
+      ? resolvePTrueSync({
+          mappingPairKey,
+          platform,
+          pmOb: books.pmOb,
+          kalshiOb: books.kalshiOb,
+          pmMid: books.pmMid,
+          kalshiMid: books.kalshiMid,
+          executionPrice: item.tradePrice,
+          ensemblePTrue: authoritativeMappingEnsemblePTrue(mapping),
+          baselinePTrue: authoritativeMappingEnsemblePTrue(mapping),
+        })
+      : await resolvePTrue({
+          mappingPairKey,
+          platform,
+          tokenId,
+          kalshiTicker,
+          title: item.title,
+          slug: item.slug,
+          pmOb: books.pmOb,
+          kalshiOb: books.kalshiOb,
+          pmMid: books.pmMid,
+          kalshiMid: books.kalshiMid,
+          exchangeMid,
+          executionPrice: item.tradePrice,
+          ensemblePTrue: authoritativeMappingEnsemblePTrue(mapping),
+          fetchEnsemble: true,
+          fetchExchangeConsensus: platform === "polymarket" && exchangeMid == null,
+          computeEnsembleIfMissing: true,
+          computeRagIfMissing: true,
+          ensembleLlmTimeoutMs,
+        });
 
   return attachAverageEvField(
     buildPipelineTradeEvFromPTrue(key, pTrueResult, {
@@ -669,6 +686,11 @@ export interface EnsureTradeEvOptions {
   cacheOnly?: boolean;
   /** Hard cap on live OpenAI ensemble (ms). Defaults to 2.5s when unset. */
   ensembleLlmTimeoutMs?: number | null;
+  /**
+   * Kalshi live feed — order-book EV only (cross-venue PM mid + Kalshi mid).
+   * Skips pipeline sync, LLM ensemble, and low-confidence p_true paths.
+   */
+  kalshiObOnly?: boolean;
 }
 
 /**
@@ -760,6 +782,36 @@ export async function ensureFullyComputedTradeEv(
         return kalshiCached;
       }
     }
+    return {
+      ...createUnmappedPipelineTradeEv(lookupKey, item),
+      pmMid: books.pmMid,
+      kalshiMid: books.kalshiMid,
+      pMarket: books.pmMid ?? books.kalshiMid ?? null,
+    };
+  }
+
+  if (options?.kalshiObOnly && item.source === "kalshi") {
+    const kalshiTicker = normalizeKalshiTicker(item.kalshiTicker);
+    const kalshiMapping =
+      resolvedMapping ??
+      (kalshiTicker
+        ? await loadMappingForTradeEv(
+            normalizePmTokenId(item.tokenId),
+            kalshiTicker
+          )
+        : null);
+    const kalshiFast = tryFinalize(
+      await buildKalshiTradeEvFallback(lookupKey, item, kalshiMapping)
+    );
+    if (kalshiFast) {
+      await cacheTradeEvLookup(lookupKey, kalshiFast);
+      return kalshiFast;
+    }
+    const books = await loadOrderBookContext(
+      normalizePmTokenId(item.tokenId ?? kalshiMapping?.polymarketTokenId),
+      kalshiTicker,
+      { liveFallback: true }
+    );
     return {
       ...createUnmappedPipelineTradeEv(lookupKey, item),
       pmMid: books.pmMid,
@@ -892,6 +944,7 @@ async function buildKalshiTradeEvFallback(
     tokenId && kalshiTicker
       ? pipelineMappingPairKey(tokenId, kalshiTicker)
       : null;
+  const ensemblePTrue = authoritativeMappingEnsemblePTrue(mapping);
 
   if (
     tokenId &&
@@ -929,23 +982,16 @@ async function buildKalshiTradeEvFallback(
   }
 
   if (executionPrice != null) {
-    const pTrueResult = await resolvePTrue({
+    const pTrueResult = resolvePTrueSync({
       mappingPairKey,
       platform: "kalshi",
-      tokenId,
-      kalshiTicker,
-      title: item.title,
-      slug: item.slug,
       pmOb: books.pmOb,
       kalshiOb: books.kalshiOb,
       pmMid: books.pmMid,
       kalshiMid: books.kalshiMid,
       executionPrice,
-      ensemblePTrue: authoritativeMappingEnsemblePTrue(mapping),
-      fetchEnsemble: true,
-      fetchExchangeConsensus: true,
-      computeEnsembleIfMissing: Boolean(item.title?.trim() || item.kalshiTicker),
-      computeRagIfMissing: Boolean(item.title?.trim() || item.kalshiTicker),
+      ensemblePTrue,
+      baselinePTrue: ensemblePTrue,
     });
 
     const fromPTrue = attachAverageEvField(

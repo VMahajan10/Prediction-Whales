@@ -6,7 +6,6 @@ import {
   normalizeKalshiTicker,
 } from "@/lib/evPipeline/crossAssetLookup";
 import { normalizeKalshiOutcomeSide } from "@/lib/evPipeline/kalshiOutcomeEv";
-import { ENSEMBLE_LLM_TIMEOUT_MS } from "@/lib/evPipeline/ensemblePricingFallback";
 import { ensureFullyComputedTradeEv } from "@/lib/evPipeline/resolveTradeEv";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import {
@@ -30,7 +29,7 @@ import {
   KALSHI_TRADES_PAGE_LIMIT,
   KALSHI_TRADES_POLL_MS,
 } from "@/lib/ingestionPollConfig";
-import { resolveKalshiMarkets } from "@/lib/kalshiTitleResolver";
+import { resolveKalshiMarketsLite } from "@/lib/kalshiTitleResolver";
 import { kalshiFetch } from "@/lib/kalshi/http";
 import { queueKalshiShadowTrade, serializeShadowPayload } from "@/lib/x-agent/kalshiShadowTrades";
 import {
@@ -218,7 +217,7 @@ async function ensureKalshiTickerPipelineEv(
   if (options?.preferDynamicCompute) {
     const pipeline = applyPipeline(
       await ensureFullyComputedTradeEv(lookupKey, input, null, {
-        ensembleLlmTimeoutMs: ENSEMBLE_LLM_TIMEOUT_MS,
+        kalshiObOnly: true,
       })
     );
     const resolvedEv = resolveProbeEv();
@@ -247,7 +246,7 @@ async function ensureKalshiTickerPipelineEv(
   if (!meetsProductFeedEvThreshold(resolvedEv) && !options?.cacheOnly) {
     pipeline = applyPipeline(
       await ensureFullyComputedTradeEv(lookupKey, input, null, {
-        ensembleLlmTimeoutMs: ENSEMBLE_LLM_TIMEOUT_MS,
+        kalshiObOnly: true,
       })
     );
     resolvedEv = resolveProbeEv();
@@ -439,8 +438,10 @@ async function fetchKalshiTradesFromApi(
     `[kalshi/trades] fetched=${raws.length} pages<=${maxPages} limit=${KALSHI_TRADES_PAGE_SIZE}`
   );
 
-  const tickers = raws.map((raw) => raw.ticker).filter(Boolean);
-  const marketCache = await resolveKalshiMarkets(tickers);
+  const uniqueTickers = Array.from(
+    new Set(raws.map((raw) => raw.ticker).filter(Boolean))
+  );
+  const marketCache = await resolveKalshiMarketsLite(uniqueTickers);
   const trades: FeedTrade[] = [];
   const shadowCandidates: Array<{
     raw: KalshiRawTrade;

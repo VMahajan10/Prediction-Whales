@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, desc, gte, sql } from "drizzle-orm";
+import { and, desc, gte } from "drizzle-orm";
 import { mapWithConcurrency } from "@/lib/clvPriceHistory";
 import { getDb, isDatabaseEnabled } from "@/lib/crossmarket/store/db";
 import {
@@ -21,14 +21,11 @@ import {
   meetsProductFeedStakeThreshold,
   MIN_FEED_TRADE_EV_PCT,
   MIN_PRODUCT_FEED_STAKE_USD,
-  passesPolymarketFeedTraderGate,
   resolvePolymarketTradeNotionalUsd,
-  type WalletFeedQualificationInput,
 } from "@/lib/feedQualification";
 import {
   enrichTradesWithWhaleAlias,
 } from "@/lib/trades/getTrades";
-import { qualifyWalletsForFeed } from "@/lib/feedQualificationServer";
 import { extractTraderWalletAddress } from "@/lib/whaleIdentityResolver";
 import { initGlobalLocalEvCache } from "@/lib/evPipeline/redisCache";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
@@ -43,8 +40,6 @@ import {
 initGlobalLocalEvCache();
 
 export const RECENT_TRADES_LIMIT = 50;
-/** Balanced per-venue hydration — always fetch without a time window. */
-const VENUE_HYDRATION_LIMIT = 25;
 /** Hard cap so page-load hydration never blocks on live EV / LLM work. */
 const RECENT_FEED_FETCH_TIMEOUT_MS = 12_000;
 
@@ -128,7 +123,6 @@ export type { RecentFeedCategoryFilter } from "@/lib/constants/categories";
 
 type RecentFetchOptions = {
   limit?: number;
-  since?: Date;
   excludeKeys?: Set<string>;
   categoryFilter?: RecentFeedCategoryFilter;
 };
@@ -202,8 +196,8 @@ function applyRecentCategoryFilter(
   return trades.filter((trade) => trade.category === expected);
 }
 
-/** Max Kalshi rows to read before in-memory EV filter (DB has no EV column). */
-const KALSHI_DB_READ_LIMIT = 60;
+/** Max Kalshi stake-qualified rows to scan before in-memory EV filter (no age window). */
+const KALSHI_DB_READ_LIMIT = RECENT_TRADES_LIMIT * 3;
 /** Max Kalshi rows to fully EV-compute when cache is cold (supplemental paths only). */
 const KALSHI_EV_COMPUTE_LIMIT = 20;
 
@@ -446,17 +440,6 @@ function kalshiShadowToFeedTrade(row: KalshiShadowTrade): RecentFeedTrade | null
   };
 }
 
-function filterRecentPolymarketByTraderCredibility(
-  trades: RecentFeedTrade[],
-  qualifications: Record<string, WalletFeedQualificationInput>
-): RecentFeedTrade[] {
-  return trades.filter((trade) => {
-    const wallet = trade.proxyWallet?.trim().toLowerCase();
-    const qualification = wallet ? qualifications[wallet] : undefined;
-    return passesPolymarketFeedTraderGate(wallet, qualification, true);
-  });
-}
-
 async function fetchRecentPolymarketTrades(
   options: RecentFetchOptions = {}
 ): Promise<RecentFeedTrade[]> {
@@ -469,7 +452,6 @@ async function fetchRecentPolymarketTrades(
     gte(feedTrades.stakeAmount, MIN_PRODUCT_FEED_STAKE_USD),
     gte(feedTrades.averageEv, MIN_FEED_TRADE_EV_PCT),
   ];
-  if (options.since) predicates.push(gte(feedTrades.tradedAt, options.since));
 
   try {
     const rows = await getDb()
@@ -497,16 +479,7 @@ async function fetchRecentPolymarketTrades(
         (trade) => !options.excludeKeys?.has(recentTradeDedupeKey(trade))
       );
 
-    const wallets = trades
-      .map((trade) => trade.proxyWallet?.trim().toLowerCase())
-      .filter((wallet): wallet is string => Boolean(wallet));
-    const qualifications = await qualifyWalletsForFeed(wallets);
-    const credible = filterRecentPolymarketByTraderCredibility(
-      trades,
-      qualifications
-    );
-
-    return applyRecentCategoryFilter(credible, categoryFilter);
+    return applyRecentCategoryFilter(trades, categoryFilter);
   } catch (error) {
     if (isPostgresSchemaDriftError(error)) {
       console.warn(
@@ -523,21 +496,6 @@ async function fetchRecentPolymarketTrades(
   }
 }
 
-function kalshiStoredEvSqlPredicates(): ReturnType<typeof sql>[] {
-  return [
-    sql`(${kalshiShadowTrades.rawPayload} ->> 'netEvPercent') ~ '^-?[0-9]+(\\.[0-9]+)?$'`,
-    sql`(${kalshiShadowTrades.rawPayload} ->> 'netEvPercent')::double precision >= ${MIN_FEED_TRADE_EV_PCT}`,
-  ];
-}
-
-function kalshiMissingStoredEvSqlPredicate(): ReturnType<typeof sql> {
-  return sql`(
-    ${kalshiShadowTrades.rawPayload} ->> 'netEvPercent' IS NULL
-    OR NOT ((${kalshiShadowTrades.rawPayload} ->> 'netEvPercent') ~ '^-?[0-9]+(\\.[0-9]+)?$')
-    OR (${kalshiShadowTrades.rawPayload} ->> 'netEvPercent')::double precision < ${MIN_FEED_TRADE_EV_PCT}
-  )`;
-}
-
 async function fetchRecentKalshiTrades(
   options: RecentFetchOptions = {}
 ): Promise<RecentFeedTrade[]> {
@@ -545,54 +503,45 @@ async function fetchRecentKalshiTrades(
   const categoryFilter = options.categoryFilter ?? "all";
   if (!isDatabaseEnabled()) return [];
 
-  const basePredicates = [
-    gte(kalshiShadowTrades.usdNotional, MIN_PRODUCT_FEED_STAKE_USD),
-  ];
-  if (options.since) {
-    basePredicates.push(gte(kalshiShadowTrades.tradedAt, options.since));
-  }
-
   try {
-    const storedEvRows = await getDb()
+    const rows = await getDb()
       .select()
       .from(kalshiShadowTrades)
-      .where(and(...basePredicates, ...kalshiStoredEvSqlPredicates()))
+      .where(gte(kalshiShadowTrades.usdNotional, MIN_PRODUCT_FEED_STAKE_USD))
       .orderBy(desc(kalshiShadowTrades.tradedAt))
-      .limit(limit);
+      .limit(KALSHI_DB_READ_LIMIT);
 
-    let merged = storedEvRows
+    const trades = rows
       .map((row) => kalshiShadowToFeedTrade(row))
       .filter((trade): trade is RecentFeedTrade => trade != null)
       .filter(
         (trade) => !options.excludeKeys?.has(recentTradeDedupeKey(trade))
       );
 
-    if (merged.length < limit) {
-      const seenIds = new Set(merged.map((trade) => trade.id));
+    const withStoredEv = trades.filter((trade) =>
+      meetsProductFeedEvThreshold(trade.netEvPercent)
+    );
 
-      const supplementalRows = await getDb()
-        .select()
-        .from(kalshiShadowTrades)
-        .where(and(...basePredicates, kalshiMissingStoredEvSqlPredicate()))
-        .orderBy(desc(kalshiShadowTrades.tradedAt))
-        .limit(KALSHI_DB_READ_LIMIT);
-
-      const candidates = supplementalRows
-        .map((row) => kalshiShadowToFeedTrade(row))
-        .filter((trade): trade is RecentFeedTrade => trade != null)
-        .filter((trade) => !seenIds.has(trade.id))
-        .filter(
-          (trade) => !options.excludeKeys?.has(recentTradeDedupeKey(trade))
-        );
-
-      const pipelineQualified = await qualifyKalshiRecentTrades(candidates, {
-        cacheOnly: true,
-      });
-
-      merged = [...merged, ...pipelineQualified]
-        .sort((a, b) => b.timestamp - a.timestamp)
-        .slice(0, limit);
+    if (withStoredEv.length >= limit) {
+      return applyRecentCategoryFilter(
+        withStoredEv.slice(0, limit),
+        categoryFilter
+      );
     }
+
+    const seenIds = new Set(withStoredEv.map((trade) => trade.id));
+    const needsEv = trades
+      .filter((trade) => !seenIds.has(trade.id))
+      .slice(0, KALSHI_EV_COMPUTE_LIMIT);
+
+    const pipelineQualified =
+      needsEv.length > 0
+        ? await qualifyKalshiRecentTrades(needsEv, { cacheOnly: true })
+        : [];
+
+    const merged = [...withStoredEv, ...pipelineQualified]
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(0, limit);
 
     return applyRecentCategoryFilter(merged, categoryFilter);
   } catch (error) {
@@ -631,14 +580,14 @@ async function fetchRecentFeedTradesInner(
   const degraded: string[] = [];
   const [pmResult, kalshiResult] = await Promise.all([
     fetchRecentPolymarketTrades({
-      limit: VENUE_HYDRATION_LIMIT,
+      limit: RECENT_TRADES_LIMIT,
       categoryFilter,
     }).then(
       (trades) => ({ ok: true as const, trades }),
       (error) => ({ ok: false as const, error })
     ),
     fetchRecentKalshiTrades({
-      limit: VENUE_HYDRATION_LIMIT,
+      limit: RECENT_TRADES_LIMIT,
       categoryFilter,
     }).then(
       (trades) => ({ ok: true as const, trades }),

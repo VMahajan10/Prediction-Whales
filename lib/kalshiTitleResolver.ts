@@ -558,39 +558,55 @@ function marketRecordFromApi(
 
 async function fetchKalshiMarketResolved(
   ticker: string,
-  options?: { takerOutcomeSide?: "yes" | "no" }
+  options?: { takerOutcomeSide?: "yes" | "no"; skipEventFetch?: boolean }
 ): Promise<KalshiResolvedMarket | null> {
-  try {
-    const res = await kalshiFetch(`/markets/${encodeURIComponent(ticker)}`, {
-      next: { revalidate: 3600 },
-      label: `markets/${ticker}`,
-    });
-    if (!res.ok) return null;
-    const data: unknown = await res.json();
-    const market =
-      data && typeof data === "object" && "market" in data
-        ? (data as { market?: Record<string, unknown> }).market
-        : null;
-    if (!market) return null;
+  const cacheKey = ticker.trim().toUpperCase();
+  const pending = inFlightMarketFetches.get(cacheKey);
+  if (pending) return pending;
 
-    const input = marketRecordFromApi(market, ticker);
-    let event: KalshiEventTitleInput | null = null;
+  const run = (async (): Promise<KalshiResolvedMarket | null> => {
+    try {
+      const res = await kalshiFetch(`/markets/${encodeURIComponent(ticker)}`, {
+        next: { revalidate: 3600 },
+        label: `markets/${ticker}`,
+        maxAttempts: 3,
+      });
+      if (!res.ok) return null;
+      const data: unknown = await res.json();
+      const market =
+        data && typeof data === "object" && "market" in data
+          ? (data as { market?: Record<string, unknown> }).market
+          : null;
+      if (!market) return null;
 
-    const eventTicker =
-      typeof market.event_ticker === "string" ? market.event_ticker : "";
-    if (eventTicker) {
-      event = await fetchKalshiEvent(eventTicker);
+      const input = marketRecordFromApi(market, ticker);
+      let event: KalshiEventTitleInput | null = null;
+
+      if (!options?.skipEventFetch) {
+        const eventTicker =
+          typeof market.event_ticker === "string" ? market.event_ticker : "";
+        if (eventTicker) {
+          event = await fetchKalshiEvent(eventTicker);
+        }
+      }
+
+      const parts = resolveKalshiMarketTitleParts(input, event, options);
+      if (isInternalKalshiTitle(parts.eventTitle, ticker)) return null;
+
+      return {
+        eventTitle: parts.eventTitle,
+        selectionLabel: parts.contractLabel,
+      };
+    } catch {
+      return null;
     }
+  })();
 
-    const parts = resolveKalshiMarketTitleParts(input, event, options);
-    if (isInternalKalshiTitle(parts.eventTitle, ticker)) return null;
-
-    return {
-      eventTitle: parts.eventTitle,
-      selectionLabel: parts.contractLabel,
-    };
-  } catch {
-    return null;
+  inFlightMarketFetches.set(cacheKey, run);
+  try {
+    return await run;
+  } finally {
+    inFlightMarketFetches.delete(cacheKey);
   }
 }
 
@@ -600,6 +616,14 @@ async function fetchKalshiMarketTitle(ticker: string): Promise<string | null> {
 }
 
 const pendingLookups = new Set<string>();
+const inFlightMarketFetches = new Map<
+  string,
+  Promise<KalshiResolvedMarket | null>
+>();
+
+/** Max uncached `/markets/{ticker}` lookups per feed poll — rest use humanized tickers. */
+const FEED_MARKET_API_FETCH_LIMIT = 12;
+const FEED_MARKET_FETCH_CONCURRENCY = 2;
 
 export function scheduleKalshiTitleLookup(ticker: string): void {
   if (!ticker || pendingLookups.has(ticker)) return;
@@ -675,6 +699,72 @@ export async function resolveKalshiMarkets(
 
   const workers = Array.from(
     { length: Math.min(concurrency, toFetch.length) },
+    () => worker()
+  );
+  await Promise.all(workers);
+
+  return result;
+}
+
+/**
+ * Feed-safe market resolution — memory/Redis first, capped upstream fetches,
+ * humanized ticker fallback for the long tail (avoids 429 storms on trade polls).
+ */
+export async function resolveKalshiMarketsLite(
+  tickers: string[],
+  options?: { apiFetchLimit?: number }
+): Promise<Map<string, KalshiResolvedMarket>> {
+  const unique = Array.from(new Set(tickers.filter(Boolean)));
+  const result = new Map<string, KalshiResolvedMarket>();
+  const needsApi: string[] = [];
+  const apiFetchLimit = options?.apiFetchLimit ?? FEED_MARKET_API_FETCH_LIMIT;
+
+  for (const ticker of unique) {
+    const mem = memoryCache.get(ticker);
+    if (mem && !isInternalKalshiTitle(mem.eventTitle, ticker)) {
+      result.set(ticker, mem);
+      continue;
+    }
+
+    const cached = await getCachedKalshiMarket(ticker);
+    if (cached) {
+      result.set(ticker, cached);
+      continue;
+    }
+
+    needsApi.push(ticker);
+  }
+
+  for (const ticker of needsApi.slice(apiFetchLimit)) {
+    result.set(ticker, {
+      eventTitle: humanizeKalshiTicker(ticker),
+      selectionLabel: null,
+    });
+  }
+
+  const toFetch = needsApi.slice(0, apiFetchLimit);
+  let index = 0;
+
+  async function worker(): Promise<void> {
+    while (index < toFetch.length) {
+      const ticker = toFetch[index++];
+      const fetched = await fetchKalshiMarketResolved(ticker, {
+        skipEventFetch: true,
+      });
+      const resolved = fetched ?? {
+        eventTitle: humanizeKalshiTicker(ticker),
+        selectionLabel: null,
+      };
+      result.set(ticker, resolved);
+      if (fetched) await cacheKalshiMarket(ticker, fetched);
+      if (index < toFetch.length) {
+        await sleep(KALSHI_BATCH_DELAY_MS);
+      }
+    }
+  }
+
+  const workers = Array.from(
+    { length: Math.min(FEED_MARKET_FETCH_CONCURRENCY, toFetch.length) },
     () => worker()
   );
   await Promise.all(workers);
