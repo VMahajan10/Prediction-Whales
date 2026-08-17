@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, gte, sql } from "drizzle-orm";
 import { mapWithConcurrency } from "@/lib/clvPriceHistory";
 import { getDb, isDatabaseEnabled } from "@/lib/crossmarket/store/db";
 import {
@@ -132,6 +132,21 @@ function dbCategoryForFilter(
   filter: RecentFeedCategoryFilter
 ): MarketFeedCategory | null {
   return tradeCategoryForTab(filter);
+}
+
+function categoryFromPayload(payload: unknown): string | null | undefined {
+  if (!payload || typeof payload !== "object") return undefined;
+  const category = (payload as { category?: unknown }).category;
+  return typeof category === "string" && category.trim()
+    ? category.trim()
+    : undefined;
+}
+
+function isPostgresSchemaDriftError(error: unknown): boolean {
+  const code =
+    (error as { cause?: { code?: string } })?.cause?.code ??
+    (error as { code?: string })?.code;
+  return code === "42703" || code === "42P01";
 }
 
 function isTrendingRecentTrade(
@@ -399,7 +414,10 @@ function kalshiShadowToFeedTrade(row: KalshiShadowTrade): RecentFeedTrade | null
         : undefined,
     isBlockTrade: row.isBlockTrade,
     netEvPercent,
-    category: row.category?.trim() || undefined,
+    category:
+      row.category?.trim() ||
+      categoryFromPayload(raw) ||
+      undefined,
   };
 }
 
@@ -472,14 +490,12 @@ async function fetchRecentPolymarketTrades(
     gte(feedTrades.averageEv, MIN_FEED_TRADE_EV_PCT),
   ];
   if (options.since) predicates.push(gte(feedTrades.tradedAt, options.since));
-  if (dbCategory) predicates.push(eq(feedTrades.category, dbCategory));
 
   try {
     const rows = await getDb()
       .select({
         payload: feedTrades.payload,
         averageEv: feedTrades.averageEv,
-        category: feedTrades.category,
         proxyWallet: feedTrades.proxyWallet,
       })
       .from(feedTrades)
@@ -492,7 +508,7 @@ async function fetchRecentPolymarketTrades(
         polymarketPayloadToFeedTrade(
           row.payload,
           row.averageEv,
-          row.category,
+          categoryFromPayload(row.payload),
           row.proxyWallet
         )
       )
@@ -512,6 +528,13 @@ async function fetchRecentPolymarketTrades(
 
     return applyRecentCategoryFilter(credible, categoryFilter);
   } catch (error) {
+    if (isPostgresSchemaDriftError(error)) {
+      console.warn(
+        "[recentTrades] polymarket schema drift — skipping DB hydration",
+        error instanceof Error ? error.message : error
+      );
+      return [];
+    }
     console.error(
       "[recentTrades] polymarket read failed",
       error instanceof Error ? error.message : error
@@ -542,14 +565,12 @@ async function fetchRecentKalshiTrades(
   const categoryFilter = options.categoryFilter ?? "all";
   if (!isDatabaseEnabled()) return [];
 
-  const dbCategory = dbCategoryForFilter(categoryFilter);
   const basePredicates = [
     gte(kalshiShadowTrades.usdNotional, MIN_PRODUCT_FEED_STAKE_USD),
   ];
   if (options.since) {
     basePredicates.push(gte(kalshiShadowTrades.tradedAt, options.since));
   }
-  if (dbCategory) basePredicates.push(eq(kalshiShadowTrades.category, dbCategory));
 
   try {
     const storedEvRows = await getDb()
@@ -596,6 +617,13 @@ async function fetchRecentKalshiTrades(
 
     return applyRecentCategoryFilter(merged, categoryFilter);
   } catch (error) {
+    if (isPostgresSchemaDriftError(error)) {
+      console.warn(
+        "[recentTrades] kalshi schema drift — skipping DB hydration",
+        error instanceof Error ? error.message : error
+      );
+      return [];
+    }
     console.error(
       "[recentTrades] kalshi read failed",
       error instanceof Error ? error.message : error

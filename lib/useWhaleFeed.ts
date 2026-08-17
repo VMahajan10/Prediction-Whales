@@ -409,6 +409,19 @@ export function useWhaleFeed() {
         category: t.category,
       }));
       setBackfill((prev) => retainLastNonEmpty(whales, prev));
+      const seedCandidates = whales
+        .filter((trade) => meetsProductFeedEvThreshold(trade.netEvPercent))
+        .sort(byDetectedDesc)
+        .slice(0, WHALE_FEED_SEED_LIMIT);
+      if (seedCandidates.length > 0) {
+        setWhaleBuffer((prev) => {
+          const merged = prependWhaleBuffer(prev, seedCandidates);
+          for (const trade of seedCandidates) {
+            whaleBufferSeen.current.add(whaleKey(trade));
+          }
+          return merged;
+        });
+      }
       if (payload.kalshi.length > 0) {
         setKalshiBackfill((prev) => {
           const merged = new Map<string, KalshiFeedTradeInput>();
