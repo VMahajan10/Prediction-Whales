@@ -520,7 +520,6 @@ export function useWhaleFeed() {
           );
         }
       }
-      markSeedLoaded();
     };
 
     const load = async () => {
@@ -545,8 +544,15 @@ export function useWhaleFeed() {
       }
     };
 
-    void loadRecentSeed();
-    void load();
+    const hydrate = async () => {
+      try {
+        await Promise.allSettled([loadRecentSeed(), load()]);
+      } finally {
+        markSeedLoaded();
+      }
+    };
+
+    void hydrate();
     return () => abort.abort();
   }, []);
 

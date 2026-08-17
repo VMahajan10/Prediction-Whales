@@ -194,7 +194,7 @@ function kalshiProbeTrade(ticker: string, price: number): FeedTrade {
 async function ensureKalshiTickerPipelineEv(
   trade: Pick<FeedTrade, "ticker" | "price" | "title" | "outcome">,
   pipelineEvIndex: Map<string, PipelineTradeEv>,
-  options?: { preferDynamicCompute?: boolean }
+  options?: { preferDynamicCompute?: boolean; cacheOnly?: boolean }
 ): Promise<PipelineTradeEv> {
   const normalizedTicker =
     normalizeKalshiTicker(trade.ticker) ?? trade.ticker!.trim().toUpperCase();
@@ -244,7 +244,7 @@ async function ensureKalshiTickerPipelineEv(
     meetsProductFeedEvThreshold(resolvedEv)
   );
 
-  if (!meetsProductFeedEvThreshold(resolvedEv)) {
+  if (!meetsProductFeedEvThreshold(resolvedEv) && !options?.cacheOnly) {
     pipeline = applyPipeline(
       await ensureFullyComputedTradeEv(lookupKey, input, null, {
         ensembleLlmTimeoutMs: ENSEMBLE_LLM_TIMEOUT_MS,
@@ -265,7 +265,8 @@ async function ensureKalshiTickerPipelineEv(
 
 /** Build a Kalshi pipeline EV index — cache-first, then dynamic compute on miss. */
 export async function resolveCachedKalshiPipelineEv(
-  trades: Array<Pick<FeedTrade, "ticker" | "price" | "title" | "outcome">>
+  trades: Array<Pick<FeedTrade, "ticker" | "price" | "title" | "outcome">>,
+  options?: { cacheOnly?: boolean }
 ): Promise<Map<string, PipelineTradeEv>> {
   const index = new Map<string, PipelineTradeEv>();
   const byTicker = new Map<
@@ -284,7 +285,9 @@ export async function resolveCachedKalshiPipelineEv(
 
   await mapWithConcurrency(Array.from(byTicker.values()), 4, async (bucket) => {
     try {
-      await ensureKalshiTickerPipelineEv(bucket, index);
+      await ensureKalshiTickerPipelineEv(bucket, index, {
+        cacheOnly: options?.cacheOnly === true,
+      });
     } catch (error) {
       console.warn(
         "[Kalshi Pipeline] ticker EV resolve failed",

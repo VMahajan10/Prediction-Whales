@@ -45,6 +45,38 @@ initGlobalLocalEvCache();
 export const RECENT_TRADES_LIMIT = 50;
 /** Balanced per-venue hydration — always fetch without a time window. */
 const VENUE_HYDRATION_LIMIT = 25;
+/** Hard cap so page-load hydration never blocks on live EV / LLM work. */
+const RECENT_FEED_FETCH_TIMEOUT_MS = 12_000;
+
+async function withRecentFeedTimeout<T>(
+  label: string,
+  fn: () => Promise<T>,
+  fallback: T
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      fn(),
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(
+            new Error(
+              `${label} timed out after ${RECENT_FEED_FETCH_TIMEOUT_MS}ms`
+            )
+          );
+        }, RECENT_FEED_FETCH_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (error) {
+    console.warn(
+      `[recentTrades] ${label} failed`,
+      error instanceof Error ? error.message : error
+    );
+    return fallback;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 /** Raised when a per-source DB read fails — collected into `degraded` instead of silent []. */
 export class RecentTradesReadError extends Error {
@@ -320,7 +352,9 @@ async function qualifyKalshiRecentTrades(
   options?: { cacheOnly?: boolean; computeEvLimit?: number }
 ): Promise<RecentFeedTrade[]> {
   const cacheOnly = options?.cacheOnly ?? false;
-  const pipelineEvIndex = await resolveCachedKalshiPipelineEv(candidates);
+  const pipelineEvIndex = await resolveCachedKalshiPipelineEv(candidates, {
+    cacheOnly,
+  });
   let qualified = filterKalshiEligible(candidates, pipelineEvIndex);
 
   if (cacheOnly || qualified.length >= candidates.length) {
@@ -333,10 +367,16 @@ async function qualifyKalshiRecentTrades(
     .sort((a, b) => b.timestamp - a.timestamp)
     .slice(0, options?.computeEvLimit ?? KALSHI_EV_COMPUTE_LIMIT);
 
-  await mapWithConcurrency(remaining, 4, async (trade) => {
-    if (!trade.ticker?.trim()) return;
-    await hydrateKalshiTradeEvPercent(trade, pipelineEvIndex);
-  });
+  await withRecentFeedTimeout(
+    "kalshi supplemental EV hydration",
+    async () => {
+      await mapWithConcurrency(remaining, 4, async (trade) => {
+        if (!trade.ticker?.trim()) return;
+        await hydrateKalshiTradeEvPercent(trade, pipelineEvIndex);
+      });
+    },
+    undefined
+  );
 
   qualified = filterKalshiEligible(candidates, pipelineEvIndex);
   return qualified;
@@ -546,8 +586,7 @@ async function fetchRecentKalshiTrades(
         );
 
       const pipelineQualified = await qualifyKalshiRecentTrades(candidates, {
-        cacheOnly: false,
-        computeEvLimit: KALSHI_EV_COMPUTE_LIMIT,
+        cacheOnly: true,
       });
 
       merged = [...merged, ...pipelineQualified]
@@ -579,6 +618,16 @@ export async function fetchRecentFeedTrades(options?: {
   const categoryFilter = options?.category ?? "all";
   if (!isDatabaseEnabled()) return { trades: [], degraded: [] };
 
+  return withRecentFeedTimeout(
+    "fetchRecentFeedTrades",
+    async () => fetchRecentFeedTradesInner(categoryFilter),
+    { trades: [], degraded: ["polymarket", "kalshi"] }
+  );
+}
+
+async function fetchRecentFeedTradesInner(
+  categoryFilter: RecentFeedCategoryFilter
+): Promise<FetchRecentFeedTradesResult> {
   const degraded: string[] = [];
   const [pmResult, kalshiResult] = await Promise.all([
     fetchRecentPolymarketTrades({
@@ -637,7 +686,18 @@ export async function fetchRecentFeedTrades(options?: {
   const filtered = applyRecentCategoryFilter(results, categoryFilter).map(
     normalizeRecentFeedTrade
   );
-  const enriched = await enrichTradesWithWhaleAlias(filtered);
+
+  let enriched: NormalizedRecentFeedTrade[];
+  try {
+    enriched = await enrichTradesWithWhaleAlias(filtered);
+  } catch (error) {
+    console.warn(
+      "[recentTrades] whale alias enrichment failed",
+      error instanceof Error ? error.message : error
+    );
+    enriched = filtered;
+  }
+
   const qualified = enriched.filter((trade) =>
     meetsProductFeedEvThreshold(trade.netEvPercent)
   );
