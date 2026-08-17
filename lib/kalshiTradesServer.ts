@@ -56,7 +56,7 @@ function shadowInputFromRaw(
   );
   return {
     tradeId: raw.trade_id,
-    ticker: raw.ticker,
+    ticker: normalizeKalshiTicker(raw.ticker) ?? raw.ticker.trim().toUpperCase(),
     size: normalized.size,
     timestamp: normalized.timestamp,
     entryPrice: normalized.price,
@@ -165,7 +165,8 @@ function kalshiProbeTrade(ticker: string, price: number): FeedTrade {
 async function ensureKalshiTickerPipelineEv(
   ticker: string,
   price: number,
-  pipelineEvIndex: Map<string, PipelineTradeEv>
+  pipelineEvIndex: Map<string, PipelineTradeEv>,
+  options?: { preferDynamicCompute?: boolean }
 ): Promise<PipelineTradeEv> {
   const normalizedTicker = normalizeKalshiTicker(ticker) ?? ticker.trim().toUpperCase();
   const lookupKey = normalizePipelineLookupKey(
@@ -177,33 +178,56 @@ async function ensureKalshiTickerPipelineEv(
     kalshiTicker: normalizedTicker,
     tradePrice: price,
   };
-
-  let pipeline = await ensureFullyComputedTradeEv(
-    lookupKey,
-    input,
-    null,
-    { cacheOnly: true }
-  );
   const key = pipelineEvLookupKey(input) ?? lookupKey;
-  indexPipelineTradeEvAliases(pipelineEvIndex, pipeline, key);
 
-  const probe = kalshiProbeTrade(normalizedTicker, price);
-  let resolvedEv = kalshiTradeEvPercent(probe, pipelineEvIndex);
+  const applyPipeline = (pipeline: PipelineTradeEv) => {
+    indexPipelineTradeEvAliases(pipelineEvIndex, pipeline, key);
+    return pipeline;
+  };
+
+  const resolveProbeEv = () => {
+    const probe = kalshiProbeTrade(normalizedTicker, price);
+    return kalshiTradeEvPercent(probe, pipelineEvIndex);
+  };
+
+  if (options?.preferDynamicCompute) {
+    const pipeline = applyPipeline(
+      await ensureFullyComputedTradeEv(lookupKey, input, null, {
+        ensembleLlmTimeoutMs: ENSEMBLE_LLM_TIMEOUT_MS,
+      })
+    );
+    const resolvedEv = resolveProbeEv();
+    logKalshiPipelineIngest(
+      { ticker: normalizedTicker, usdNotional: MIN_PRODUCT_FEED_STAKE_USD },
+      pipeline,
+      resolvedEv,
+      meetsProductFeedEvThreshold(resolvedEv),
+      true
+    );
+    return pipeline;
+  }
+
+  let pipeline = applyPipeline(
+    await ensureFullyComputedTradeEv(lookupKey, input, null, { cacheOnly: true })
+  );
+
+  let resolvedEv = resolveProbeEv();
   logKalshiPipelineIngest(
-    probe,
+    { ticker: normalizedTicker, usdNotional: MIN_PRODUCT_FEED_STAKE_USD },
     pipeline,
     resolvedEv,
     meetsProductFeedEvThreshold(resolvedEv)
   );
 
   if (!meetsProductFeedEvThreshold(resolvedEv)) {
-    pipeline = await ensureFullyComputedTradeEv(lookupKey, input, null, {
-      ensembleLlmTimeoutMs: ENSEMBLE_LLM_TIMEOUT_MS,
-    });
-    indexPipelineTradeEvAliases(pipelineEvIndex, pipeline, key);
-    resolvedEv = kalshiTradeEvPercent(probe, pipelineEvIndex);
+    pipeline = applyPipeline(
+      await ensureFullyComputedTradeEv(lookupKey, input, null, {
+        ensembleLlmTimeoutMs: ENSEMBLE_LLM_TIMEOUT_MS,
+      })
+    );
+    resolvedEv = resolveProbeEv();
     logKalshiPipelineIngest(
-      probe,
+      { ticker: normalizedTicker, usdNotional: MIN_PRODUCT_FEED_STAKE_USD },
       pipeline,
       resolvedEv,
       meetsProductFeedEvThreshold(resolvedEv),
@@ -279,7 +303,7 @@ function kalshiTradeEvPercent(
   return resolveKalshiFeedTradeEvPercent(whale, pipeline ?? null);
 }
 
-async function hydrateKalshiTradeEvPercent(
+export async function hydrateKalshiTradeEvPercent(
   trade: FeedTrade,
   pipelineEvIndex: Map<string, PipelineTradeEv>
 ): Promise<number | null> {
@@ -300,7 +324,8 @@ async function hydrateKalshiTradeEvPercent(
     await ensureKalshiTickerPipelineEv(
       trade.ticker,
       trade.price,
-      pipelineEvIndex
+      pipelineEvIndex,
+      { preferDynamicCompute: meetsProductFeedStakeThreshold(trade.usdNotional) }
     );
   } catch {
     return cached;
@@ -420,11 +445,15 @@ async function fetchKalshiTradesFromApi(
   );
 
   let shadowQueued = 0;
-  if (shadowCandidates.length > 0) {
-    const pipelineEvIndex = await resolveCachedKalshiPipelineEv(
-      shadowCandidates.map((candidate) => candidate.normalized)
-    );
+  const stakeQualified = trades.filter((trade) =>
+    meetsProductFeedStakeThreshold(trade.usdNotional)
+  );
+  const pipelineEvIndex =
+    stakeQualified.length > 0
+      ? await resolveCachedKalshiPipelineEv(stakeQualified)
+      : new Map<string, PipelineTradeEv>();
 
+  if (shadowCandidates.length > 0) {
     const { categorizeMarket } = await import("@/lib/categorizer");
 
     for (const { raw, normalized } of shadowCandidates) {
@@ -452,14 +481,6 @@ async function fetchKalshiTradesFromApi(
       `[kalshi/trades] evQualified=${shadowQueued} shadowQueued=${shadowQueued}`
     );
   }
-
-  const stakeQualified = trades.filter((trade) =>
-    meetsProductFeedStakeThreshold(trade.usdNotional)
-  );
-  const pipelineEvIndex =
-    stakeQualified.length > 0
-      ? await resolveCachedKalshiPipelineEv(stakeQualified)
-      : new Map<string, PipelineTradeEv>();
 
   const stakeQualifiedWithEv = await mapWithConcurrency(
     stakeQualified,

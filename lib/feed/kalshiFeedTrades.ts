@@ -92,7 +92,8 @@ export function kalshiFeedTradeToWhale(
     }
   );
 
-  const netEvPercent = options?.netEvPercent ?? null;
+  const netEvPercent =
+    options?.netEvPercent ?? trade.netEvPercent ?? null;
 
   return {
     ...whale,

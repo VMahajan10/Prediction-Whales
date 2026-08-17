@@ -13,7 +13,9 @@ import {
   kalshiFeedTradeToWhale,
   resolveKalshiFeedTradeEvPercent,
 } from "@/lib/feed/kalshiFeedTrades";
-import { resolveCachedKalshiPipelineEv } from "@/lib/kalshiTradesServer";
+import { resolveCachedKalshiPipelineEv, hydrateKalshiTradeEvPercent } from "@/lib/kalshiTradesServer";
+import { pipelineEvKeyForTrade, resolvePipelineEvFromIndex } from "@/lib/pipelineEvLookupHelpers";
+import { normalizeKalshiTicker } from "@/lib/evPipeline/crossAssetLookup";
 import {
   meetsProductFeedEvThreshold,
   meetsProductFeedStakeThreshold,
@@ -29,13 +31,7 @@ import {
 import { qualifyWalletsForFeed } from "@/lib/feedQualificationServer";
 import { extractTraderWalletAddress } from "@/lib/whaleIdentityResolver";
 import { initGlobalLocalEvCache } from "@/lib/evPipeline/redisCache";
-import { ensureFullyComputedTradeEv } from "@/lib/evPipeline/resolveTradeEv";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
-import {
-  normalizePipelineLookupKey,
-  pipelineEvLookupKey,
-} from "@/lib/evPipeline/types";
-import { resolvePipelineEvFromIndex } from "@/lib/pipelineEvLookupHelpers";
 import type { FeedTrade } from "@/lib/feedTradeTypes";
 import {
   isTrendingByStakeAndRecency,
@@ -297,12 +293,10 @@ function filterKalshiEligible(
     });
     if (!isKalshiTradeEligibleForFeed(whale, pipelineEvIndex)) return [];
 
-    const lookupKey = trade.ticker
-      ? normalizePipelineLookupKey(`kalshi:${trade.ticker}`, "kalshi")
-      : null;
+    const lookupKey = pipelineEvKeyForTrade(trade);
     const pipeline = lookupKey
       ? resolvePipelineEvFromIndex(pipelineEvIndex, lookupKey, {
-          kalshiTicker: trade.ticker ?? null,
+          kalshiTicker: normalizeKalshiTicker(trade.ticker) ?? trade.ticker ?? null,
         })
       : undefined;
     const netEvPercent = resolveKalshiFeedTradeEvPercent(
@@ -318,7 +312,7 @@ async function qualifyKalshiRecentTrades(
   candidates: RecentFeedTrade[],
   options?: { cacheOnly?: boolean; computeEvLimit?: number }
 ): Promise<RecentFeedTrade[]> {
-  const cacheOnly = options?.cacheOnly ?? true;
+  const cacheOnly = options?.cacheOnly ?? false;
   const pipelineEvIndex = await resolveCachedKalshiPipelineEv(candidates);
   let qualified = filterKalshiEligible(candidates, pipelineEvIndex);
 
@@ -334,10 +328,7 @@ async function qualifyKalshiRecentTrades(
 
   await mapWithConcurrency(remaining, 4, async (trade) => {
     if (!trade.ticker?.trim()) return;
-    const hydrated = await resolveCachedKalshiPipelineEv([trade]);
-    for (const [key, value] of hydrated) {
-      pipelineEvIndex.set(key, value);
-    }
+    await hydrateKalshiTradeEvPercent(trade, pipelineEvIndex);
   });
 
   qualified = filterKalshiEligible(candidates, pipelineEvIndex);
@@ -394,7 +385,7 @@ function kalshiShadowToFeedTrade(row: KalshiShadowTrade): RecentFeedTrade | null
     usdNotional,
     timestamp,
     traceable: true,
-    ticker: row.ticker,
+    ticker: normalizeKalshiTicker(row.ticker) ?? row.ticker,
     selectionLabel:
       typeof raw?.selectionLabel === "string"
         ? raw.selectionLabel

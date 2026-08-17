@@ -65,6 +65,17 @@ function unmappedWithPmMid(ticker: string, pmMid: number) {
 }
 
 describe("kalshiFeedTradeToWhale", () => {
+  it("preserves netEvPercent stamped on the API payload", () => {
+    const whale = kalshiFeedTradeToWhale({
+      ...sportsTrade,
+      netEvPercent: 4.8,
+    });
+    expect(whale.netEvPercent).toBe(4.8);
+    expect(
+      isKalshiTradeEligibleForFeed(whale, new Map(), { logRejection: false })
+    ).toBe(true);
+  });
+
   it("maps a Kalshi feed trade without any trader identity", () => {
     const whale = kalshiFeedTradeToWhale(sportsTrade);
 

@@ -16,7 +16,7 @@ import { flushKalshiShadowTradesNow } from "@/lib/x-agent/kalshiShadowTrades";
 export async function collectKalshiFeedCandidates(
   minTs?: number
 ): Promise<FeedTrade[]> {
-  const trades = await fetchKalshiTrades(minTs);
+  const trades = await fetchKalshiTrades(minTs, { bypassThrottle: true });
   await flushKalshiShadowTradesNow();
 
   const stakeQualified = trades.filter((trade) =>
