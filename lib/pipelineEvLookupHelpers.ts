@@ -8,6 +8,7 @@ import {
   pipelineEvLookupKeyKalshi,
   pipelineEvLookupKeyPm,
 } from "@/lib/evPipeline/types";
+import { normalizeIncomingTradePrice } from "@/lib/evPipeline/tradeEvRecord";
 import type { FeedTrade } from "@/lib/feedTradeTypes";
 import type { WhaleTrade } from "@/lib/whaleTrades";
 
@@ -64,6 +65,43 @@ export function resolvePipelineEvFromIndex(
   return null;
 }
 
+/**
+ * When the batch EV index misses a Kalshi row, synthesize a minimal pipeline
+ * payload from stamped trade EV so feed gates do not reject on "missing" alone.
+ */
+function synthesizeKalshiPipelineFromTrade(
+  trade: WhaleTrade,
+  lookupKey: string
+): PipelineTradeEv | null {
+  const ticker = normalizeKalshiTicker(trade.ticker);
+  if (!ticker) return null;
+
+  const entry = normalizeIncomingTradePrice(trade.price);
+  if (entry == null || entry <= 0) return null;
+
+  if (trade.netEvPercent != null && Number.isFinite(trade.netEvPercent)) {
+    return {
+      key: lookupKey,
+      status: "ok",
+      tokenId: null,
+      kalshiTicker: ticker,
+      netEvPercent: trade.netEvPercent,
+      netEv: trade.netEvPercent / 100,
+      grossEvPercent: trade.grossEvPercent ?? null,
+      averageEv: trade.averageEv ?? trade.netEvPercent,
+      pTrue: null,
+      pMarket: null,
+      pmMid: null,
+      kalshiMid: null,
+      pTrueSource: "execution_price",
+      pTrueConfidence: null,
+      pTrueLowConfidence: true,
+    };
+  }
+
+  return null;
+}
+
 /** Resolve pipeline EV for a whale row — same alias rules as the Cross-Venue Lock scanner. */
 export function resolvePipelineEvForWhale(
   index: Map<string, PipelineTradeEv>,
@@ -73,8 +111,15 @@ export function resolvePipelineEvForWhale(
   if (!key) return null;
 
   const platform = (trade.platform ?? trade.source ?? "").toLowerCase();
-  return resolvePipelineEvFromIndex(index, key, {
+  const pipeline = resolvePipelineEvFromIndex(index, key, {
     tokenId: platform === "polymarket" ? trade.assetId ?? null : null,
     kalshiTicker: platform === "kalshi" ? trade.ticker ?? null : null,
   });
+  if (pipeline) return pipeline;
+
+  if (platform === "kalshi") {
+    return synthesizeKalshiPipelineFromTrade(trade, key);
+  }
+
+  return null;
 }

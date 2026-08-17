@@ -32,6 +32,14 @@ import {
 import { resolveKalshiMarkets } from "@/lib/kalshiTitleResolver";
 import { kalshiFetch } from "@/lib/kalshi/http";
 import { queueKalshiShadowTrade, serializeShadowPayload } from "@/lib/x-agent/kalshiShadowTrades";
+import {
+  logKalshiEvCheck,
+  logKalshiEvGateDrop,
+  logKalshiGatePass,
+  logKalshiPollIngested,
+  logKalshiShadowQueued,
+  logKalshiStakeDrop,
+} from "@/lib/feed/kalshiIngestTrace";
 
 export interface KalshiRawTrade {
   trade_id: string;
@@ -409,6 +417,7 @@ async function fetchKalshiTradesFromApi(
 
   if (raws.length === 0) return [];
 
+  logKalshiPollIngested(raws.length);
   console.log(
     `[kalshi/trades] fetched=${raws.length} pages<=${maxPages} limit=${KALSHI_TRADES_PAGE_SIZE}`
   );
@@ -437,6 +446,8 @@ async function fetchKalshiTradesFromApi(
 
     if (meetsProductFeedStakeThreshold(normalized.usdNotional)) {
       shadowCandidates.push({ raw, normalized });
+    } else {
+      logKalshiStakeDrop(normalized);
     }
   }
 
@@ -461,7 +472,19 @@ async function fetchKalshiTradesFromApi(
         normalized,
         pipelineEvIndex
       );
-      if (!meetsProductFeedEvThreshold(tradeEvPercent)) continue;
+      const resolvedPipeline = resolveKalshiPipelineFromIndex(
+        normalized,
+        pipelineEvIndex
+      );
+      logKalshiEvCheck(normalized, resolvedPipeline, tradeEvPercent);
+
+      if (!meetsProductFeedEvThreshold(tradeEvPercent)) {
+        logKalshiEvGateDrop(normalized, tradeEvPercent);
+        continue;
+      }
+
+      const qualifiedEv = tradeEvPercent as number;
+      logKalshiGatePass(normalized, qualifiedEv);
 
       const category = await categorizeMarket(normalized.title, normalized.ticker, {
         backfillDb: true,
@@ -472,6 +495,7 @@ async function fetchKalshiTradesFromApi(
         ...shadowInputFromRaw(raw, normalized, tradeEvPercent),
         category,
       });
+      logKalshiShadowQueued(normalized, qualifiedEv);
       shadowQueued += 1;
     }
   }
@@ -486,11 +510,27 @@ async function fetchKalshiTradesFromApi(
     stakeQualified,
     4,
     async (trade) => {
-      let netEvPercent = kalshiTradeEvPercent(trade, pipelineEvIndex);
-      if (!meetsProductFeedEvThreshold(netEvPercent)) {
-        netEvPercent = await hydrateKalshiTradeEvPercent(trade, pipelineEvIndex);
+      const netEvPercent = await hydrateKalshiTradeEvPercent(
+        trade,
+        pipelineEvIndex
+      );
+      const resolvedPipeline = resolveKalshiPipelineFromIndex(
+        trade,
+        pipelineEvIndex
+      );
+      logKalshiEvCheck(trade, resolvedPipeline, netEvPercent);
+      if (meetsProductFeedEvThreshold(netEvPercent)) {
+        logKalshiGatePass(trade, netEvPercent as number);
+      } else {
+        logKalshiEvGateDrop(trade, netEvPercent);
       }
-      return { ...trade, netEvPercent };
+      return {
+        ...trade,
+        netEvPercent:
+          netEvPercent != null && Number.isFinite(netEvPercent)
+            ? netEvPercent
+            : trade.netEvPercent,
+      };
     }
   );
 

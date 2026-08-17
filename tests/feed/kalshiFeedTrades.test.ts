@@ -131,6 +131,16 @@ describe("resolveKalshiContractEvFallback", () => {
     } as PipelineTradeEv);
     expect(ev).toBeCloseTo(25, 5);
   });
+
+  it("derives EV from pMarket when mids are absent on unmapped rows", () => {
+    const ev = resolveKalshiContractEvFallback(0.4, {
+      status: "unmapped",
+      pmMid: null,
+      kalshiMid: null,
+      pMarket: 0.5,
+    } as PipelineTradeEv);
+    expect(ev).toBeCloseTo(25, 5);
+  });
 });
 
 describe("isKalshiTradeEligibleForFeed", () => {

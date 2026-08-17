@@ -288,6 +288,13 @@ function filterKalshiEligible(
   pipelineEvIndex: Map<string, PipelineTradeEv>
 ): RecentFeedTrade[] {
   return candidates.flatMap((trade) => {
+    if (
+      meetsProductFeedStakeThreshold(trade.usdNotional) &&
+      meetsProductFeedEvThreshold(trade.netEvPercent)
+    ) {
+      return [trade];
+    }
+
     const whale = kalshiFeedTradeToWhale(trade, {
       netEvPercent: trade.netEvPercent ?? null,
     });

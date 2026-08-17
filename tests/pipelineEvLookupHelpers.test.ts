@@ -58,4 +58,14 @@ describe("resolvePipelineEvForWhale", () => {
     );
     expect(hit?.netEvPercent).toBe(4.2);
   });
+
+  it("synthesizes pipeline EV from stamped trade netEvPercent when index misses", () => {
+    const whale = {
+      ...kalshiWhale("KXFED-26OCT-T3.00"),
+      netEvPercent: 5.1,
+    };
+    const hit = resolvePipelineEvForWhale(new Map(), whale);
+    expect(hit?.netEvPercent).toBe(5.1);
+    expect(hit?.status).toBe("ok");
+  });
 });

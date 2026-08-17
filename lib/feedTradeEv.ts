@@ -91,6 +91,14 @@ export function resolveContractMidEvFallback(
     return entryPriceEvPercent(pipeline.kalshiMid, executionPrice);
   }
 
+  if (pipeline.pMarket != null && Number.isFinite(pipeline.pMarket)) {
+    return entryPriceEvPercent(pipeline.pMarket, executionPrice);
+  }
+
+  if (pipeline.pTrue != null && Number.isFinite(pipeline.pTrue)) {
+    return entryPriceEvPercent(pipeline.pTrue, executionPrice);
+  }
+
   if (
     pipeline.netEvPercent != null &&
     Number.isFinite(pipeline.netEvPercent) &&
@@ -165,7 +173,13 @@ export function resolveFeedTradeEvPercent(
   if (!pipeline) return null;
 
   if (pipeline.status === "unmapped" || pipeline.status === "timeout") {
-    return resolveContractMidEvFallback(trade.price, pipeline);
+    const fromMid = resolveContractMidEvFallback(trade.price, pipeline);
+    if (fromMid != null) return fromMid;
+
+    if (pipeline.pTrue != null && Number.isFinite(pipeline.pTrue)) {
+      return entryPriceEvPercent(pipeline.pTrue, trade.price);
+    }
+    return null;
   }
 
   if (!isAuthoritativePipelineTradeEv(pipeline)) return null;
