@@ -212,7 +212,6 @@ async function resolveTradeEvBatch(
           lookupKey,
           executionPrice
         );
-        const executionPrice = normalizeIncomingTradePrice(item.tradePrice);
         if (
           isFullyComputedTradeEv(sealedPartial, { executionPrice })
         ) {
