@@ -16,13 +16,18 @@ import {
 import {
   pipelineEvKeyForTrade,
   pipelineEvKeyForWhale,
+  resolvePipelineEvFromIndex,
 } from "@/lib/pipelineEvLookupHelpers";
 import type { PipelineEvRequestItem } from "@/lib/types/ev";
 import type { MarketSummary } from "@/lib/polymarket";
 import type { WhaleTrade } from "@/lib/whaleTrades";
 
 export type { PipelineEvRequestItem } from "@/lib/types/ev";
-export { pipelineEvKeyForTrade, pipelineEvKeyForWhale } from "@/lib/pipelineEvLookupHelpers";
+export {
+  pipelineEvKeyForTrade,
+  pipelineEvKeyForWhale,
+  resolvePipelineEvFromIndex,
+} from "@/lib/pipelineEvLookupHelpers";
 
 const REFRESH_MS = 45_000;
 
@@ -121,29 +126,17 @@ export function resolvePipelineEvForWhale(
   const key = pipelineEvKeyForWhale(trade);
   if (!key) return null;
 
-  const direct = index.get(key);
-  if (direct) {
-    logPipelineEvDebug(trade, direct);
-    return direct;
-  }
-
   const platform = (trade.platform ?? trade.source ?? "").toLowerCase();
-  const tokenId = platform === "polymarket" ? trade.assetId : undefined;
-  const kalshiTicker = platform === "kalshi" ? trade.ticker : undefined;
+  const pipeline = resolvePipelineEvFromIndex(index, key, {
+    tokenId: platform === "polymarket" ? trade.assetId : null,
+    kalshiTicker: platform === "kalshi" ? trade.ticker ?? null : null,
+  });
 
-  for (const alias of pipelineEvLookupAliases({
-    key,
-    tokenId: tokenId ?? null,
-    kalshiTicker: kalshiTicker ?? null,
-  })) {
-    const hit = index.get(alias);
-    if (hit) {
-      logPipelineEvDebug(trade, hit);
-      return hit;
-    }
+  if (pipeline) {
+    logPipelineEvDebug(trade, pipeline);
   }
 
-  return null;
+  return pipeline;
 }
 
 function logPipelineEvDebug(trade: WhaleTrade, pipeline: PipelineTradeEv): void {

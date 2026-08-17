@@ -85,7 +85,7 @@ export function kalshiFeedTradeToWhale(
       isLive: options?.isLive ?? true,
       usdNotional: trade.usdNotional,
       source: "kalshi",
-      ticker: trade.ticker,
+      ticker: trade.ticker?.trim().toUpperCase(),
     }
   );
 
@@ -238,6 +238,20 @@ export function diagnoseKalshiFeedTradeGate(
   base.pipelineStatus = pipeline?.status ?? "missing";
 
   const tradeEvPercent = resolveKalshiFeedTradeEvPercent(trade, pipeline);
+  const passedGate =
+    meetsKalshiFeedStakeThreshold(trade) &&
+    meetsProductFeedEvThreshold(tradeEvPercent);
+
+  if (process.env.NODE_ENV !== "production" && isKalshiRow(trade)) {
+    console.log("[Kalshi Pipeline]", {
+      ticker: trade.ticker,
+      stake: trade.usdNotional,
+      evStatus: pipeline?.status ?? "missing",
+      calculatedEv: tradeEvPercent,
+      pipelineEv: pipeline?.netEvPercent ?? null,
+      passedGate,
+    });
+  }
 
   if (
     !meetsProductFeedEvThreshold(tradeEvPercent) &&
@@ -287,20 +301,6 @@ export function evaluateKalshiFeedTradeGate(
   context: KalshiFeedGateContext = {}
 ): KalshiFeedGateResult {
   const result = diagnoseKalshiFeedTradeGate(trade, pipelineEvIndex);
-  const isEligible = result.passed;
-
-  if (process.env.NODE_ENV !== "production" && isKalshiRow(trade)) {
-    console.log(
-      "[Kalshi Gate]",
-      trade.ticker ?? trade.id,
-      "Stake:",
-      trade.usdNotional,
-      "EV:",
-      result.calculatedEvPercent,
-      "Eligible:",
-      isEligible
-    );
-  }
 
   const shouldLog =
     !result.passed &&

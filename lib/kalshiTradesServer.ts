@@ -2,6 +2,7 @@ import "server-only";
 
 import { mapWithConcurrency } from "@/lib/clvPriceHistory";
 import { indexPipelineTradeEvAliases } from "@/lib/evPipeline/crossAssetLookup";
+import { ENSEMBLE_LLM_TIMEOUT_MS } from "@/lib/evPipeline/ensemblePricingFallback";
 import { ensureFullyComputedTradeEv } from "@/lib/evPipeline/resolveTradeEv";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import {
@@ -16,8 +17,9 @@ import {
 import {
   meetsProductFeedEvThreshold,
   meetsProductFeedStakeThreshold,
+  MIN_PRODUCT_FEED_STAKE_USD,
 } from "@/lib/feedQualification";
-import { pipelineEvKeyForTrade } from "@/lib/pipelineEvLookupHelpers";
+import { pipelineEvKeyForTrade, resolvePipelineEvFromIndex } from "@/lib/pipelineEvLookupHelpers";
 import {
   KALSHI_TRADES_MAX_PAGES_INCREMENTAL,
   KALSHI_TRADES_MAX_PAGES_INITIAL,
@@ -117,14 +119,101 @@ function normalizeKalshiTrade(
     usdNotional,
     timestamp: parseTimestamp(raw.created_time, nowEpochSeconds),
     traceable: true,
-    ticker: raw.ticker,
+    ticker: raw.ticker.trim().toUpperCase(),
     selectionLabel: market.selectionLabel ?? undefined,
     isBlockTrade: raw.is_block_trade === true,
   };
 }
 
-async function resolveCachedKalshiPipelineEv(
-  trades: FeedTrade[]
+function logKalshiPipelineIngest(
+  trade: Pick<FeedTrade, "ticker" | "usdNotional">,
+  pipeline: PipelineTradeEv | null,
+  calculatedEv: number | null,
+  passedGate: boolean,
+  dynamicCompute = false
+): void {
+  console.log("[Kalshi Pipeline]", {
+    ticker: trade.ticker,
+    stake: trade.usdNotional,
+    evStatus: pipeline?.status ?? "missing",
+    calculatedEv: pipeline?.netEvPercent ?? null,
+    resolvedEv: calculatedEv,
+    passedGate,
+    dynamicCompute,
+  });
+}
+
+function kalshiProbeTrade(ticker: string, price: number): FeedTrade {
+  return {
+    id: `probe:${ticker}`,
+    source: "kalshi",
+    title: ticker,
+    outcome: "Yes",
+    side: "BUY",
+    price,
+    size: 1,
+    usdNotional: MIN_PRODUCT_FEED_STAKE_USD,
+    timestamp: Math.floor(Date.now() / 1000),
+    traceable: false,
+    ticker,
+  };
+}
+
+async function ensureKalshiTickerPipelineEv(
+  ticker: string,
+  price: number,
+  pipelineEvIndex: Map<string, PipelineTradeEv>
+): Promise<PipelineTradeEv> {
+  const normalizedTicker = ticker.trim().toUpperCase();
+  const lookupKey = normalizePipelineLookupKey(
+    `kalshi:${normalizedTicker}`,
+    "kalshi"
+  );
+  const input = {
+    source: "kalshi" as const,
+    kalshiTicker: normalizedTicker,
+    tradePrice: price,
+  };
+
+  let pipeline = await ensureFullyComputedTradeEv(
+    lookupKey,
+    input,
+    null,
+    { cacheOnly: true }
+  );
+  const key = pipelineEvLookupKey(input) ?? lookupKey;
+  indexPipelineTradeEvAliases(pipelineEvIndex, pipeline, key);
+
+  const probe = kalshiProbeTrade(normalizedTicker, price);
+  let resolvedEv = kalshiTradeEvPercent(probe, pipelineEvIndex);
+  logKalshiPipelineIngest(
+    probe,
+    pipeline,
+    resolvedEv,
+    meetsProductFeedEvThreshold(resolvedEv)
+  );
+
+  if (!meetsProductFeedEvThreshold(resolvedEv)) {
+    pipeline = await ensureFullyComputedTradeEv(lookupKey, input, null, {
+      ensembleLlmTimeoutMs: ENSEMBLE_LLM_TIMEOUT_MS,
+    });
+    indexPipelineTradeEvAliases(pipelineEvIndex, pipeline, key);
+    resolvedEv = kalshiTradeEvPercent(probe, pipelineEvIndex);
+    logKalshiPipelineIngest(
+      probe,
+      pipeline,
+      resolvedEv,
+      meetsProductFeedEvThreshold(resolvedEv),
+      true
+    );
+  }
+
+  return pipeline;
+}
+
+/** Build a Kalshi pipeline EV index — cache-first, then dynamic compute on miss. */
+export async function resolveCachedKalshiPipelineEv(
+  trades: Array<Pick<FeedTrade, "ticker" | "price">>
 ): Promise<Map<string, PipelineTradeEv>> {
   const index = new Map<string, PipelineTradeEv>();
   const byTicker = new Map<string, { ticker: string; price: number }>();
@@ -137,30 +226,19 @@ async function resolveCachedKalshiPipelineEv(
     }
   }
 
-  await mapWithConcurrency(Array.from(byTicker.values()), 8, async (bucket) => {
-    const lookupKey = normalizePipelineLookupKey(
-      `kalshi:${bucket.ticker}`,
-      "kalshi"
-    );
+  await mapWithConcurrency(Array.from(byTicker.values()), 4, async (bucket) => {
     try {
-      const pipeline = await ensureFullyComputedTradeEv(
-        lookupKey,
-        {
-          source: "kalshi",
-          kalshiTicker: bucket.ticker,
-          tradePrice: bucket.price,
-        },
-        null,
-        { cacheOnly: true }
+      await ensureKalshiTickerPipelineEv(
+        bucket.ticker,
+        bucket.price,
+        index
       );
-      const key = pipelineEvLookupKey({
-        source: "kalshi",
-        kalshiTicker: bucket.ticker,
-        tradePrice: bucket.price,
-      });
-      indexPipelineTradeEvAliases(index, pipeline, key ?? lookupKey);
-    } catch {
-      // Skip tickers without cached EV.
+    } catch (error) {
+      console.warn(
+        "[Kalshi Pipeline] ticker EV resolve failed",
+        bucket.ticker,
+        error instanceof Error ? error.message : error
+      );
     }
   });
 
@@ -172,8 +250,9 @@ function resolveKalshiPipelineFromIndex(
   pipelineEvIndex: Map<string, PipelineTradeEv>
 ): PipelineTradeEv | null {
   const key = pipelineEvKeyForTrade(trade);
-  if (!key) return null;
-  return pipelineEvIndex.get(key) ?? null;
+  return resolvePipelineEvFromIndex(pipelineEvIndex, key, {
+    kalshiTicker: trade.ticker ?? null,
+  });
 }
 
 function kalshiTradeEvPercent(
@@ -202,33 +281,37 @@ async function hydrateKalshiTradeEvPercent(
   pipelineEvIndex: Map<string, PipelineTradeEv>
 ): Promise<number | null> {
   const cached = kalshiTradeEvPercent(trade, pipelineEvIndex);
-  if (meetsProductFeedEvThreshold(cached)) return cached;
+  if (meetsProductFeedEvThreshold(cached)) {
+    logKalshiPipelineIngest(
+      trade,
+      resolveKalshiPipelineFromIndex(trade, pipelineEvIndex),
+      cached,
+      true
+    );
+    return cached;
+  }
 
   if (!trade.ticker?.trim()) return cached;
-  const ticker = trade.ticker.trim().toUpperCase();
-  const lookupKey = normalizePipelineLookupKey(`kalshi:${ticker}`, "kalshi");
 
   try {
-    const pipeline = await ensureFullyComputedTradeEv(
-      lookupKey,
-      {
-        source: "kalshi",
-        kalshiTicker: ticker,
-        tradePrice: trade.price,
-      },
-      null
+    await ensureKalshiTickerPipelineEv(
+      trade.ticker,
+      trade.price,
+      pipelineEvIndex
     );
-    const key = pipelineEvLookupKey({
-      source: "kalshi",
-      kalshiTicker: ticker,
-      tradePrice: trade.price,
-    });
-    indexPipelineTradeEvAliases(pipelineEvIndex, pipeline, key ?? lookupKey);
   } catch {
     return cached;
   }
 
-  return kalshiTradeEvPercent(trade, pipelineEvIndex);
+  const resolved = kalshiTradeEvPercent(trade, pipelineEvIndex);
+  logKalshiPipelineIngest(
+    trade,
+    resolveKalshiPipelineFromIndex(trade, pipelineEvIndex),
+    resolved,
+    meetsProductFeedEvThreshold(resolved),
+    true
+  );
+  return resolved;
 }
 
 const KALSHI_TRADES_PAGE_SIZE = KALSHI_TRADES_PAGE_LIMIT;

@@ -13,6 +13,7 @@ import {
   kalshiFeedTradeToWhale,
   resolveKalshiFeedTradeEvPercent,
 } from "@/lib/feed/kalshiFeedTrades";
+import { resolveCachedKalshiPipelineEv } from "@/lib/kalshiTradesServer";
 import {
   meetsProductFeedEvThreshold,
   meetsProductFeedStakeThreshold,
@@ -34,6 +35,7 @@ import {
   normalizePipelineLookupKey,
   pipelineEvLookupKey,
 } from "@/lib/evPipeline/types";
+import { resolvePipelineEvFromIndex } from "@/lib/pipelineEvLookupHelpers";
 import type { FeedTrade } from "@/lib/feedTradeTypes";
 import {
   isTrendingByStakeAndRecency,
@@ -298,7 +300,11 @@ function filterKalshiEligible(
     const lookupKey = trade.ticker
       ? normalizePipelineLookupKey(`kalshi:${trade.ticker}`, "kalshi")
       : null;
-    const pipeline = lookupKey ? pipelineEvIndex.get(lookupKey) : undefined;
+    const pipeline = lookupKey
+      ? resolvePipelineEvFromIndex(pipelineEvIndex, lookupKey, {
+          kalshiTicker: trade.ticker ?? null,
+        })
+      : undefined;
     const netEvPercent = resolveKalshiFeedTradeEvPercent(
       whale,
       pipeline ?? null
@@ -328,28 +334,9 @@ async function qualifyKalshiRecentTrades(
 
   await mapWithConcurrency(remaining, 4, async (trade) => {
     if (!trade.ticker?.trim()) return;
-    const ticker = trade.ticker.trim().toUpperCase();
-    const lookupKey = normalizePipelineLookupKey(`kalshi:${ticker}`, "kalshi");
-
-    try {
-      const pipeline = await ensureFullyComputedTradeEv(
-        lookupKey,
-        {
-          source: "kalshi",
-          kalshiTicker: ticker,
-          tradePrice: trade.price,
-        },
-        null
-      );
-      const key = pipelineEvLookupKey({
-        source: "kalshi",
-        kalshiTicker: ticker,
-        tradePrice: trade.price,
-      });
-      if (key) pipelineEvIndex.set(key, pipeline);
-      pipelineEvIndex.set(lookupKey, pipeline);
-    } catch {
-      // Skip tickers that cannot be EV-mapped.
+    const hydrated = await resolveCachedKalshiPipelineEv([trade]);
+    for (const [key, value] of hydrated) {
+      pipelineEvIndex.set(key, value);
     }
   });
 
@@ -419,51 +406,6 @@ function kalshiShadowToFeedTrade(row: KalshiShadowTrade): RecentFeedTrade | null
       categoryFromPayload(raw) ||
       undefined,
   };
-}
-
-async function resolveCachedKalshiPipelineEv(
-  trades: RecentFeedTrade[]
-): Promise<Map<string, PipelineTradeEv>> {
-  const index = new Map<string, PipelineTradeEv>();
-  const byTicker = new Map<string, { ticker: string; price: number }>();
-
-  for (const trade of trades) {
-    if (trade.source !== "kalshi" || !trade.ticker?.trim()) continue;
-    const ticker = trade.ticker.trim().toUpperCase();
-    if (!byTicker.has(ticker)) {
-      byTicker.set(ticker, { ticker, price: trade.price });
-    }
-  }
-
-  await mapWithConcurrency(Array.from(byTicker.values()), 8, async (bucket) => {
-    const lookupKey = normalizePipelineLookupKey(
-      `kalshi:${bucket.ticker}`,
-      "kalshi"
-    );
-    try {
-      const pipeline = await ensureFullyComputedTradeEv(
-        lookupKey,
-        {
-          source: "kalshi",
-          kalshiTicker: bucket.ticker,
-          tradePrice: bucket.price,
-        },
-        null,
-        { cacheOnly: true }
-      );
-      const key = pipelineEvLookupKey({
-        source: "kalshi",
-        kalshiTicker: bucket.ticker,
-        tradePrice: bucket.price,
-      });
-      if (key) index.set(key, pipeline);
-      index.set(lookupKey, pipeline);
-    } catch {
-      // Skip tickers without cached EV.
-    }
-  });
-
-  return index;
 }
 
 function filterRecentPolymarketByTraderCredibility(
