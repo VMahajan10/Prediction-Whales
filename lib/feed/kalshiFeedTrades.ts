@@ -153,6 +153,27 @@ export function resolveKalshiFeedTradeEvPercent(
   trade: WhaleTrade,
   pipeline?: PipelineTradeEv | null
 ): number | null {
+  if (trade.netEvPercent != null && Number.isFinite(trade.netEvPercent)) {
+    return trade.netEvPercent;
+  }
+
+  // Unmapped rows carry YES-space mids — resolve in outcome space before the
+  // generic feed resolver compares raw pmMid/kalshiMid to the entry price.
+  if (
+    pipeline &&
+    (pipeline.status === "unmapped" || pipeline.status === "timeout")
+  ) {
+    const contractFallback = resolveKalshiContractEvFallback(
+      trade.price,
+      pipeline,
+      trade.outcome
+    );
+    if (contractFallback != null) return contractFallback;
+
+    const entryFallback = resolveKalshiUnmappedEntryEvFallback(trade, pipeline);
+    if (entryFallback != null) return entryFallback;
+  }
+
   const authoritative = resolveFeedTradeEvPercent(
     {
       price: trade.price,

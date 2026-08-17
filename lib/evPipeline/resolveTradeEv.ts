@@ -745,8 +745,15 @@ export async function ensureFullyComputedTradeEv(
       { liveFallback: false }
     );
     if (item.source === "kalshi") {
+      const kalshiTicker = normalizeKalshiTicker(item.kalshiTicker);
+      const kalshiMapping = kalshiTicker
+        ? await loadMappingForTradeEv(
+            normalizePmTokenId(item.tokenId),
+            kalshiTicker
+          )
+        : null;
       const kalshiCached = tryFinalize(
-        await buildKalshiTradeEvFallback(lookupKey, item, null)
+        await buildKalshiTradeEvFallback(lookupKey, item, kalshiMapping)
       );
       if (kalshiCached) {
         await cacheTradeEvLookup(lookupKey, kalshiCached);

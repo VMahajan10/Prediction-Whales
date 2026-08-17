@@ -469,6 +469,7 @@ async function fetchKalshiTradesFromApi(
     `[kalshi/trades] raw=${raws.length} normalized=${trades.length} stakeCandidates=${shadowCandidates.length}`
   );
 
+  let evQualified = 0;
   let shadowQueued = 0;
   const stakeQualified = trades.filter((trade) =>
     meetsProductFeedStakeThreshold(trade.usdNotional)
@@ -492,14 +493,6 @@ async function fetchKalshiTradesFromApi(
       );
       logKalshiEvCheck(normalized, resolvedPipeline, tradeEvPercent);
 
-      if (!meetsProductFeedEvThreshold(tradeEvPercent)) {
-        logKalshiEvGateDrop(normalized, tradeEvPercent);
-        continue;
-      }
-
-      const qualifiedEv = tradeEvPercent as number;
-      logKalshiGatePass(normalized, qualifiedEv);
-
       const category = await categorizeMarket(normalized.title, normalized.ticker, {
         backfillDb: true,
         marketKey: normalized.ticker,
@@ -509,14 +502,22 @@ async function fetchKalshiTradesFromApi(
         ...shadowInputFromRaw(raw, normalized, tradeEvPercent),
         category,
       });
-      logKalshiShadowQueued(normalized, qualifiedEv);
       shadowQueued += 1;
+      logKalshiShadowQueued(normalized, tradeEvPercent);
+
+      if (!meetsProductFeedEvThreshold(tradeEvPercent)) {
+        logKalshiEvGateDrop(normalized, tradeEvPercent);
+        continue;
+      }
+
+      evQualified += 1;
+      logKalshiGatePass(normalized, tradeEvPercent as number);
     }
   }
 
   if (shadowCandidates.length > 0) {
     console.log(
-      `[kalshi/trades] evQualified=${shadowQueued} shadowQueued=${shadowQueued}`
+      `[kalshi/trades] evQualified=${evQualified} shadowQueued=${shadowQueued}`
     );
   }
 

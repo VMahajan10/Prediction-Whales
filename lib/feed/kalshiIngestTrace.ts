@@ -49,10 +49,14 @@ export function logKalshiGatePass(
 
 export function logKalshiShadowQueued(
   trade: Pick<FeedTrade, "id" | "ticker">,
-  netEvPercent: number
+  netEvPercent: number | null
 ): void {
+  const evLabel =
+    netEvPercent != null && Number.isFinite(netEvPercent)
+      ? netEvPercent.toFixed(2)
+      : "null";
   console.log(
-    `[Kalshi Shadow] Queued kalshi_shadow_trades insert id=${trade.id} ticker=${trade.ticker ?? "unknown"} netEvPercent=${netEvPercent.toFixed(2)}`
+    `[Kalshi Shadow] Queued kalshi_shadow_trades insert id=${trade.id} ticker=${trade.ticker ?? "unknown"} netEvPercent=${evLabel}`
   );
 }
 

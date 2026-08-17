@@ -13,6 +13,7 @@ import {
 } from "@/lib/feedQualification";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import { pipelineEvLookupKeyKalshi } from "@/lib/evPipeline/types";
+import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 
 const sportsTrade = {
   id: "kalshi-trade-sports",
@@ -228,6 +229,30 @@ describe("isKalshiTradeEligibleForFeed", () => {
         unmappedWithPmMid(sportsTrade.ticker, 0.6),
         { logRejection: false }
       )
+    ).toBe(true);
+  });
+
+  it("uses NO probability space when YES pmMid would reject the trade", () => {
+    const whale = kalshiFeedTradeToWhale({
+      ...sportsTrade,
+      outcome: "No",
+      price: 0.55,
+    });
+    const pipeline = unmappedWithPmMid(sportsTrade.ticker, 0.4).get(
+      pipelineEvLookupKeyKalshi(sportsTrade.ticker)
+    )!;
+
+    expect(resolveFeedTradeEvPercent({ price: whale.price }, pipeline)).toBeLessThan(
+      3
+    );
+    expect(resolveKalshiFeedTradeEvPercent(whale, pipeline)).toBeCloseTo(
+      9.0909,
+      2
+    );
+    expect(
+      isKalshiTradeEligibleForFeed(whale, unmappedWithPmMid(sportsTrade.ticker, 0.4), {
+        logRejection: false,
+      })
     ).toBe(true);
   });
 

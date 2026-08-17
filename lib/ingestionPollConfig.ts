@@ -13,22 +13,22 @@ export const KALSHI_TRADES_POLL_MS = readPositiveIntEnv(
   60_000
 );
 
-/** Kalshi trades page size per upstream request (default 50). */
+/** Kalshi trades page size per upstream request (default 100). */
 export const KALSHI_TRADES_PAGE_LIMIT = readPositiveIntEnv(
   "KALSHI_TRADES_PAGE_LIMIT",
-  50
+  100
 );
 
-/** Max Kalshi pages on cold fetch (default 2). */
+/** Max Kalshi pages on cold fetch (default 5). */
 export const KALSHI_TRADES_MAX_PAGES_INITIAL = readPositiveIntEnv(
   "KALSHI_TRADES_MAX_PAGES_INITIAL",
-  2
+  5
 );
 
-/** Max Kalshi pages when `min_ts` is provided (default 1). */
+/** Max Kalshi pages when `min_ts` is provided (default 2). */
 export const KALSHI_TRADES_MAX_PAGES_INCREMENTAL = readPositiveIntEnv(
   "KALSHI_TRADES_MAX_PAGES_INCREMENTAL",
-  1
+  2
 );
 
 /** Polymarket Data API trades limit for lightweight polling routes (default 20). */
