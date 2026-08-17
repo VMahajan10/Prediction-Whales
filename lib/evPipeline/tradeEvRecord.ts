@@ -106,7 +106,15 @@ export function isStaleZeroTradeEvPayload(
     Number.isFinite(pMarket) &&
     Math.abs(pTrue - pMarket) <= STALE_FALLBACK_PROB_EPS;
 
-  return lacksBookMids || collapsedFairValue;
+  /** Cached 0% while fair value and market reference disagree — needs entry reprice. */
+  const inconsistentZero =
+    pTrue != null &&
+    pMarket != null &&
+    Number.isFinite(pTrue) &&
+    Number.isFinite(pMarket) &&
+    Math.abs(pTrue - pMarket) > STALE_FALLBACK_PROB_EPS;
+
+  return lacksBookMids || collapsedFairValue || inconsistentZero;
 }
 
 /**
@@ -260,11 +268,12 @@ export function pipelineEvTooltip(
 /** Final client/API payload — numeric EV fields aligned with coalesceDisplayEvPercent. */
 export function sealClientTradeEvPayload(
   item: PipelineTradeEv,
-  lookupKey?: string
+  lookupKey?: string,
+  options?: { executionPrice?: number | null }
 ): PipelineTradeEv {
   const key = lookupKey ?? item.key;
-  const normalized = normalizePipelineTradeEv(item, key) ?? item;
-  const sealed = strictApiTradeEvPayload(normalized, key);
+  const normalized = normalizePipelineTradeEv(item, key, options) ?? item;
+  const sealed = strictApiTradeEvPayload(normalized, key, options);
 
   if (sealed.status === "ok" && sealed.pTrue != null) {
     const display = coalesceDisplayEvPercent(sealed);

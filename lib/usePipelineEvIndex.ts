@@ -68,7 +68,11 @@ export function usePipelineTradeEv(input: {
           return;
         }
 
-        const normalized = normalizePipelineEvEntry(data.entry ?? null);
+        const normalized = normalizePipelineEvEntry(
+          data.entry ?? null,
+          data.entry?.key,
+          input.tradePrice
+        );
         console.log("[usePipelineTradeEv] hydrated", {
           source: input.source,
           tokenId: input.tokenId,

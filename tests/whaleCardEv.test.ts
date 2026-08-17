@@ -95,6 +95,22 @@ describe("mergePipelineEvOntoWhale", () => {
     expect(mergePipelineEvOntoWhale(trade, undefined)).toBe(trade);
   });
 
+  it("reprices stale cached zero EV from pipeline p_true", () => {
+    const merged = mergePipelineEvOntoWhale(
+      whaleTrade({ price: 0.4, netEvPercent: 0, averageEv: 0 }),
+      pipeline({
+        netEvPercent: 0,
+        averageEv: 0,
+        pTrue: 0.5,
+        pMarket: 0.4,
+        pmMid: 0.4,
+      })
+    );
+
+    expect(merged.netEvPercent).toBeCloseTo(25, 0);
+    expect(merged.averageEv).toBeCloseTo(25, 0);
+  });
+
   it("does not overwrite an EV the trade already carries", () => {
     const trade = whaleTrade({ netEvPercent: 6.1 });
     const merged = mergePipelineEvOntoWhale(trade, pipeline({ netEvPercent: 4.2 }));

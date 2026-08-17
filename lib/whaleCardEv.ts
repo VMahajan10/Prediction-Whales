@@ -91,7 +91,8 @@ export function mergePipelineEvOntoWhale(
     },
     pipeline
   );
-  if (tradeEvPercent == null) return trade;
+  if (tradeEvPercent == null || !Number.isFinite(tradeEvPercent)) return trade;
+  if (tradeEvPercent === 0 || Object.is(tradeEvPercent, -0)) return trade;
 
   return { ...trade, netEvPercent: tradeEvPercent, averageEv: tradeEvPercent };
 }
@@ -131,7 +132,18 @@ export function resolveWhaleCardAvgEv(
     grossEvPercent: trade.grossEvPercent ?? null,
     averageEv: trade.averageEv ?? null,
   });
-  if (tradeLevelEv != null) {
+  const staleTradeEv =
+    tradeLevelEv != null &&
+    isStaleZeroTradeEvPayload({
+      netEvPercent: trade.netEvPercent ?? null,
+      grossEvPercent: trade.grossEvPercent ?? null,
+      averageEv: trade.averageEv ?? null,
+      pmMid: pipelineData?.pmMid ?? null,
+      kalshiMid: pipelineData?.kalshiMid ?? null,
+      pTrue: pipelineData?.pTrue ?? null,
+      pMarket: pipelineData?.pMarket ?? null,
+    });
+  if (tradeLevelEv != null && !staleTradeEv) {
     return {
       ...formatEvPercentDisplay(tradeLevelEv, false),
       lowConfidence: false,

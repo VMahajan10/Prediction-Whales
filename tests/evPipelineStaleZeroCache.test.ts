@@ -49,6 +49,15 @@ describe("shouldBypassStaleEvCacheHit", () => {
       )
     ).toBe(false);
   });
+
+  it("bypasses inconsistent cached 0% when p_true differs from market mid", () => {
+    expect(
+      shouldBypassStaleEvCacheHit(
+        staleMidZeroPayload({ pTrue: 0.5, pMarket: 0.4, pmMid: 0.4 }),
+        { executionPrice: 0.4 }
+      )
+    ).toBe(true);
+  });
 });
 
 describe("isFullyComputedTradeEv", () => {
@@ -65,6 +74,15 @@ describe("isFullyComputedTradeEv", () => {
     expect(
       isFullyComputedTradeEv(repriced, { executionPrice: 0.4 })
     ).toBe(true);
+    expect(repriced.netEvPercent).toBeCloseTo(10, 0);
+  });
+
+  it("reprices inconsistent cached zero via strictApiTradeEvPayload", () => {
+    const repriced = strictApiTradeEvPayload(
+      staleMidZeroPayload({ pTrue: 0.5, pMarket: 0.4, pmMid: 0.4 }),
+      "pm:test",
+      { executionPrice: 0.4 }
+    );
     expect(repriced.netEvPercent).toBeCloseTo(10, 0);
   });
 });

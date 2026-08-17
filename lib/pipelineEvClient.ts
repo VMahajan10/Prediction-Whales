@@ -7,6 +7,7 @@ import {
   pipelineEvLookupKey,
 } from "@/lib/evPipeline/types";
 import { normalizePipelineTradeEv } from "@/lib/evPipeline/tradeEvRecord";
+import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import {
   enrichPipelineTradeEvCrossIds,
   indexPipelineTradeEvAliases,
@@ -41,11 +42,17 @@ export function resolvePolymarketPipelineTokenId(
 
 export function normalizePipelineEvEntry(
   entry: PipelineTradeEv | null | undefined,
-  lookupKey?: string
+  lookupKey?: string,
+  executionPrice?: number | null
 ): PipelineTradeEv | null {
   if (!entry) return null;
   const enriched = enrichPipelineTradeEvCrossIds(entry, lookupKey ?? entry.key);
-  return normalizePipelineTradeEv(enriched, lookupKey ?? enriched.key) ?? enriched;
+  const normalizeOptions =
+    executionPrice != null ? { executionPrice } : undefined;
+  return (
+    normalizePipelineTradeEv(enriched, lookupKey ?? enriched.key, normalizeOptions) ??
+    enriched
+  );
 }
 
 type Listener = (index: Map<string, PipelineTradeEv>, loading: boolean) => void;
@@ -115,7 +122,10 @@ export function resolvePipelineEvForWhale(
   if (!key) return null;
 
   const direct = index.get(key);
-  if (direct) return direct;
+  if (direct) {
+    logPipelineEvDebug(trade, direct);
+    return direct;
+  }
 
   const platform = (trade.platform ?? trade.source ?? "").toLowerCase();
   const tokenId = platform === "polymarket" ? trade.assetId : undefined;
@@ -127,10 +137,35 @@ export function resolvePipelineEvForWhale(
     kalshiTicker: kalshiTicker ?? null,
   })) {
     const hit = index.get(alias);
-    if (hit) return hit;
+    if (hit) {
+      logPipelineEvDebug(trade, hit);
+      return hit;
+    }
   }
 
   return null;
+}
+
+function logPipelineEvDebug(trade: WhaleTrade, pipeline: PipelineTradeEv): void {
+  if (process.env.NODE_ENV === "production") return;
+
+  const rawEv =
+    pipeline.netEvPercent ??
+    pipeline.averageEv ??
+    pipeline.grossEvPercent ??
+    null;
+  const outputEv = resolveFeedTradeEvPercent(
+    {
+      price: trade.price,
+      netEvPercent: trade.netEvPercent,
+      grossEvPercent: trade.grossEvPercent,
+    },
+    pipeline
+  );
+
+  console.log(
+    `[EV Debug] Market: ${trade.title} | Raw EV: ${rawEv ?? "null"} | Output EV: ${outputEv ?? "null"}`
+  );
 }
 
 function dedupeRequestItems(
@@ -189,6 +224,13 @@ async function fetchPipelineEvChunk(
   items: PipelineEvRequestItem[]
 ): Promise<Map<string, PipelineTradeEv>> {
   const fullUrl = resolveAppApiUrl("/api/ev/trades");
+  const executionPriceByKey = new Map<string, number>();
+  for (const item of items) {
+    const lookupKey = pipelineEvLookupKey(item);
+    if (!lookupKey || item.tradePrice == null) continue;
+    if (!Number.isFinite(item.tradePrice)) continue;
+    executionPriceByKey.set(lookupKey, item.tradePrice);
+  }
 
   try {
     const res = await fetchPipelineEvHttp(fullUrl, {
@@ -213,12 +255,20 @@ async function fetchPipelineEvChunk(
 
     const next = new Map<string, PipelineTradeEv>();
     for (const entry of data.entries ?? []) {
-      const normalized = normalizePipelineTradeEv(entry, entry.key);
+      const normalized = normalizePipelineEvEntry(
+        entry,
+        entry.key,
+        executionPriceByKey.get(entry.key)
+      );
       if (normalized) indexPipelineTradeEvAliases(next, normalized, entry.key);
     }
     for (const [key, entry] of Object.entries(data.byKey ?? {})) {
       if (next.has(key)) continue;
-      const normalized = normalizePipelineTradeEv(entry, key);
+      const normalized = normalizePipelineEvEntry(
+        entry,
+        key,
+        executionPriceByKey.get(key)
+      );
       if (normalized) indexPipelineTradeEvAliases(next, normalized, key);
     }
     return next;

@@ -150,6 +150,26 @@ describe("resolveFeedTradeEvPercent", () => {
       resolveFeedTradeEvPercent({ price: 0.4 }, pipeline)
     ).toBeCloseTo(25, 1);
   });
+
+  it("reprices inconsistent cached zero when p_true differs from market mid", () => {
+    const pipeline = {
+      key: "pm:1",
+      status: "ok",
+      netEvPercent: 0,
+      grossEvPercent: null,
+      averageEv: 0,
+      pTrue: 0.5,
+      pMarket: 0.4,
+      pmMid: 0.4,
+      kalshiMid: null,
+      pTrueLowConfidence: false,
+      pTrueSource: "cached_ensemble",
+    } as PipelineTradeEv;
+
+    expect(
+      resolveFeedTradeEvPercent({ price: 0.4 }, pipeline)
+    ).toBeCloseTo(25, 1);
+  });
 });
 
 describe("passesRawIngestionSocketStakeGate", () => {

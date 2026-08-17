@@ -99,11 +99,15 @@ function normalizeItem(item: TradeEvRequestItem): PipelineTradeEvInput | null {
 
 function sealTradeEvResponse(
   entry: PipelineTradeEv,
-  lookupKey: string
+  lookupKey: string,
+  executionPrice?: number | null
 ): PipelineTradeEv {
+  const normalizeOptions =
+    executionPrice != null ? { executionPrice } : undefined;
   return sealClientTradeEvPayload(
     enrichPipelineTradeEvCrossIds(entry, lookupKey),
-    lookupKey
+    lookupKey,
+    normalizeOptions
   );
 }
 
@@ -202,7 +206,12 @@ async function resolveTradeEvBatch(
     const batchResults = await Promise.all(
       batch.map(async ({ row, payload }) => {
         const { lookupKey, item, mapping } = row;
-        const sealedPartial = sealTradeEvResponse(payload, lookupKey);
+        const executionPrice = normalizeIncomingTradePrice(item.tradePrice);
+        const sealedPartial = sealTradeEvResponse(
+          payload,
+          lookupKey,
+          executionPrice
+        );
         const executionPrice = normalizeIncomingTradePrice(item.tradePrice);
         if (
           isFullyComputedTradeEv(sealedPartial, { executionPrice })
@@ -220,7 +229,11 @@ async function resolveTradeEvBatch(
             mapping,
             hydrateOptions
           );
-          const sealed = sealTradeEvResponse(hydrated, lookupKey);
+          const sealed = sealTradeEvResponse(
+            hydrated,
+            lookupKey,
+            executionPrice
+          );
           if (sealed.status === "ok") {
             seedPipelineLocalEvCache(lookupKey, sealed);
           }
@@ -381,7 +394,12 @@ export async function GET(request: NextRequest) {
       resolvedMapping,
       { ensembleLlmTimeoutMs: ENSEMBLE_LLM_TIMEOUT_MS }
     );
-    const enrichedEntry = sealTradeEvResponse(entry, lookupKey);
+    const executionPrice = normalizeIncomingTradePrice(resolvedItem.tradePrice);
+    const enrichedEntry = sealTradeEvResponse(
+      entry,
+      lookupKey,
+      executionPrice
+    );
     if (enrichedEntry.status === "ok") {
       seedPipelineLocalEvCache(lookupKey, enrichedEntry);
     }

@@ -46,10 +46,17 @@ function toPipelineInput(item: PipelineEvRequestItem): PipelineTradeEvInput {
   };
 }
 
-function sealEntry(entry: PipelineTradeEv, lookupKey: string): PipelineTradeEv {
+function sealEntry(
+  entry: PipelineTradeEv,
+  lookupKey: string,
+  executionPrice?: number | null
+): PipelineTradeEv {
+  const normalizeOptions =
+    executionPrice != null ? { executionPrice } : undefined;
   return sealClientTradeEvPayload(
     enrichPipelineTradeEvCrossIds(entry, lookupKey),
-    lookupKey
+    lookupKey,
+    normalizeOptions
   );
 }
 
@@ -87,7 +94,7 @@ async function resolveOneServer(
         ? { cacheOnly: true }
         : { ensembleLlmTimeoutMs: ENSEMBLE_LLM_TIMEOUT_MS }
     );
-    const sealed = sealEntry(payload, lookupKey);
+    const sealed = sealEntry(payload, lookupKey, item.tradePrice);
     if (sealed.status === "ok") {
       seedPipelineLocalEvCache(lookupKey, sealed);
     }
@@ -98,7 +105,7 @@ async function resolveOneServer(
       lookupKey,
       err instanceof Error ? err.message : err
     );
-    return sealEntry(createTimeoutPipelineTradeEv(lookupKey, enriched), lookupKey);
+    return sealEntry(createTimeoutPipelineTradeEv(lookupKey, enriched), lookupKey, item.tradePrice);
   }
 }
 
@@ -126,7 +133,7 @@ export async function resolvePipelineEvBatchServer(
     const item = deduped.get(payload.key);
     if (!item) continue;
 
-    const sealed = sealEntry(payload, payload.key);
+    const sealed = sealEntry(payload, payload.key, item.tradePrice);
     const executionPrice = normalizeIncomingTradePrice(item.tradePrice);
     if (isFullyComputedTradeEv(sealed, { executionPrice })) {
       indexEntry(result, sealed, payload.key);
@@ -140,7 +147,12 @@ export async function resolvePipelineEvBatchServer(
     const batch = needsHydration.slice(i, i + BATCH_CONCURRENCY);
     const hydrated = await Promise.all(batch.map((item) => resolveOneServer(item)));
     for (const payload of hydrated) {
-      indexEntry(result, sealEntry(payload, payload.key), payload.key);
+      const item = deduped.get(payload.key);
+      indexEntry(
+        result,
+        sealEntry(payload, payload.key, item?.tradePrice),
+        payload.key
+      );
     }
   }
 
@@ -156,7 +168,7 @@ export async function resolvePipelineTradeEvServer(
 
   const cached = await resolveOneServer(item, { cacheOnly: true });
   const executionPrice = normalizeIncomingTradePrice(item.tradePrice);
-  const sealedCached = sealEntry(cached, lookupKey);
+  const sealedCached = sealEntry(cached, lookupKey, item.tradePrice);
   if (isFullyComputedTradeEv(sealedCached, { executionPrice })) {
     return sealedCached;
   }
