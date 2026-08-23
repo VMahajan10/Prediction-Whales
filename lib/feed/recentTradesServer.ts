@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, desc, gte } from "drizzle-orm";
+import { and, desc, gte, sql } from "drizzle-orm";
 import { mapWithConcurrency } from "@/lib/clvPriceHistory";
 import { getDb, isDatabaseEnabled } from "@/lib/crossmarket/store/db";
 import {
@@ -142,13 +142,37 @@ function dedupeRecentTrades(trades: RecentFeedTrade[]): RecentFeedTrade[] {
   });
 }
 
-function combineRecentTrades(
+/**
+ * Slots each venue keeps before the other venue's rows can claim them.
+ *
+ * Polymarket ingests far more densely than Kalshi, so a pure recency sort of
+ * the combined list can fill every slot with Polymarket rows and drop Kalshi
+ * entirely. Reserving a floor keeps both venues present; the returned list is
+ * still ordered newest-first.
+ */
+export const VENUE_SLOT_FLOOR = 20;
+
+function byTimestampDesc(a: RecentFeedTrade, b: RecentFeedTrade): number {
+  return b.timestamp - a.timestamp;
+}
+
+export function combineRecentTrades(
   polymarket: RecentFeedTrade[],
   kalshi: RecentFeedTrade[],
   limit = RECENT_TRADES_LIMIT
 ): RecentFeedTrade[] {
-  return dedupeRecentTrades([...polymarket, ...kalshi])
-    .sort((a, b) => b.timestamp - a.timestamp)
+  const pm = dedupeRecentTrades(polymarket).sort(byTimestampDesc);
+  const ks = dedupeRecentTrades(kalshi).sort(byTimestampDesc);
+
+  const kalshiFloor = Math.min(ks.length, VENUE_SLOT_FLOOR);
+  const pmTake = Math.min(pm.length, Math.max(limit - kalshiFloor, 0));
+  const kalshiTake = Math.min(ks.length, Math.max(limit - pmTake, 0));
+
+  return dedupeRecentTrades([
+    ...pm.slice(0, pmTake),
+    ...ks.slice(0, kalshiTake),
+  ])
+    .sort(byTimestampDesc)
     .slice(0, limit);
 }
 
@@ -447,7 +471,6 @@ async function fetchRecentPolymarketTrades(
   const categoryFilter = options.categoryFilter ?? "all";
   if (!isDatabaseEnabled()) return [];
 
-  const dbCategory = dbCategoryForFilter(categoryFilter);
   const predicates = [
     gte(feedTrades.stakeAmount, MIN_PRODUCT_FEED_STAKE_USD),
     gte(feedTrades.averageEv, MIN_FEED_TRADE_EV_PCT),
@@ -496,6 +519,32 @@ async function fetchRecentPolymarketTrades(
   }
 }
 
+/**
+ * Stored trade EV gate expressed in SQL.
+ *
+ * This has to run in the database, not in memory: shadow rows are written for
+ * every stake-qualified trade, so EV-qualifying rows are a small minority and a
+ * "newest N rows, filter afterwards" read hides the older ones entirely.
+ */
+function kalshiStoredEvSqlPredicate() {
+  const stored = sql`(${kalshiShadowTrades.rawPayload} ->> 'netEvPercent')`;
+  return sql`(
+    ${stored} ~ '^-?[0-9]+(\\.[0-9]+)?$'
+    AND ${stored}::double precision >= ${MIN_FEED_TRADE_EV_PCT}
+  )`;
+}
+
+/**
+ * Complement of {@link kalshiStoredEvSqlPredicate}.
+ *
+ * `IS NOT TRUE` rather than `NOT (...)` because rows with no stored
+ * `netEvPercent` make the comparison NULL, and `NOT NULL` is NULL — which would
+ * drop them from both the stored-EV read and this top-up read.
+ */
+function kalshiMissingStoredEvSqlPredicate() {
+  return sql`(${kalshiStoredEvSqlPredicate()}) IS NOT TRUE`;
+}
+
 async function fetchRecentKalshiTrades(
   options: RecentFetchOptions = {}
 ): Promise<RecentFeedTrade[]> {
@@ -503,35 +552,55 @@ async function fetchRecentKalshiTrades(
   const categoryFilter = options.categoryFilter ?? "all";
   if (!isDatabaseEnabled()) return [];
 
+  const stakeQualified = gte(
+    kalshiShadowTrades.usdNotional,
+    MIN_PRODUCT_FEED_STAKE_USD
+  );
+
   try {
-    const rows = await getDb()
+    const storedEvRows = await getDb()
       .select()
       .from(kalshiShadowTrades)
-      .where(gte(kalshiShadowTrades.usdNotional, MIN_PRODUCT_FEED_STAKE_USD))
+      .where(and(stakeQualified, kalshiStoredEvSqlPredicate()))
       .orderBy(desc(kalshiShadowTrades.tradedAt))
-      .limit(KALSHI_DB_READ_LIMIT);
+      .limit(limit);
 
-    const trades = rows
+    const withStoredEv = storedEvRows
       .map((row) => kalshiShadowToFeedTrade(row))
       .filter((trade): trade is RecentFeedTrade => trade != null)
       .filter(
         (trade) => !options.excludeKeys?.has(recentTradeDedupeKey(trade))
-      );
+      )
+      .filter((trade) => meetsProductFeedEvThreshold(trade.netEvPercent));
 
-    const withStoredEv = trades.filter((trade) =>
-      meetsProductFeedEvThreshold(trade.netEvPercent)
-    );
-
-    if (withStoredEv.length >= limit) {
+    // The merge seats at most VENUE_SLOT_FLOOR Kalshi rows whenever Polymarket
+    // flow is dense, so stop here once stored EV can fill that share. Skipping
+    // the top-up below is what keeps page-load hydration inside its budget.
+    if (withStoredEv.length >= Math.min(limit, VENUE_SLOT_FLOOR)) {
       return applyRecentCategoryFilter(
         withStoredEv.slice(0, limit),
         categoryFilter
       );
     }
 
+    // Rows ingested before their EV was resolvable still qualify once the
+    // pipeline cache has caught up, so top up from them (cache-only, never
+    // blocking page load on live EV work).
+    const supplementalRows = await getDb()
+      .select()
+      .from(kalshiShadowTrades)
+      .where(and(stakeQualified, kalshiMissingStoredEvSqlPredicate()))
+      .orderBy(desc(kalshiShadowTrades.tradedAt))
+      .limit(KALSHI_DB_READ_LIMIT);
+
     const seenIds = new Set(withStoredEv.map((trade) => trade.id));
-    const needsEv = trades
+    const needsEv = supplementalRows
+      .map((row) => kalshiShadowToFeedTrade(row))
+      .filter((trade): trade is RecentFeedTrade => trade != null)
       .filter((trade) => !seenIds.has(trade.id))
+      .filter(
+        (trade) => !options.excludeKeys?.has(recentTradeDedupeKey(trade))
+      )
       .slice(0, KALSHI_EV_COMPUTE_LIMIT);
 
     const pipelineQualified =
@@ -540,6 +609,7 @@ async function fetchRecentKalshiTrades(
         : [];
 
     const merged = [...withStoredEv, ...pipelineQualified]
+      .filter((trade) => meetsProductFeedEvThreshold(trade.netEvPercent))
       .sort((a, b) => b.timestamp - a.timestamp)
       .slice(0, limit);
 

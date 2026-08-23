@@ -15,7 +15,10 @@ import {
   passesPolymarketFeedTraderGate,
   resolvePolymarketTradeNotionalUsd,
 } from "@/lib/feedQualification";
-import { retainLastNonEmpty } from "@/lib/feed/feedRetention";
+import {
+  retainLastNonEmpty,
+  trimFeedBufferWithVenueFloor,
+} from "@/lib/feed/feedRetention";
 import {
   logFeedVolumeDiagnostics,
   summarizeFeedVolumeDrops,
@@ -198,8 +201,7 @@ function prependWhaleBuffer(prev: WhaleTrade[], incoming: WhaleTrade[]): WhaleTr
     merged.push(trade);
   }
 
-  if (merged.length <= WHALE_FEED_LIVE_MAX) return merged;
-  return merged.slice(0, WHALE_FEED_LIVE_MAX);
+  return trimFeedBufferWithVenueFloor(merged, WHALE_FEED_LIVE_MAX);
 }
 
 function queueWhaleTweetNotify(whale: WhaleTrade): void {
