@@ -34,6 +34,10 @@ type FeedMetricsDay = {
 const STORE_KEY = "__marketpulseFeedMetrics";
 const SNAPSHOT_INTERVAL_MS = 60_000;
 
+function isBrowserRuntime(): boolean {
+  return typeof globalThis !== "undefined" && "window" in globalThis;
+}
+
 let lastSnapshotMs = 0;
 
 function currentDayKey(): string {
@@ -90,7 +94,7 @@ function applyInMemoryMetrics(input: FeedMetricsRecordInput): FeedMetricsDay {
 }
 
 function scheduleFeedMetricsPersistence(input: FeedMetricsRecordInput): void {
-  if (typeof window !== "undefined") return;
+  if (isBrowserRuntime()) return;
 
   void import("@/lib/feedMetricsPersistence")
     .then(({ persistFeedMetricsIncrement }) => persistFeedMetricsIncrement(input))
@@ -117,7 +121,7 @@ export async function recordFeedMetricsAndPersist(
   input: FeedMetricsRecordInput
 ): Promise<void> {
   applyInMemoryMetrics(input);
-  if (typeof window !== "undefined") return;
+  if (isBrowserRuntime()) return;
 
   const { persistFeedMetricsIncrement } = await import(
     "@/lib/feedMetricsPersistence"
