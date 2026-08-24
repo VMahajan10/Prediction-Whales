@@ -25,7 +25,9 @@ function resolveHydratedEvPercent(trade: RecentHydratedTrade): number | null {
 }
 
 /** Map DB-seeded recent trades into whale-feed rows (client-safe). */
-export function recentTradeToWhale(trade: RecentHydratedTrade): WhaleTrade {
+export function recentTradeToWhale(
+  trade: RecentHydratedTrade
+): WhaleTrade | null {
   const stakeNotional = resolveHydratedStakeNotional(trade);
   const netEvPercent = resolveHydratedEvPercent(trade);
 
@@ -72,7 +74,8 @@ export function recentTradeToWhale(trade: RecentHydratedTrade): WhaleTrade {
     }
   );
 
-  const marketTranslation = translateWhaleTradeMarket(whale) ?? undefined;
+  const marketTranslation = translateWhaleTradeMarket(whale);
+  if (!marketTranslation) return null;
 
   return {
     ...whale,

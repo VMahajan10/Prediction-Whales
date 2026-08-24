@@ -27,6 +27,7 @@ import {
 import {
   filterPolymarketTradesByWalletCredibility,
 } from "@/lib/feedQualificationServer";
+import { resolveStrictPolymarketTranslationFromPayload } from "@/lib/feed/persistedFeedTranslation";
 import { enrichTradesWithWhaleAlias } from "@/lib/trades/getTrades";
 import { extractTraderWalletAddress } from "@/lib/whaleIdentityResolver";
 import { initGlobalLocalEvCache } from "@/lib/evPipeline/redisCache";
@@ -497,6 +498,9 @@ async function fetchRecentPolymarketTrades(
       .limit(limit * POLYMARKET_DB_READ_MULTIPLIER);
 
     const trades = rows
+      .filter((row) =>
+        resolveStrictPolymarketTranslationFromPayload(row.payload) != null
+      )
       .map((row) =>
         polymarketPayloadToFeedTrade(
           row.payload,

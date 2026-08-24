@@ -283,7 +283,6 @@ export default function WhaleDetailsPage() {
   }, [trade?.whaleIdentity, displayWallet, trackRecord, trackData]);
 
   const marketTranslation = useMemo(() => {
-    if (trade?.marketTranslation) return trade.marketTranslation;
     return trade ? translateWhaleTradeMarket(trade) : null;
   }, [trade]);
 

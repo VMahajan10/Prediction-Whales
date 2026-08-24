@@ -342,8 +342,7 @@ export async function enrichPolymarketFeedTradesWithIdentity<
   const qualifications = await qualifyWalletsForFeed(wallets);
 
   const enriched = trades.flatMap((trade) => {
-    const marketTranslation =
-      trade.marketTranslation ?? translateWhaleTradeMarket(trade);
+    const marketTranslation = translateWhaleTradeMarket(trade);
     if (!marketTranslation) return [];
 
     const wallet = trade.proxyWallet?.trim().toLowerCase();

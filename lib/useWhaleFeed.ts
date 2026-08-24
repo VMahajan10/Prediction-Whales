@@ -146,7 +146,9 @@ async function fetchRecentSeedTrades(signal: AbortSignal): Promise<WhaleTrade[]>
     const res = await fetch("/api/trades/recent", { signal: timeout.signal });
     if (!res.ok) throw new Error(`Recent trades HTTP ${res.status}`);
     const data = (await res.json()) as RecentApiResponse;
-    return (data.trades ?? []).map(recentTradeToWhale);
+    return (data.trades ?? [])
+      .map(recentTradeToWhale)
+      .filter((trade): trade is WhaleTrade => trade != null);
   } finally {
     clearTimeout(timer);
     signal.removeEventListener("abort", onAbort);
@@ -239,8 +241,7 @@ function attachWhaleIdentity(
   trade: WhaleTrade,
   qualification: WalletQualification | undefined
 ): WhaleTrade {
-  const marketTranslation =
-    trade.marketTranslation ?? translateWhaleTradeMarket(trade) ?? undefined;
+  const marketTranslation = translateWhaleTradeMarket(trade) ?? undefined;
   const withIdentity =
     trade.whaleIdentity || !qualification?.identity
       ? trade

@@ -43,6 +43,7 @@
     "test:arb-phase07": "npx tsx --tsconfig tsconfig.json lib/arbitrageFinder/phase07.test.ts",
     "report:arb-coverage": "npx tsx --tsconfig tsconfig.json scripts/arb-coverage-report.ts",
     "report:feed-venue-mix": "npx tsx --tsconfig tsconfig.json scripts/feed-venue-mix-report.ts",
+    "cleanup:feed-trade-translations": "npx tsx --tsconfig tsconfig.json scripts/cleanup-feed-trade-translations.ts",
     "test": "vitest run",
     "test:x-agent": "vitest run tests/x-agent",
     "test:email": "npx tsx --tsconfig tsconfig.json scripts/testEmail.ts",

@@ -14,6 +14,7 @@ import {
   isRecordableFeedTrade,
   type FeedTradeHistoryInput,
 } from "@/lib/feed/feedTradeHistoryCore";
+import { revalidatePersistedPolymarketFeedPayload } from "@/lib/feed/persistedFeedTranslation";
 import { qualifyWalletsForFeed } from "@/lib/feedQualificationServer";
 
 export {
@@ -134,7 +135,13 @@ export async function fetchFallbackFeedTrades<T>(
       if (!passesPolymarketFeedTraderGate(wallet, qualification)) {
         continue;
       }
-      payloads.push(row.payload as T);
+
+      const validated = revalidatePersistedPolymarketFeedPayload<
+        Record<string, unknown>
+      >(row.payload);
+      if (!validated) continue;
+
+      payloads.push(validated as T);
       if (payloads.length >= limit) break;
     }
 
