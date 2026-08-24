@@ -1,3 +1,4 @@
+import { resolveKalshiFeedDirectionLabel } from "@/lib/feed/kalshiFeedDirection";
 import type { WhaleTrade } from "@/lib/whaleTrades";
 
 const RAW_DIRECTIONAL_RE =
@@ -10,8 +11,8 @@ const RAW_DIRECTIONAL_RE =
 export function resolveWhaleFeedPositionLabel(
   trade: WhaleTrade
 ): string | null {
-  if (trade.source === "kalshi" && trade.selectionLabel?.trim()) {
-    return trade.selectionLabel.trim();
+  if (trade.source === "kalshi") {
+    return resolveKalshiFeedDirectionLabel(trade);
   }
 
   const exitLabel = trade.marketTranslation?.exitByLabel?.trim();

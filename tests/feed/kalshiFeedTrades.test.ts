@@ -89,10 +89,14 @@ describe("kalshiFeedTradeToWhale", () => {
     expect(whale.whaleIdentity).toBeUndefined();
   });
 
-  it("derives side from the Kalshi outcome when absent", () => {
+  it("defaults side to BUY when absent (never infers from YES/NO outcome)", () => {
     expect(kalshiFeedTradeToWhale(sportsTrade).side).toBe("BUY");
     expect(
       kalshiFeedTradeToWhale({ ...sportsTrade, outcome: "No" }).side
+    ).toBe("BUY");
+    expect(
+      kalshiFeedTradeToWhale({ ...sportsTrade, outcome: "No", side: "SELL" })
+        .side
     ).toBe("SELL");
   });
 });

@@ -5,6 +5,7 @@ import {
   passesPolymarketFeedTraderGate,
 } from "@/lib/feedQualification";
 import { resolveFeedFilterCategoryLabel } from "@/lib/feedFilterDiagnostics";
+import { isKalshiTradeVisibleInUserFeed } from "@/lib/feed/kalshiFeedTrades";
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import { translateWhaleTradeMarket } from "@/lib/marketTranslator";
 import {
@@ -116,7 +117,7 @@ export function passesPolymarketClientFeedVisibilityGate(
   );
 }
 
-/** Final feed visibility — Polymarket uses full gate; Kalshi uses render EV only. */
+/** Final feed visibility — Polymarket uses full gate; Kalshi uses EV + named selection. */
 export function isVisibleInClientFeed(
   trade: WhaleTrade,
   walletQualifications: WalletQualificationMap,
@@ -124,7 +125,10 @@ export function isVisibleInClientFeed(
   loggedRejects?: Set<string>
 ): boolean {
   if (trade.source === "kalshi") {
-    return isRenderableFeedWhale(trade);
+    return isKalshiTradeVisibleInUserFeed(trade, pipelineEvIndex, {
+      id: trade.id,
+      logRejection: false,
+    });
   }
   return passesPolymarketClientFeedVisibilityGate(
     trade,

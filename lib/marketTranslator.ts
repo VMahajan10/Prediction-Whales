@@ -58,6 +58,7 @@ function cleanCandidateLabel(value: string): string | null {
   const trimmed = value
     .trim()
     .replace(/\?+$/g, "")
+    .replace(/\s*[-–—]+\s*$/g, "")
     .replace(/^the\s+/i, "")
     .trim();
   if (!trimmed || /^0x[a-f0-9]+$/i.test(trimmed)) return null;
@@ -98,15 +99,43 @@ function parseDeclaredOutcomes(
   const candidateA = cleanCandidateLabel(outcomes[0] ?? "");
   const candidateB = cleanCandidateLabel(outcomes[1] ?? "");
   if (!candidateA || !candidateB) return null;
+  if (isBinaryOutcomeLabel(outcomes[0] ?? "") || isBinaryOutcomeLabel(outcomes[1] ?? "")) {
+    return null;
+  }
   return { candidateA, candidateB };
 }
 
+function isBinaryOutcomeLabel(value: string): boolean {
+  const token = classifyOutcome(value);
+  return token === "YES" || token === "NO";
+}
+
+/**
+ * Positive evidence that a title describes a head-to-head winner market,
+ * not a prop nested under a matchup (e.g. "A vs B: Over 45.5 points").
+ */
+export function isWinnerHeadToHeadTitle(title: string): boolean {
+  const trimmed = title.trim();
+  if (!trimmed) return false;
+
+  if (/\b(?:match\s+)?winner\b/i.test(trimmed)) return true;
+  if (/\bto\s+win\b/i.test(trimmed)) return true;
+  if (/^who\s+will\s+win\b/i.test(trimmed)) return true;
+
+  // Pure "Team A vs Team B" with no trailing clause (no colon-delimited prop suffix).
+  return /^[^:?]+\s+vs\.?\s+[^:?]+\s*\??\s*$/i.test(trimmed);
+}
+
 function resolveMatchupCandidates(market: TranslatableMarket): MatchupCandidates | null {
-  return (
-    parseDeclaredOutcomes(market.outcomes) ??
-    parseTitleMatchup(market.title) ??
-    parseSlugMatchup(market.slug, market.eventSlug)
-  );
+  const fromOutcomes = parseDeclaredOutcomes(market.outcomes);
+  if (fromOutcomes) return fromOutcomes;
+
+  if (isWinnerHeadToHeadTitle(market.title)) {
+    const fromTitle = parseTitleMatchup(market.title);
+    if (fromTitle) return fromTitle;
+  }
+
+  return parseSlugMatchup(market.slug, market.eventSlug);
 }
 
 function parseWillSubject(title: string): string | null {

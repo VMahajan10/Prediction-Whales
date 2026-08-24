@@ -30,8 +30,7 @@ import {
 import { recentTradeToWhale } from "@/lib/feed/whaleFeedHydration";
 import type { FeedTrade } from "@/lib/feedTradeTypes";
 import {
-  evaluateKalshiFeedTradeGate,
-  isKalshiTradeEligibleForFeed,
+  isKalshiTradeVisibleInUserFeed,
   kalshiFeedTradeToWhale,
   resolveKalshiFeedTradeEvPercent,
   type KalshiFeedTradeInput,
@@ -127,14 +126,14 @@ function isKalshiWhaleEligibleForLiveFeed(
   loggedRejects?: Set<string>
 ): boolean {
   const logKey = `${whale.id}:kalshi`;
-  const result = evaluateKalshiFeedTradeGate(whale, pipelineEvIndex, {
+  const visible = isKalshiTradeVisibleInUserFeed(whale, pipelineEvIndex, {
     id: whale.id,
     logRejection: !loggedRejects?.has(logKey),
   });
-  if (!result.passed) {
+  if (!visible) {
     loggedRejects?.add(logKey);
   }
-  return result.passed;
+  return visible;
 }
 
 async function fetchRecentSeedTrades(signal: AbortSignal): Promise<WhaleTrade[]> {
@@ -619,7 +618,7 @@ export function useWhaleFeed() {
       kalshiWhales
         .filter((trade) => {
           const logKey = `${trade.id}:kalshi`;
-          const eligible = isKalshiTradeEligibleForFeed(trade, pipelineEvIndex, {
+          const eligible = isKalshiTradeVisibleInUserFeed(trade, pipelineEvIndex, {
             id: trade.id,
             logRejection: !loggedFilterRejects.current.has(logKey),
           });

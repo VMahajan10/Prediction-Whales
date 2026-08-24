@@ -85,6 +85,31 @@ describe("translateMarketPosition", () => {
       "Exit by Jul 31, 2026"
     );
   });
+
+  it("maps NO on A to Backing B for A vs B — Winner titles", () => {
+    const result = translateMarketPosition(
+      { title: "Chiefs vs Ravens — Winner" },
+      { outcome: "No" }
+    );
+
+    expect(result?.backingLabel).toBe("Backing Ravens");
+  });
+
+  it("does not invert NO to the opposing team on prop markets under a matchup", () => {
+    expect(
+      translateMarketPosition(
+        { title: "Chiefs vs Ravens: Over 45.5 points" },
+        { outcome: "No" }
+      )
+    ).toBeNull();
+
+    expect(
+      translateMarketPosition(
+        { title: "Chiefs vs Ravens: Will Mahomes throw 3+ TDs?" },
+        { outcome: "No" }
+      )
+    ).toBeNull();
+  });
 });
 
 describe("translateWhaleTradeMarket", () => {

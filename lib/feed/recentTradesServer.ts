@@ -9,6 +9,7 @@ import {
   type KalshiShadowTrade,
 } from "@/lib/crossmarket/store/schema";
 import {
+  hasSafeKalshiNamedSelection,
   isKalshiTradeEligibleForFeed,
   kalshiFeedTradeToWhale,
   resolveKalshiFeedTradeEvPercent,
@@ -339,17 +340,20 @@ function filterKalshiEligible(
   pipelineEvIndex: Map<string, PipelineTradeEv>
 ): RecentFeedTrade[] {
   return candidates.flatMap((trade) => {
+    const whale = kalshiFeedTradeToWhale(trade, {
+      netEvPercent: trade.netEvPercent ?? null,
+    });
+
     if (
       meetsProductFeedStakeThreshold(trade.usdNotional) &&
-      meetsProductFeedEvThreshold(trade.netEvPercent)
+      meetsProductFeedEvThreshold(trade.netEvPercent) &&
+      hasSafeKalshiNamedSelection(whale)
     ) {
       return [trade];
     }
 
-    const whale = kalshiFeedTradeToWhale(trade, {
-      netEvPercent: trade.netEvPercent ?? null,
-    });
     if (!isKalshiTradeEligibleForFeed(whale, pipelineEvIndex)) return [];
+    if (!hasSafeKalshiNamedSelection(whale)) return [];
 
     const lookupKey = pipelineEvKeyForTrade(trade);
     const pipeline = lookupKey

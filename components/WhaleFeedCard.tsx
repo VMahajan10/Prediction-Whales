@@ -124,10 +124,9 @@ export default function WhaleFeedCard({
   currentPrice,
   pipelineEv,
 }: WhaleFeedCardProps) {
-  const isKalshi = trade.source === "kalshi";
-  const isBuy = isKalshi ? trade.outcome === "Yes" : trade.side === "BUY";
+  const isBuy = trade.side === "BUY";
   const category = inferCategoryBadge(trade.title);
-  const platform = isKalshi ? "Kalshi" : "Polymarket";
+  const platform = trade.source === "kalshi" ? "Kalshi" : "Polymarket";
   const whale = resolveFeedWhaleIdentity(trade);
   const entryPrice = trade.price;
   const nowPrice = currentPrice ?? entryPrice;
@@ -162,7 +161,7 @@ export default function WhaleFeedCard({
     ? "bg-pulse-yes/15 text-pulse-yes"
     : "bg-pulse-no/15 text-pulse-no";
 
-  const sideLabel = isKalshi ? (trade.outcome === "Yes" ? "BUY" : "SELL") : trade.side;
+  const sideLabel = trade.side;
   const sideClass = isBuy
     ? "bg-pulse-yes/15 text-pulse-yes"
     : "bg-pulse-no/15 text-pulse-no";

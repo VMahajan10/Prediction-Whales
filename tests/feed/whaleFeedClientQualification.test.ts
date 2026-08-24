@@ -65,6 +65,7 @@ function kalshiTrade(overrides: Partial<WhaleTrade> = {}): WhaleTrade {
     detectedAt: 1_800_000_000_000,
     isLive: false,
     ticker: "KX-FED-26MAR",
+    selectionLabel: "March rate cut",
     netEvPercent: 5,
     averageEv: 5,
     ...overrides,
@@ -147,13 +148,23 @@ describe("whaleFeedClientQualification", () => {
     ).toBe(false);
   });
 
-  it("keeps Kalshi visibility on trade EV only without wallet qualification", () => {
+  it("keeps Kalshi visible when trade EV and named selection are present", () => {
     expect(
       isVisibleInClientFeed(kalshiTrade(), new Map(), emptyPipeline)
     ).toBe(true);
     expect(
       isVisibleInClientFeed(
         kalshiTrade({ netEvPercent: 1, averageEv: 1 }),
+        new Map(),
+        emptyPipeline
+      )
+    ).toBe(false);
+  });
+
+  it("excludes Kalshi without a safe named selection even when trade EV passes", () => {
+    expect(
+      isVisibleInClientFeed(
+        kalshiTrade({ selectionLabel: undefined }),
         new Map(),
         emptyPipeline
       )

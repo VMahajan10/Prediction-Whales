@@ -21,7 +21,14 @@ import {
 import { normalizeIncomingTradePrice } from "@/lib/evPipeline/tradeEvRecord";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
 import { resolvePipelineEvForWhale } from "@/lib/pipelineEvLookupHelpers";
+import { hasSafeKalshiNamedSelection } from "@/lib/feed/kalshiFeedDirection";
 import { tradeToWhale, type WhaleTrade } from "@/lib/whaleTrades";
+
+export {
+  hasSafeKalshiNamedSelection,
+  resolveKalshiFeedDirectionLabel,
+  resolveKalshiNamedSelection,
+} from "@/lib/feed/kalshiFeedDirection";
 
 /**
  * Structural input so this stays client-safe — importing `lib/kalshiTrades`
@@ -80,7 +87,7 @@ export function kalshiFeedTradeToWhale(
     {
       id: trade.id,
       title: trade.title,
-      side: trade.side ?? (trade.outcome === "Yes" ? "BUY" : "SELL"),
+      side: trade.side ?? "BUY",
       outcome: trade.outcome,
       price: trade.price,
       size: trade.usdNotional,
@@ -400,4 +407,19 @@ export function isKalshiTradeEligibleForFeed(
   context?: KalshiFeedGateContext
 ): boolean {
   return evaluateKalshiFeedTradeGate(trade, pipelineEvIndex, context).passed;
+}
+
+/**
+ * User-facing feed visibility — stake/EV gate plus a safe named selection.
+ * Shadow ingestion does not use this check.
+ */
+export function isKalshiTradeVisibleInUserFeed(
+  trade: WhaleTrade,
+  pipelineEvIndex: Map<string, PipelineTradeEv>,
+  context?: KalshiFeedGateContext
+): boolean {
+  if (!isKalshiTradeEligibleForFeed(trade, pipelineEvIndex, context)) {
+    return false;
+  }
+  return hasSafeKalshiNamedSelection(trade);
 }

@@ -96,17 +96,32 @@ describe("resolveWhaleFeedPositionLabel", () => {
     }
   });
 
-  it("uses Kalshi selectionLabel when present", () => {
+  it("uses Kalshi selectionLabel with Backing prefix for BUY", () => {
     expect(
       resolveWhaleFeedPositionLabel(
         polymarketTrade({
           source: "kalshi",
           outcome: "Yes",
+          side: "BUY",
           ticker: "KX-TEST",
           selectionLabel: "Over 45.5 points",
         })
       )
-    ).toBe("Over 45.5 points");
+    ).toBe("Backing Over 45.5 points");
+  });
+
+  it("does not treat a NO-side BUY as Exiting position", () => {
+    const label = resolveWhaleFeedPositionLabel(
+      polymarketTrade({
+        source: "kalshi",
+        outcome: "No",
+        side: "BUY",
+        ticker: "KX-TEST",
+        selectionLabel: "Under 45.5 points",
+      })
+    );
+    expect(label).toBe("Backing Under 45.5 points");
+    expect(label).not.toMatch(/exiting/i);
   });
 
   it("returns null for Kalshi without selectionLabel or marketTranslation", () => {
