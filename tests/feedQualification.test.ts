@@ -525,10 +525,12 @@ describe("feedMetrics", () => {
 
     logFeedMetricsSummary({
       dayKey: "2026-07-31",
+      venue: "polymarket",
       tradesDetected: 5,
       gatePassedTrades: 2,
       distinctWhales: new Set(["0x1"]),
     });
     expect(String(logSpy.mock.calls.at(-1)?.[0])).toContain("distinctWhales=1");
+    expect(String(logSpy.mock.calls.at(-1)?.[0])).toContain("venue=polymarket");
   });
 });

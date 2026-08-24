@@ -698,3 +698,64 @@ export type KalshiShadowTradeInsert = typeof kalshiShadowTrades.$inferInsert;
 
 export type FeedTrade = typeof feedTrades.$inferSelect;
 export type FeedTradeInsert = typeof feedTrades.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// feed_daily_metrics — durable daily feed trust-layer counters by venue
+// ---------------------------------------------------------------------------
+
+export const FEED_METRICS_VENUES = ["polymarket", "kalshi"] as const;
+export type FeedMetricsVenue = (typeof FEED_METRICS_VENUES)[number];
+
+/** UTC day key (YYYY-MM-DD) + venue aggregate counters for feed trust metrics. */
+export const feedDailyMetrics = pgTable(
+  "feed_daily_metrics",
+  {
+    dayKey: text("day_key").notNull(),
+    venue: text("venue").notNull(),
+    tradesDetected: integer("trades_detected").notNull().default(0),
+    gatePassedTrades: integer("gate_passed_trades").notNull().default(0),
+    distinctWhales: integer("distinct_whales").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    unique("feed_daily_metrics_day_venue_unique").on(table.dayKey, table.venue),
+    index("feed_daily_metrics_day_key_idx").on(table.dayKey.desc()),
+  ],
+);
+
+/** Qualified wallet membership for correct daily distinct-whale counts. */
+export const feedDailyQualifiedWhales = pgTable(
+  "feed_daily_qualified_whales",
+  {
+    dayKey: text("day_key").notNull(),
+    venue: text("venue").notNull(),
+    wallet: text("wallet").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    unique("feed_daily_qualified_whales_day_venue_wallet_unique").on(
+      table.dayKey,
+      table.venue,
+      table.wallet,
+    ),
+    index("feed_daily_qualified_whales_day_venue_idx").on(
+      table.dayKey,
+      table.venue,
+    ),
+  ],
+);
+
+export type FeedDailyMetrics = typeof feedDailyMetrics.$inferSelect;
+export type FeedDailyMetricsInsert = typeof feedDailyMetrics.$inferInsert;
+
+export type FeedDailyQualifiedWhale =
+  typeof feedDailyQualifiedWhales.$inferSelect;
+export type FeedDailyQualifiedWhaleInsert =
+  typeof feedDailyQualifiedWhales.$inferInsert;

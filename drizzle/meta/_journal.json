@@ -129,10 +129,10 @@
       "breakpoints": true
     },
     {
-      "idx": 19,
+      "idx": 20,
       "version": "7",
-      "when": 1785464000000,
-      "tag": "0019_market_category",
+      "when": 1785465000000,
+      "tag": "0020_feed_daily_metrics",
       "breakpoints": true
     }
   ]

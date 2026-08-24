@@ -249,6 +249,7 @@ export async function collectPolymarketFeedCandidates<
   );
 
   recordFeedMetrics({
+    venue: "polymarket",
     tradesDetected: trades.length,
     gatePassedTrades: traderQualified.length,
     whaleWallets: traderQualified
@@ -310,6 +311,7 @@ export async function filterQualifiedPolymarketFeedTrades<
   );
 
   recordFeedMetrics({
+    venue: "polymarket",
     tradesDetected: trades.length,
     gatePassedTrades: traderQualified.length,
     whaleWallets: traderQualified
@@ -367,6 +369,7 @@ export async function enrichPolymarketFeedTradesWithIdentity<
 
 export function recordKalshiFeedMetrics(detectedCount: number): void {
   recordFeedMetrics({
+    venue: "kalshi",
     tradesDetected: detectedCount,
     gatePassedTrades: 0,
   });

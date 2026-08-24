@@ -6,13 +6,17 @@ import type { ResolvedWhaleIdentity } from "@/lib/whaleIdentityResolver";
 import type { TradeSummary } from "@/lib/polymarket";
 import { usePolymarketSocketContext } from "@/lib/PolymarketSocketProvider";
 import {
-  evaluateLiveFeedTradeGate,
-  passesLiveFeedTradeGate,
-} from "@/lib/feedGate";
+  aggregatePolymarketFeedMetrics,
+  collectPolymarketWalletAddresses,
+  isPolymarketTradeEligibleForFeed,
+  isRenderableFeedWhale,
+  isVisibleInClientFeed,
+  passesPolymarketClientFeedAdmissionGate,
+  passesPolymarketWalletCredibilityForClient,
+} from "@/lib/whaleFeedClientQualification";
 import {
   meetsProductFeedStakeThreshold,
   meetsProductFeedEvThreshold,
-  passesPolymarketFeedTraderGate,
   resolvePolymarketTradeNotionalUsd,
 } from "@/lib/feedQualification";
 import {
@@ -32,7 +36,6 @@ import {
   resolveKalshiFeedTradeEvPercent,
   type KalshiFeedTradeInput,
 } from "@/lib/feed/kalshiFeedTrades";
-import { resolveFeedFilterCategoryLabel } from "@/lib/feedFilterDiagnostics";
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import { translateWhaleTradeMarket } from "@/lib/marketTranslator";
 import {
@@ -224,61 +227,13 @@ function reportFeedMetrics(input: {
   void fetch("/api/feed/metrics", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
+    body: JSON.stringify({
+      venue: "polymarket",
+      ...input,
+    }),
   }).catch(() => {
     // Metrics are best-effort.
   });
-}
-
-function isPolymarketTradeQualifiedForFeed(
-  trade: WhaleTrade,
-  pipelineEvIndex: Map<string, PipelineTradeEv>,
-  loggedRejects?: Set<string>
-): boolean {
-  if (trade.source !== "polymarket") return false;
-
-  const pipelineKey = pipelineEvKeyForWhale(trade);
-  const pipeline = pipelineKey
-    ? resolvePipelineEvForWhale(pipelineEvIndex, trade)
-    : undefined;
-  const tradeEvPercent = resolveFeedTradeEvPercent(
-    {
-      price: trade.price,
-      netEvPercent: trade.netEvPercent,
-      grossEvPercent: trade.grossEvPercent,
-    },
-    pipeline
-  );
-
-  const category = resolveFeedFilterCategoryLabel(trade);
-  const feedTrade = {
-    stakeUsd: trade.usdNotional,
-    title: trade.title,
-    slug: trade.slug,
-    eventSlug: trade.eventSlug,
-    category,
-    tradeEvPercent,
-  };
-
-  const qualified = passesLiveFeedTradeGate(feedTrade, {
-    id: trade.id,
-    source: "client",
-    logRejection: !loggedRejects?.has(`${trade.id}:${tradeEvPercent ?? "na"}`),
-  });
-  if (!qualified) {
-    const logKey = `${trade.id}:${tradeEvPercent ?? "na"}`;
-    loggedRejects?.add(logKey);
-  }
-
-  return qualified;
-}
-
-/** Wallet credibility gate — fail closed when metrics are missing or below thresholds. */
-function passesPolymarketWalletCredibilityForClient(
-  wallet: string | undefined,
-  qualification: WalletQualification | undefined
-): boolean {
-  return passesPolymarketFeedTraderGate(wallet, qualification);
 }
 
 function attachWhaleIdentity(
@@ -346,30 +301,6 @@ function stampWhaleForFeedAdmission(
   return stampWhaleFeedAdmissionEv(trade, tradeEvPercent);
 }
 
-function isRenderableFeedWhale(trade: WhaleTrade): boolean {
-  return (
-    whaleHasStampedFeedEv(trade) &&
-    meetsProductFeedEvThreshold(trade.netEvPercent)
-  );
-}
-
-function isPolymarketTradeEligibleForFeed(
-  trade: WhaleTrade,
-  pipelineEvIndex: Map<string, PipelineTradeEv>,
-  loggedRejects?: Set<string>
-): boolean {
-  if (
-    !isPolymarketTradeQualifiedForFeed(
-      trade,
-      pipelineEvIndex,
-      loggedRejects
-    )
-  ) {
-    return false;
-  }
-  return translateWhaleTradeMarket(trade) != null;
-}
-
 export function useWhaleFeed() {
   const { whaleTrades: liveSocketTrades, connected } =
     usePolymarketSocketContext();
@@ -423,19 +354,6 @@ export function useWhaleFeed() {
         category: t.category,
       }));
       setBackfill((prev) => retainLastNonEmpty(whales, prev));
-      const seedCandidates = whales
-        .filter((trade) => meetsProductFeedEvThreshold(trade.netEvPercent))
-        .sort(byDetectedDesc)
-        .slice(0, WHALE_FEED_SEED_LIMIT);
-      if (seedCandidates.length > 0) {
-        setWhaleBuffer((prev) => {
-          const merged = prependWhaleBuffer(prev, seedCandidates);
-          for (const trade of seedCandidates) {
-            whaleBufferSeen.current.add(whaleKey(trade));
-          }
-          return merged;
-        });
-      }
       if (payload.kalshi.length > 0) {
         setKalshiBackfill((prev) => {
           const merged = new Map<string, KalshiFeedTradeInput>();
@@ -483,23 +401,36 @@ export function useWhaleFeed() {
           const seeded = await fetchRecentSeedTrades(abort.signal);
           if (abort.signal.aborted) return;
           if (seeded.length > 0) {
-            const hydrated = seeded
-              .filter((trade) => meetsProductFeedEvThreshold(trade.netEvPercent))
-              .map((trade) => {
-                if (
-                  trade.source === "kalshi" &&
-                  trade.netEvPercent != null &&
-                  meetsProductFeedEvThreshold(trade.netEvPercent)
-                ) {
-                  return stampWhaleFeedAdmissionEv(trade, trade.netEvPercent);
-                }
-                return trade;
-              })
+            const polymarketSeeded = seeded
+              .filter((trade) => trade.source === "polymarket")
+              .filter((trade) =>
+                meetsProductFeedEvThreshold(trade.netEvPercent)
+              );
+            if (polymarketSeeded.length > 0) {
+              setBackfill((prev) =>
+                retainLastNonEmpty(polymarketSeeded, prev)
+              );
+            }
+
+            const kalshiSeeded = seeded
+              .filter((trade) => trade.source === "kalshi")
+              .filter((trade) =>
+                meetsProductFeedEvThreshold(trade.netEvPercent)
+              )
+              .map((trade) =>
+                stampWhaleFeedAdmissionEv(trade, trade.netEvPercent as number)
+              )
               .sort(byDetectedDesc)
               .slice(0, WHALE_FEED_SEED_LIMIT);
-            setWhaleBuffer((prev) => prependWhaleBuffer(prev, hydrated));
-            for (const w of hydrated) {
-              whaleBufferSeen.current.add(whaleKey(w));
+
+            if (kalshiSeeded.length > 0) {
+              setWhaleBuffer((prev) => prependWhaleBuffer(prev, kalshiSeeded));
+              for (const w of kalshiSeeded) {
+                whaleBufferSeen.current.add(whaleKey(w));
+              }
+            }
+
+            for (const w of polymarketSeeded) {
               if (w.transactionHash) seenHashes.current.add(w.transactionHash);
             }
             break;
@@ -631,11 +562,8 @@ export function useWhaleFeed() {
   );
 
   const polymarketWalletAddresses = useMemo(
-    () =>
-      polymarketWhales
-        .map((trade) => trade.proxyWallet?.trim().toLowerCase())
-        .filter((wallet): wallet is string => Boolean(wallet)),
-    [polymarketWhales]
+    () => collectPolymarketWalletAddresses(polymarketWhales, whaleBuffer),
+    [polymarketWhales, whaleBuffer]
   );
   const walletQualifications = useQualifiedWalletFilter(polymarketWalletAddresses);
   const { index: pipelineEvIndex } = usePipelineEvForWhales(evTargetWhales);
@@ -662,22 +590,14 @@ export function useWhaleFeed() {
   const qualifiedPolymarketWhales = useMemo(
     () =>
       polymarketWhales
-        .filter((trade) => {
-          if (
-            !isPolymarketTradeEligibleForFeed(
-              trade,
-              pipelineEvIndex,
-              loggedFilterRejects.current
-            )
-          ) {
-            return false;
-          }
-          const wallet = trade.proxyWallet?.trim().toLowerCase();
-          return passesPolymarketWalletCredibilityForClient(
-            wallet,
-            wallet ? walletQualifications.get(wallet) : undefined
-          );
-        })
+        .filter((trade) =>
+          passesPolymarketClientFeedAdmissionGate(
+            trade,
+            walletQualifications,
+            pipelineEvIndex,
+            loggedFilterRejects.current
+          )
+        )
         .map((trade) => {
           const pipelineKey = pipelineEvKeyForWhale(trade);
           const withIdentity = attachWhaleIdentity(
@@ -824,14 +744,29 @@ export function useWhaleFeed() {
   useEffect(() => {
     if (!backfillLoaded) return;
     setWhaleBuffer((prev) => {
-      const pruned = prev.filter(isRenderableFeedWhale);
+      const pruned = prev.filter((trade) =>
+        isVisibleInClientFeed(
+          trade,
+          walletQualifications,
+          pipelineEvIndex,
+          loggedFilterRejects.current
+        )
+      );
       return pruned.length === prev.length ? prev : pruned;
     });
-  }, [backfillLoaded, pipelineEvIndex]);
+  }, [backfillLoaded, pipelineEvIndex, walletQualifications]);
 
   const whales = useMemo(
-    () => whaleBuffer.filter(isRenderableFeedWhale),
-    [whaleBuffer]
+    () =>
+      whaleBuffer.filter((trade) =>
+        isVisibleInClientFeed(
+          trade,
+          walletQualifications,
+          pipelineEvIndex,
+          loggedFilterRejects.current
+        )
+      ),
+    [whaleBuffer, walletQualifications, pipelineEvIndex]
   );
 
   const dismissNewWhale = useCallback(() => setNewWhale(null), []);
@@ -839,79 +774,24 @@ export function useWhaleFeed() {
   useEffect(() => {
     if (!backfillLoaded) return;
 
-    let newDetected = 0;
-    let newPassed = 0;
-    const passedWallets: string[] = [];
-
-    for (const whale of liveWhales) {
-      const key = whale.transactionHash || whale.id;
-      if (!key || metricsFinalized.current.has(key)) continue;
-
-      const category = resolveFeedFilterCategoryLabel(whale);
-      const pipelineKey = pipelineEvKeyForWhale(whale);
-      const pipeline = pipelineKey
-        ? resolvePipelineEvForWhale(pipelineEvIndex, whale)
-        : undefined;
-      const tradeEvPercent = resolveFeedTradeEvPercent(
-        {
-          price: whale.price,
-          netEvPercent: whale.netEvPercent,
-          grossEvPercent: whale.grossEvPercent,
-        },
-        pipeline
-      );
-
-      if (
-        !meetsProductFeedStakeThreshold(whale.usdNotional)
-      ) {
-        evaluateLiveFeedTradeGate(
-          {
-            stakeUsd: whale.usdNotional,
-            title: whale.title,
-            slug: whale.slug,
-            eventSlug: whale.eventSlug,
-            category,
-            tradeEvPercent: null,
-          },
-          { id: whale.id, source: "client" }
-        );
-        metricsFinalized.current.add(key);
-        continue;
-      }
-
-      if (!metricsDetected.current.has(key)) {
-        metricsDetected.current.add(key);
-        newDetected += 1;
-      }
-
-      const qualified = isPolymarketTradeQualifiedForFeed(
-        whale,
-        pipelineEvIndex,
-        loggedFilterRejects.current
-      );
-
-      if (qualified) {
-        if (!metricsPassed.current.has(key)) {
-          metricsPassed.current.add(key);
-          newPassed += 1;
-          const wallet = whale.proxyWallet?.trim().toLowerCase();
-          if (wallet) passedWallets.push(wallet);
-        }
-        metricsFinalized.current.add(key);
-        continue;
-      }
-
-      if (tradeEvPercent != null && Number.isFinite(tradeEvPercent)) {
-        metricsFinalized.current.add(key);
-      }
-    }
+    const delta = aggregatePolymarketFeedMetrics(
+      liveWhales,
+      walletQualifications,
+      pipelineEvIndex,
+      {
+        metricsDetected: metricsDetected.current,
+        metricsPassed: metricsPassed.current,
+        metricsFinalized: metricsFinalized.current,
+      },
+      loggedFilterRejects.current
+    );
 
     reportFeedMetrics({
-      tradesDetected: newDetected,
-      gatePassedTrades: newPassed,
-      whaleWallets: passedWallets,
+      tradesDetected: delta.tradesDetected,
+      gatePassedTrades: delta.gatePassedTrades,
+      whaleWallets: delta.passedWallets,
     });
-  }, [liveWhales, pipelineEvIndex, backfillLoaded]);
+  }, [liveWhales, pipelineEvIndex, walletQualifications, backfillLoaded]);
 
   useEffect(() => {
     if (!backfillLoaded) return;

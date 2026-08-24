@@ -1,9 +1,23 @@
 /**
- * Daily feed qualification metrics (server/API routes only).
+ * Daily feed qualification metrics.
  * Tracks detected vs gate-passed trades and distinct qualified whales.
+ *
+ * In-memory counters remain for debugging snapshots; durable aggregates are
+ * persisted to Postgres via feedMetricsPersistence (UTC day keys).
  */
 
+import type { FeedMetricsVenue } from "@/lib/crossmarket/store/schema";
+import {
+  feedMetricsDayKeyUtc,
+  normalizeFeedMetricVenue,
+  normalizeFeedMetricWallets,
+} from "@/lib/feedMetricsCore";
+
+export type { FeedMetricsVenue } from "@/lib/crossmarket/store/schema";
+export { feedMetricsDayKeyUtc } from "@/lib/feedMetricsCore";
+
 export interface FeedMetricsRecordInput {
+  venue?: FeedMetricsVenue;
   tradesDetected?: number;
   gatePassedTrades?: number;
   whaleWallets?: (string | null | undefined)[];
@@ -11,6 +25,7 @@ export interface FeedMetricsRecordInput {
 
 type FeedMetricsDay = {
   dayKey: string;
+  venue: FeedMetricsVenue;
   tradesDetected: number;
   gatePassedTrades: number;
   distinctWhales: Set<string>;
@@ -22,56 +37,97 @@ const SNAPSHOT_INTERVAL_MS = 60_000;
 let lastSnapshotMs = 0;
 
 function currentDayKey(): string {
-  return new Date().toISOString().slice(0, 10);
+  return feedMetricsDayKeyUtc();
 }
 
-function getStore(): FeedMetricsDay {
+function storeKey(dayKey: string, venue: FeedMetricsVenue): string {
+  return `${dayKey}|${venue}`;
+}
+
+function getStore(venue: FeedMetricsVenue): FeedMetricsDay {
   const globalStore = globalThis as typeof globalThis & {
-    [STORE_KEY]?: FeedMetricsDay;
+    [STORE_KEY]?: Map<string, FeedMetricsDay>;
   };
   const dayKey = currentDayKey();
+  const key = storeKey(dayKey, venue);
 
-  if (!globalStore[STORE_KEY] || globalStore[STORE_KEY]!.dayKey !== dayKey) {
-    if (globalStore[STORE_KEY]) {
-      logFeedMetricsSummary(globalStore[STORE_KEY]!);
-    }
-    globalStore[STORE_KEY] = {
-      dayKey,
-      tradesDetected: 0,
-      gatePassedTrades: 0,
-      distinctWhales: new Set(),
-    };
+  if (!globalStore[STORE_KEY]) {
+    globalStore[STORE_KEY] = new Map();
   }
 
-  return globalStore[STORE_KEY]!;
+  const map = globalStore[STORE_KEY]!;
+  const existing = map.get(key);
+  if (existing) return existing;
+
+  const created: FeedMetricsDay = {
+    dayKey,
+    venue,
+    tradesDetected: 0,
+    gatePassedTrades: 0,
+    distinctWhales: new Set(),
+  };
+  map.set(key, created);
+  return created;
 }
 
 export function logFeedMetricsSummary(store: FeedMetricsDay): void {
   console.log(
-    `[FeedMetrics] date=${store.dayKey} tradesDetected=${store.tradesDetected} gatePassedTrades=${store.gatePassedTrades} distinctWhales=${store.distinctWhales.size}`
+    `[FeedMetrics] date=${store.dayKey} venue=${store.venue} tradesDetected=${store.tradesDetected} gatePassedTrades=${store.gatePassedTrades} distinctWhales=${store.distinctWhales.size}`
   );
 }
 
-export function recordFeedMetrics(input: FeedMetricsRecordInput): void {
-  const store = getStore();
+function applyInMemoryMetrics(input: FeedMetricsRecordInput): FeedMetricsDay {
+  const venue = normalizeFeedMetricVenue(input.venue);
+  const store = getStore(venue);
   store.tradesDetected += input.tradesDetected ?? 0;
   store.gatePassedTrades += input.gatePassedTrades ?? 0;
 
-  for (const wallet of input.whaleWallets ?? []) {
-    const normalized = wallet?.trim().toLowerCase();
-    if (normalized) store.distinctWhales.add(normalized);
+  for (const wallet of normalizeFeedMetricWallets(input.whaleWallets)) {
+    store.distinctWhales.add(wallet);
   }
+
+  return store;
+}
+
+function scheduleFeedMetricsPersistence(input: FeedMetricsRecordInput): void {
+  if (typeof window !== "undefined") return;
+
+  void import("@/lib/feedMetricsPersistence")
+    .then(({ persistFeedMetricsIncrement }) => persistFeedMetricsIncrement(input))
+    .catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[FeedMetrics] persistence failed (non-fatal): ${message}`);
+    });
+}
+
+export function recordFeedMetrics(input: FeedMetricsRecordInput): void {
+  const store = applyInMemoryMetrics(input);
 
   const now = Date.now();
   if (now - lastSnapshotMs >= SNAPSHOT_INTERVAL_MS) {
     lastSnapshotMs = now;
     logFeedMetricsSummary(store);
   }
+
+  scheduleFeedMetricsPersistence(input);
+}
+
+/** Await durable persistence — used by API routes that need write confirmation. */
+export async function recordFeedMetricsAndPersist(
+  input: FeedMetricsRecordInput
+): Promise<void> {
+  applyInMemoryMetrics(input);
+  if (typeof window !== "undefined") return;
+
+  const { persistFeedMetricsIncrement } = await import(
+    "@/lib/feedMetricsPersistence"
+  );
+  await persistFeedMetricsIncrement(input);
 }
 
 export function resetFeedMetricsForTests(): void {
   const globalStore = globalThis as typeof globalThis & {
-    [STORE_KEY]?: FeedMetricsDay;
+    [STORE_KEY]?: Map<string, FeedMetricsDay>;
   };
   delete globalStore[STORE_KEY];
   lastSnapshotMs = 0;
