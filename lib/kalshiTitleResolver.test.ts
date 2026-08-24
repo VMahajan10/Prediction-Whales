@@ -102,4 +102,31 @@ assert.equal(
   "humanized MVE ticker should not expose raw series code"
 );
 
+const withoutEvent = resolveKalshiMarketTitleParts(
+  {
+    ticker: "KXWTAMATCH-26AUG24LIUWAT-WAT",
+    title: "WAT",
+    yes_sub_title: "WAT",
+    no_sub_title: "LIU",
+  },
+  null
+);
+assert.equal(
+  withoutEvent.contractLabel,
+  null,
+  "without event metadata contract label should collapse"
+);
+
+const withEvent = resolveKalshiMarketTitleParts(
+  {
+    ticker: "KXWTAMATCH-26AUG24LIUWAT-WAT",
+    title: "WAT",
+    yes_sub_title: "WAT",
+    no_sub_title: "LIU",
+  },
+  { title: "LIU vs WAT" }
+);
+assert.equal(withEvent.eventTitle, "LIU vs WAT");
+assert.equal(withEvent.contractLabel, "WAT");
+
 console.log("✓ kalshiTitleResolver tests passed");

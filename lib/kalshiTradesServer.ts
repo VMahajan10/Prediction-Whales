@@ -29,7 +29,12 @@ import {
   KALSHI_TRADES_PAGE_LIMIT,
   KALSHI_TRADES_POLL_MS,
 } from "@/lib/ingestionPollConfig";
-import { resolveKalshiMarketsLite } from "@/lib/kalshiTitleResolver";
+import {
+  humanizeKalshiTicker,
+  resolveKalshiMarketsLite,
+  resolveKalshiSelectionLabelForTrade,
+  type KalshiResolvedMarket,
+} from "@/lib/kalshiTitleResolver";
 import { kalshiFetch } from "@/lib/kalshi/http";
 import { queueKalshiShadowTrade, serializeShadowPayload } from "@/lib/x-agent/kalshiShadowTrades";
 import {
@@ -100,7 +105,7 @@ function parseTimestamp(createdTime: string, nowEpochSeconds: number): number {
 
 function normalizeKalshiTrade(
   raw: KalshiRawTrade,
-  market: { eventTitle: string; selectionLabel?: string | null },
+  market: KalshiResolvedMarket,
   nowEpochSeconds: number
 ): FeedTrade | null {
   const price =
@@ -116,14 +121,18 @@ function normalizeKalshiTrade(
   const usdNotional = price * size;
   if (!Number.isFinite(usdNotional) || usdNotional <= 0) return null;
 
-  const outcome =
-    (raw.taker_outcome_side ?? raw.taker_side) === "yes" ? "Yes" : "No";
+  const outcomeSide = raw.taker_outcome_side ?? raw.taker_side;
+  const selectionLabel = resolveKalshiSelectionLabelForTrade(
+    market,
+    outcomeSide
+  );
 
   return {
     id: raw.trade_id,
     source: "kalshi",
     title: market.eventTitle,
-    outcome,
+    outcome:
+      outcomeSide === "yes" ? "Yes" : "No",
     side: raw.taker_book_side === "ask" ? "SELL" : "BUY",
     price,
     size,
@@ -131,7 +140,7 @@ function normalizeKalshiTrade(
     timestamp: parseTimestamp(raw.created_time, nowEpochSeconds),
     traceable: true,
     ticker: normalizeKalshiTicker(raw.ticker) ?? raw.ticker.trim().toUpperCase(),
-    selectionLabel: market.selectionLabel ?? undefined,
+    selectionLabel: selectionLabel ?? undefined,
     isBlockTrade: raw.is_block_trade === true,
   };
 }
@@ -452,8 +461,8 @@ async function fetchKalshiTradesFromApi(
     if (!raw?.trade_id || !raw?.ticker) continue;
 
     const cached = marketCache.get(raw.ticker);
-    const market = cached ?? {
-      eventTitle: raw.ticker,
+    const market: KalshiResolvedMarket = cached ?? {
+      eventTitle: humanizeKalshiTicker(raw.ticker),
       selectionLabel: null,
     };
 
@@ -483,48 +492,6 @@ async function fetchKalshiTradesFromApi(
       ? await resolveCachedKalshiPipelineEv(stakeQualified)
       : new Map<string, PipelineTradeEv>();
 
-  if (shadowCandidates.length > 0) {
-    const { categorizeMarket } = await import("@/lib/categorizer");
-
-    for (const { raw, normalized } of shadowCandidates) {
-      const tradeEvPercent = await hydrateKalshiTradeEvPercent(
-        normalized,
-        pipelineEvIndex
-      );
-      const resolvedPipeline = resolveKalshiPipelineFromIndex(
-        normalized,
-        pipelineEvIndex
-      );
-      logKalshiEvCheck(normalized, resolvedPipeline, tradeEvPercent);
-
-      const category = await categorizeMarket(normalized.title, normalized.ticker, {
-        backfillDb: true,
-        marketKey: normalized.ticker,
-      });
-
-      queueKalshiShadowTrade({
-        ...shadowInputFromRaw(raw, normalized, tradeEvPercent),
-        category,
-      });
-      shadowQueued += 1;
-      logKalshiShadowQueued(normalized, tradeEvPercent);
-
-      if (!meetsProductFeedEvThreshold(tradeEvPercent)) {
-        logKalshiEvGateDrop(normalized, tradeEvPercent);
-        continue;
-      }
-
-      evQualified += 1;
-      logKalshiGatePass(normalized, tradeEvPercent as number);
-    }
-  }
-
-  if (shadowCandidates.length > 0) {
-    console.log(
-      `[kalshi/trades] evQualified=${evQualified} shadowQueued=${shadowQueued}`
-    );
-  }
-
   const stakeQualifiedWithEv = await mapWithConcurrency(
     stakeQualified,
     4,
@@ -552,6 +519,52 @@ async function fetchKalshiTradesFromApi(
       };
     }
   );
+
+  const evByTradeId = new Map(
+    stakeQualifiedWithEv.map((trade) => [trade.id, trade] as const)
+  );
+
+  if (shadowCandidates.length > 0) {
+    const { categorizeMarket } = await import("@/lib/categorizer");
+
+    await mapWithConcurrency(shadowCandidates, 4, async ({ raw, normalized }) => {
+      const hydrated = evByTradeId.get(normalized.id);
+      const tradeEvPercent =
+        hydrated?.netEvPercent ??
+        (await hydrateKalshiTradeEvPercent(normalized, pipelineEvIndex));
+      const resolvedPipeline = resolveKalshiPipelineFromIndex(
+        normalized,
+        pipelineEvIndex
+      );
+      logKalshiEvCheck(normalized, resolvedPipeline, tradeEvPercent);
+
+      const category = await categorizeMarket(normalized.title, normalized.ticker, {
+        skipLlm: true,
+        marketKey: normalized.ticker,
+      });
+
+      queueKalshiShadowTrade({
+        ...shadowInputFromRaw(raw, normalized, tradeEvPercent),
+        category,
+      });
+      shadowQueued += 1;
+      logKalshiShadowQueued(normalized, tradeEvPercent);
+
+      if (!meetsProductFeedEvThreshold(tradeEvPercent)) {
+        logKalshiEvGateDrop(normalized, tradeEvPercent);
+        return;
+      }
+
+      evQualified += 1;
+      logKalshiGatePass(normalized, tradeEvPercent as number);
+    });
+  }
+
+  if (shadowCandidates.length > 0) {
+    console.log(
+      `[kalshi/trades] evQualified=${evQualified} shadowQueued=${shadowQueued}`
+    );
+  }
 
   const stakeQualifiedIds = new Set(stakeQualifiedWithEv.map((trade) => trade.id));
   const belowStake = trades.filter(

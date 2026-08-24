@@ -20,8 +20,8 @@ import {
 export async function collectKalshiFeedCandidates(
   minTs?: number
 ): Promise<FeedTrade[]> {
-  const trades = await fetchKalshiTrades(minTs, { bypassThrottle: true });
-  await flushKalshiShadowTradesNow();
+  const trades = await fetchKalshiTrades(minTs);
+  void flushKalshiShadowTradesNow();
 
   const stakeQualified = trades.filter((trade) =>
     meetsProductFeedStakeThreshold(trade.usdNotional)

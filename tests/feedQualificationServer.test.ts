@@ -211,4 +211,35 @@ describe("collectPolymarketFeedCandidates", () => {
 
     expect(candidates).toHaveLength(0);
   });
+
+  it("reuses provided wallet qualifications without extra registry lookups", async () => {
+    vi.mocked(resolveFeedTradeEvPercents).mockResolvedValue(
+      new Map([[baseTrade.id, 4.2]])
+    );
+
+    const walletQualifications = {
+      "0xabc": {
+        qualified: true,
+        avgEv: 0.05,
+        resolvedBetsCount: 10,
+        avgStakeNotional: 50,
+        resolvedVolumeUSD: 500,
+        identity: {
+          pseudonym: "qualified-whale",
+          initials: "QW",
+          winRate: 0.55,
+          resolvedBetsCount: 10,
+          avgEv: 0.05,
+          roi: null,
+        },
+      },
+    };
+
+    const candidates = await collectPolymarketFeedCandidates([baseTrade], {
+      walletQualifications,
+    });
+
+    expect(candidates).toHaveLength(1);
+    expect(findWhaleByWalletCaseInsensitive).not.toHaveBeenCalled();
+  });
 });

@@ -89,7 +89,44 @@ export interface KalshiMarketTitleParts {
 
 export interface KalshiResolvedMarket {
   eventTitle: string;
+  /** Default YES-side contract label (legacy cache field). */
   selectionLabel: string | null;
+  yesSelectionLabel?: string | null;
+  noSelectionLabel?: string | null;
+}
+
+/** Pick the contract label for a trade based on which outcome side was taken. */
+export function resolveKalshiSelectionLabelForTrade(
+  market: Pick<
+    KalshiResolvedMarket,
+    "selectionLabel" | "yesSelectionLabel" | "noSelectionLabel"
+  >,
+  takerOutcomeSide?: "yes" | "no" | null
+): string | null {
+  const preferNo = takerOutcomeSide === "no";
+  if (preferNo) {
+    return market.noSelectionLabel ?? market.selectionLabel ?? null;
+  }
+  return market.yesSelectionLabel ?? market.selectionLabel ?? null;
+}
+
+function buildKalshiResolvedMarket(
+  market: KalshiMarketTitleInput,
+  event?: KalshiEventTitleInput | null
+): KalshiResolvedMarket {
+  const yesParts = resolveKalshiMarketTitleParts(market, event, {
+    takerOutcomeSide: "yes",
+  });
+  const noParts = resolveKalshiMarketTitleParts(market, event, {
+    takerOutcomeSide: "no",
+  });
+
+  return {
+    eventTitle: yesParts.eventTitle,
+    selectionLabel: yesParts.contractLabel,
+    yesSelectionLabel: yesParts.contractLabel,
+    noSelectionLabel: noParts.contractLabel,
+  };
 }
 
 const MARKET_KEY_PREFIX = "kalshi:market:";
@@ -517,23 +554,43 @@ export async function cacheKalshiTitlesFromMarkets(
   }
 }
 
+const inFlightEventFetches = new Map<
+  string,
+  Promise<KalshiEventTitleInput | null>
+>();
+
 async function fetchKalshiEvent(
   eventTicker: string
 ): Promise<KalshiEventTitleInput | null> {
+  const key = eventTicker.trim().toUpperCase();
+  if (!key) return null;
+
+  const pending = inFlightEventFetches.get(key);
+  if (pending) return pending;
+
+  const run = (async (): Promise<KalshiEventTitleInput | null> => {
+    try {
+      const res = await kalshiFetch(`/events/${encodeURIComponent(key)}`, {
+        next: { revalidate: 3600 },
+        label: `events/${key}`,
+      });
+      if (!res.ok) return null;
+      const data: unknown = await res.json();
+      const event =
+        data && typeof data === "object" && "event" in data
+          ? (data as { event?: KalshiEventTitleInput }).event
+          : null;
+      return event ?? null;
+    } catch {
+      return null;
+    }
+  })();
+
+  inFlightEventFetches.set(key, run);
   try {
-    const res = await kalshiFetch(
-      `/events/${encodeURIComponent(eventTicker)}`,
-      { next: { revalidate: 3600 }, label: `events/${eventTicker}` }
-    );
-    if (!res.ok) return null;
-    const data: unknown = await res.json();
-    const event =
-      data && typeof data === "object" && "event" in data
-        ? (data as { event?: KalshiEventTitleInput }).event
-        : null;
-    return event ?? null;
-  } catch {
-    return null;
+    return await run;
+  } finally {
+    inFlightEventFetches.delete(key);
   }
 }
 
@@ -590,13 +647,20 @@ async function fetchKalshiMarketResolved(
         }
       }
 
-      const parts = resolveKalshiMarketTitleParts(input, event, options);
-      if (isInternalKalshiTitle(parts.eventTitle, ticker)) return null;
+      const resolved = buildKalshiResolvedMarket(input, event);
+      if (isInternalKalshiTitle(resolved.eventTitle, ticker)) return null;
 
-      return {
-        eventTitle: parts.eventTitle,
-        selectionLabel: parts.contractLabel,
-      };
+      if (options?.takerOutcomeSide) {
+        return {
+          ...resolved,
+          selectionLabel: resolveKalshiSelectionLabelForTrade(
+            resolved,
+            options.takerOutcomeSide
+          ),
+        };
+      }
+
+      return resolved;
     } catch {
       return null;
     }
@@ -624,6 +688,14 @@ const inFlightMarketFetches = new Map<
 /** Max uncached `/markets/{ticker}` lookups per feed poll — rest use humanized tickers. */
 const FEED_MARKET_API_FETCH_LIMIT = 12;
 const FEED_MARKET_FETCH_CONCURRENCY = 2;
+
+function marketCacheHasNamedSelection(market: KalshiResolvedMarket): boolean {
+  return Boolean(
+    market.yesSelectionLabel?.trim() ||
+      market.noSelectionLabel?.trim() ||
+      market.selectionLabel?.trim()
+  );
+}
 
 export function scheduleKalshiTitleLookup(ticker: string): void {
   if (!ticker || pendingLookups.has(ticker)) return;
@@ -722,12 +794,14 @@ export async function resolveKalshiMarketsLite(
   for (const ticker of unique) {
     const mem = memoryCache.get(ticker);
     if (mem && !isInternalKalshiTitle(mem.eventTitle, ticker)) {
-      result.set(ticker, mem);
-      continue;
+      if (marketCacheHasNamedSelection(mem)) {
+        result.set(ticker, mem);
+        continue;
+      }
     }
 
     const cached = await getCachedKalshiMarket(ticker);
-    if (cached) {
+    if (cached && marketCacheHasNamedSelection(cached)) {
       result.set(ticker, cached);
       continue;
     }
@@ -748,9 +822,7 @@ export async function resolveKalshiMarketsLite(
   async function worker(): Promise<void> {
     while (index < toFetch.length) {
       const ticker = toFetch[index++];
-      const fetched = await fetchKalshiMarketResolved(ticker, {
-        skipEventFetch: true,
-      });
+      const fetched = await fetchKalshiMarketResolved(ticker);
       const resolved = fetched ?? {
         eventTitle: humanizeKalshiTicker(ticker),
         selectionLabel: null,

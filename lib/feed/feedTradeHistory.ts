@@ -15,7 +15,7 @@ import {
   type FeedTradeHistoryInput,
 } from "@/lib/feed/feedTradeHistoryCore";
 import { revalidatePersistedPolymarketFeedPayload } from "@/lib/feed/persistedFeedTranslation";
-import { qualifyWalletsForFeed } from "@/lib/feedQualificationServer";
+import { qualifyWalletsForFeed, type WalletFeedQualification } from "@/lib/feedQualificationServer";
 
 export {
   buildFeedTradeRow,
@@ -25,14 +25,16 @@ export {
 } from "@/lib/feed/feedTradeHistoryCore";
 
 async function filterRecordableByTraderCredibility(
-  trades: FeedTradeHistoryInput[]
+  trades: FeedTradeHistoryInput[],
+  existingQualifications?: Record<string, WalletFeedQualification>
 ): Promise<FeedTradeHistoryInput[]> {
   const wallets = trades
     .map((trade) => trade.proxyWallet?.trim().toLowerCase())
     .filter((wallet): wallet is string => Boolean(wallet));
 
   const qualifications =
-    wallets.length > 0 ? await qualifyWalletsForFeed(wallets) : {};
+    existingQualifications ??
+    (wallets.length > 0 ? await qualifyWalletsForFeed(wallets) : {});
 
   return trades.filter((trade) => {
     const wallet = trade.proxyWallet?.trim().toLowerCase();
@@ -43,13 +45,19 @@ async function filterRecordableByTraderCredibility(
 
 /** Best-effort — the feed response must never fail because history write failed. */
 export async function recordFeedTradeHistory(
-  trades: FeedTradeHistoryInput[]
+  trades: FeedTradeHistoryInput[],
+  options?: {
+    walletQualifications?: Record<string, WalletFeedQualification>;
+  }
 ): Promise<void> {
   if (!isDatabaseEnabled()) return;
   const recordable = trades.filter(isRecordableFeedTrade);
   if (recordable.length === 0) return;
 
-  const credible = await filterRecordableByTraderCredibility(recordable);
+  const credible = await filterRecordableByTraderCredibility(
+    recordable,
+    options?.walletQualifications
+  );
   if (credible.length === 0) return;
 
   const { categorizeMarket } = await import("@/lib/categorizer");
@@ -70,7 +78,7 @@ export async function recordFeedTradeHistory(
       const category =
         trade.category ??
         (await categorizeMarket(trade.title, eventSlug, {
-          backfillDb: true,
+          skipLlm: true,
           marketKey: eventSlug,
         }));
 

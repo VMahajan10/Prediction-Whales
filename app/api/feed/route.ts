@@ -4,12 +4,14 @@ import {
   collectPolymarketFeedCandidates,
   enrichPolymarketFeedTradesWithIdentity,
   filterTranslatablePolymarketFeedTrades,
+  qualifyWalletsForFeed,
 } from "@/lib/feedQualificationServer";
 import {
   meetsProductFeedEvThreshold,
   resolvePolymarketTradeNotionalUsd,
 } from "@/lib/feedQualification";
 import { collectKalshiFeedCandidates } from "@/lib/feed/kalshiFeedCandidatesServer";
+import { FeedRouteTimer } from "@/lib/feed/feedRouteTiming";
 import {
   fetchFallbackFeedTrades,
   recordFeedTradeHistory,
@@ -33,19 +35,40 @@ async function loadKalshiFeedCandidates() {
 
 /** Credibility-qualified product feed — Polymarket whales + transient Kalshi candidates. */
 export async function GET() {
-  const kalshiTrades = await loadKalshiFeedCandidates();
+  const timer = new FeedRouteTimer();
+
+  const [kalshiTrades, trades] = await Promise.all([
+    loadKalshiFeedCandidates(),
+    fetchWhaleBackfill(),
+  ]);
+  timer.mark("venuesFetched");
 
   try {
-    const trades = await fetchWhaleBackfill();
-    const candidates = await collectPolymarketFeedCandidates(trades);
+    const walletAddresses = trades
+      .map((trade) => trade.proxyWallet?.trim().toLowerCase())
+      .filter((wallet): wallet is string => Boolean(wallet));
+    const walletQualifications = await qualifyWalletsForFeed(walletAddresses);
+    timer.mark("walletQualification");
+
+    const candidates = await collectPolymarketFeedCandidates(trades, {
+      walletQualifications,
+    });
+    timer.mark("polymarketCandidates");
+
     const translatable = filterTranslatablePolymarketFeedTrades(candidates);
-    const enriched = await enrichPolymarketFeedTradesWithIdentity(translatable);
+    timer.mark("marketTranslation");
+
+    const enriched = await enrichPolymarketFeedTradesWithIdentity(translatable, {
+      walletQualifications,
+    });
+    timer.mark("identityEnrichment");
 
     const qualified = enriched.filter((trade) =>
       meetsProductFeedEvThreshold(trade.netEvPercent)
     );
+    timer.mark("merge");
 
-    await recordFeedTradeHistory(
+    void recordFeedTradeHistory(
       qualified.map((trade) => ({
         id: trade.id,
         transactionHash: trade.transactionHash,
@@ -55,23 +78,32 @@ export async function GET() {
         stakeAmountUsd: resolvePolymarketTradeNotionalUsd(trade),
         averageEvPercent: trade.averageEv ?? trade.netEvPercent!,
         payload: trade,
-      }))
+      })),
+      { walletQualifications }
     );
+
+    const timing = timer.breakdown();
+    console.log("[api/feed] timing", timing);
 
     if (qualified.length > 0) {
       return NextResponse.json({
         trades: qualified,
         kalshiTrades,
         source: "live",
+        timing,
       });
     }
 
     const fallback = await fetchFallbackFeedTrades<(typeof enriched)[number]>();
+    timer.mark("feedHistoryFallback");
+    console.log("[api/feed] timing", timer.breakdown());
+
     if (fallback.length > 0) {
       return NextResponse.json({
         trades: fallback,
         kalshiTrades,
         source: "history",
+        timing: timer.breakdown(),
       });
     }
 
@@ -79,12 +111,13 @@ export async function GET() {
       trades: qualified,
       kalshiTrades,
       source: "live",
+      timing: timer.breakdown(),
     });
   } catch (error) {
     const message = publicApiErrorMessage(error, "Failed to fetch product feed");
-    console.error("[api/feed]", error);
+    console.error("[api/feed]", error, timer.breakdown());
     return NextResponse.json(
-      { trades: [], kalshiTrades, error: message },
+      { trades: [], kalshiTrades, error: message, timing: timer.breakdown() },
       { status: 500 }
     );
   }

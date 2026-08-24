@@ -127,13 +127,17 @@ export async function qualifyWalletsForFeed(
 /** Shared Polymarket wallet gate for live feed, recent/backfill, and history writes. */
 export async function filterPolymarketTradesByWalletCredibility<
   T extends { proxyWallet?: string | null },
->(trades: T[]): Promise<T[]> {
+>(
+  trades: T[],
+  existingQualifications?: Record<string, WalletFeedQualification>
+): Promise<T[]> {
   const wallets = trades
     .map((trade) => trade.proxyWallet?.trim().toLowerCase())
     .filter((wallet): wallet is string => Boolean(wallet));
 
   const qualifications =
-    wallets.length > 0 ? await qualifyWalletsForFeed(wallets) : {};
+    existingQualifications ??
+    (wallets.length > 0 ? await qualifyWalletsForFeed(wallets) : {});
 
   return trades.filter((trade) => {
     const wallet = trade.proxyWallet?.trim().toLowerCase();
@@ -201,7 +205,12 @@ export type PolymarketFeedCandidateTrade<T extends PolymarketFeedTradeLike> =
  */
 export async function collectPolymarketFeedCandidates<
   T extends PolymarketFeedTradeLike,
->(trades: T[]): Promise<Array<QualifiedPolymarketFeedTrade<T>>> {
+>(
+  trades: T[],
+  options?: {
+    walletQualifications?: Record<string, WalletFeedQualification>;
+  }
+): Promise<Array<QualifiedPolymarketFeedTrade<T>>> {
   const tradeEvPercents = await resolveFeedTradeEvPercents(
     trades.map((trade) => ({
       id: trade.id,
@@ -245,7 +254,8 @@ export async function collectPolymarketFeedCandidates<
   }
 
   const traderQualified = await filterPolymarketTradesByWalletCredibility(
-    candidates
+    candidates,
+    options?.walletQualifications
   );
 
   recordFeedMetrics({
@@ -325,7 +335,10 @@ export async function filterQualifiedPolymarketFeedTrades<
 export async function enrichPolymarketFeedTradesWithIdentity<
   T extends PolymarketFeedTradeLike,
 >(
-  trades: Array<T & { marketTranslation?: MarketPositionTranslation }>
+  trades: Array<T & { marketTranslation?: MarketPositionTranslation }>,
+  options?: {
+    walletQualifications?: Record<string, WalletFeedQualification>;
+  }
 ): Promise<
   Array<
     T & {
@@ -339,7 +352,9 @@ export async function enrichPolymarketFeedTradesWithIdentity<
     .map((trade) => trade.proxyWallet?.trim().toLowerCase())
     .filter((wallet): wallet is string => Boolean(wallet));
 
-  const qualifications = await qualifyWalletsForFeed(wallets);
+  const qualifications =
+    options?.walletQualifications ??
+    (wallets.length > 0 ? await qualifyWalletsForFeed(wallets) : {});
 
   const enriched = trades.flatMap((trade) => {
     const marketTranslation = translateWhaleTradeMarket(trade);
