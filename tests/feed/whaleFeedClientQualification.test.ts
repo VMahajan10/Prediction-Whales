@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isPolymarketTradeEligibleForFeed,
   isVisibleInClientFeed,
   passesPolymarketClientFeedVisibilityGate,
   passesPolymarketWalletCredibilityForClient,
@@ -177,5 +178,20 @@ describe("recent/backfill admission policy", () => {
       [WALLET, qualifiedWalletQualification({ avgEv: 0.02, qualified: false })],
     ]);
     expect(isVisibleInClientFeed(trade, quals, new Map())).toBe(false);
+  });
+
+  it("hides untranslatable Polymarket trades even when trade and wallet gates pass", () => {
+    const trade = polymarketTrade({
+      title: "Will Candidate A win the election?",
+      outcome: "No",
+    });
+    const quals = new Map([[WALLET, qualifiedWalletQualification()]]);
+    const pipeline = new Map();
+
+    expect(isPolymarketTradeEligibleForFeed(trade, pipeline)).toBe(false);
+    expect(
+      passesPolymarketClientFeedVisibilityGate(trade, quals, pipeline)
+    ).toBe(false);
+    expect(isVisibleInClientFeed(trade, quals, pipeline)).toBe(false);
   });
 });

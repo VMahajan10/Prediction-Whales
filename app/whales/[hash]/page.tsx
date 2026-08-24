@@ -364,7 +364,7 @@ export default function WhaleDetailsPage() {
       title={trade.title}
       source="polymarket"
       side={trade.side}
-      backingLabel={marketTranslation?.backingLabel ?? `Backing ${trade.outcome}`}
+      backingLabel={marketTranslation?.backingLabel ?? ""}
       entryPrice={entryPrice}
       currentPrice={livePrice}
       stakeUsd={trade.usdNotional ?? trade.size}

@@ -15,6 +15,7 @@ import {
   isStaticTraderFallbackLabel,
   whaleInitialsFromPseudonym,
 } from "@/lib/whaleIdentityResolver";
+import { resolveWhaleFeedPositionLabel } from "@/lib/feed/feedPositionLabel";
 import { KALSHI_TRADER_ALIAS } from "@/lib/trades/whaleAliasConstants";
 import type { WhaleTrade } from "@/lib/whaleTrades";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
@@ -156,14 +157,7 @@ export default function WhaleFeedCard({
     isBuy ? nowPrice < entryPrice - 0.005 : nowPrice > entryPrice + 0.005;
   const nowPriceClass = priceMovedAgainst ? "text-pulse-no" : "text-white";
 
-  const backingLabel =
-    trade.marketTranslation?.backingLabel ??
-    (isBuy ? `Backing ${trade.outcome}` : "Exiting position");
-  const exitLabel = trade.marketTranslation?.exitByLabel;
-  const positionLabel =
-    isKalshi && trade.selectionLabel
-      ? trade.selectionLabel
-      : (exitLabel ?? backingLabel);
+  const positionLabel = resolveWhaleFeedPositionLabel(trade);
   const directionClass = isBuy
     ? "bg-pulse-yes/15 text-pulse-yes"
     : "bg-pulse-no/15 text-pulse-no";
@@ -224,11 +218,13 @@ export default function WhaleFeedCard({
 
       <div className="mt-3 flex items-center justify-between gap-2">
         <div className="min-w-0">
-          <span
-            className={`inline-block max-w-full truncate rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${directionClass}`}
-          >
-            {positionLabel}
-          </span>
+          {positionLabel ? (
+            <span
+              className={`inline-block max-w-full truncate rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${directionClass}`}
+            >
+              {positionLabel}
+            </span>
+          ) : null}
         </div>
         <span
           className={`inline-flex shrink-0 items-center gap-0.5 rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-wide ${sideClass}`}

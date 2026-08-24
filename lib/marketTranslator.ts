@@ -277,7 +277,7 @@ export interface WhaleTradeTranslationInput {
 export function translateWhaleTradeMarket(
   trade: WhaleTradeTranslationInput
 ): MarketPositionTranslation | null {
-  const { translation } = translateMarketPositionWithFallback(
+  return translateMarketPosition(
     {
       title: trade.title,
       slug: trade.slug,
@@ -290,6 +290,4 @@ export function translateWhaleTradeMarket(
       side: trade.side,
     }
   );
-
-  return translation;
 }

@@ -98,4 +98,44 @@ describe("translateWhaleTradeMarket", () => {
 
     expect(result?.sideName).toBe("Candidate A");
   });
+
+  it("returns null for untranslatable Polymarket markets (strict feed path)", () => {
+    expect(
+      translateWhaleTradeMarket({
+        title: "Will Candidate A win the election?",
+        outcome: "No",
+        side: "BUY",
+      })
+    ).toBeNull();
+  });
+
+  it("maps NO on A in a valid matchup to Backing B", () => {
+    const result = translateWhaleTradeMarket({
+      title: "Candidate A vs Candidate B",
+      outcome: "No",
+      side: "BUY",
+    });
+
+    expect(result).toEqual({
+      backingLabel: "Backing Candidate B",
+      sideName: "Candidate B",
+      exitByLabel: undefined,
+    });
+  });
+
+  it("does not use fallback copy for untranslatable markets", () => {
+    const strict = translateWhaleTradeMarket({
+      title: "Obscure prop without mapping?",
+      outcome: "Yes",
+      side: "BUY",
+    });
+    const withFallback = translateMarketPositionWithFallback(
+      { title: "Obscure prop without mapping?" },
+      { outcome: "Yes", side: "BUY" }
+    );
+
+    expect(strict).toBeNull();
+    expect(withFallback.usedFallback).toBe(true);
+    expect(withFallback.translation.backingLabel).toMatch(/^bought yes/i);
+  });
 });
