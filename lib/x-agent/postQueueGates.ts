@@ -28,6 +28,9 @@ import {
   type WalletCredibilityResolution,
 } from "@/lib/x-agent/walletCredibility";
 import {
+  walletNeedsHistoryHydration,
+} from "@/lib/x-agent/walletHydrationState";
+import {
   findWhaleByWalletCaseInsensitive,
   isAnonymousWalletAddress,
   normalizeWalletAddress,
@@ -120,7 +123,7 @@ export function needsWalletCredibilityHydration(
 ): boolean {
   if (isAnonymousWalletAddress(walletAddress)) return false;
   if (!whale) return true;
-  return (whale.resolvedBetsCount ?? 0) === 0;
+  return walletNeedsHistoryHydration(whale);
 }
 
 export function resolveUnindexedWhaleBypass(_input: {
@@ -212,6 +215,10 @@ export function scheduleWhaleRegistryBackfill(walletAddress: string): void {
         resolvedBetsCount: stats.resolvedBetsCount,
         avgEv: stats.avgEv,
         winRate: stats.winRate,
+        hydrationStatus: "complete",
+        hydratedAt: new Date(),
+        lastHydrationAttemptAt: new Date(),
+        hydrationError: null,
       });
 
       console.log("[x-agent/postQueueGates] whale registry backfill complete", {
@@ -364,7 +371,7 @@ export async function hydrateWalletForPostQueueCredibility(
 
   const fromRegistry = await findWhaleByWalletCaseInsensitive(normalized);
   const existing = options?.existingWhale ?? fromRegistry;
-  if (existing && (existing.resolvedBetsCount ?? 0) > 0) {
+  if (existing && !walletNeedsHistoryHydration(existing)) {
     return { whale: existing, source: "registry" };
   }
 
@@ -412,6 +419,7 @@ export async function resolveCredibilityWhaleWithHydration(input: {
   walletAddress: string;
   stakeNotional: number;
   whale?: WhaleRegistry | null;
+  preHydratedResolution?: WalletCredibilityResolution;
 }): Promise<{
   whale: WhaleRegistry | null;
   resolution?: WalletCredibilityResolution;
@@ -433,14 +441,17 @@ export async function resolveCredibilityWhaleWithHydration(input: {
   const whaleNotInRegistry = !registryRow;
 
   let whale = input.whale ?? registryRow ?? null;
-  let resolution: WalletCredibilityResolution | undefined;
+  let resolution: WalletCredibilityResolution | undefined =
+    input.preHydratedResolution;
 
-  if (needsWalletCredibilityHydration(whale, input.walletAddress)) {
+  if (!resolution && needsWalletCredibilityHydration(whale, input.walletAddress)) {
     resolution = await hydrateWalletForPostQueueCredibility(input.walletAddress, {
       tradeId: input.tradeId,
       existingWhale: whale,
     });
     whale = coalesceHydratedWhale(input.walletAddress, resolution);
+  } else if (resolution) {
+    whale = coalesceHydratedWhale(input.walletAddress, resolution) ?? whale;
   }
 
   const resolvedBetCount =

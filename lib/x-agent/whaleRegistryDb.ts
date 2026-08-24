@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { WhaleRegistry } from "@/lib/crossmarket/store/schema";
+import type { WalletHydrationStatus } from "@/lib/x-agent/walletHydrationState";
 import {
   ANONYMOUS_WALLET_ADDRESS,
   generateUniqueTraderName,
@@ -66,6 +67,10 @@ export async function findWhaleByWalletCaseInsensitive(
       win_rate AS "winRate",
       avg_stake_notional AS "avgStakeNotional",
       posted_count_30d AS "postedCount30d",
+      hydration_status AS "hydrationStatus",
+      hydrated_at AS "hydratedAt",
+      last_hydration_attempt_at AS "lastHydrationAttemptAt",
+      hydration_error AS "hydrationError",
       created_at AS "createdAt",
       updated_at AS "updatedAt"
     FROM whale_registry
@@ -83,6 +88,10 @@ export async function upsertWhaleRegistry(input: {
   avgEv?: number;
   winRate?: number;
   avgStakeNotional?: number;
+  hydrationStatus?: WalletHydrationStatus;
+  hydratedAt?: Date | null;
+  lastHydrationAttemptAt?: Date | null;
+  hydrationError?: string | null;
 }): Promise<WhaleRegistry | null> {
   const address = normalizeWalletAddress(input.walletAddress);
   if (!address || !isPrismaEnabled()) return null;
@@ -105,6 +114,16 @@ export async function upsertWhaleRegistry(input: {
           : {}),
         ...(input.avgEv != null ? { avgEv: input.avgEv } : {}),
         ...(input.winRate != null ? { winRate: input.winRate } : {}),
+        ...(input.hydrationStatus != null
+          ? { hydrationStatus: input.hydrationStatus }
+          : {}),
+        ...(input.hydratedAt !== undefined ? { hydratedAt: input.hydratedAt } : {}),
+        ...(input.lastHydrationAttemptAt !== undefined
+          ? { lastHydrationAttemptAt: input.lastHydrationAttemptAt }
+          : {}),
+        ...(input.hydrationError !== undefined
+          ? { hydrationError: input.hydrationError }
+          : {}),
       },
       create: {
         walletAddress: address,
@@ -115,6 +134,10 @@ export async function upsertWhaleRegistry(input: {
         winRate: input.winRate ?? 0,
         avgStakeNotional: input.avgStakeNotional ?? 0,
         postedCount30d: 0,
+        hydrationStatus: input.hydrationStatus ?? "pending",
+        hydratedAt: input.hydratedAt ?? null,
+        lastHydrationAttemptAt: input.lastHydrationAttemptAt ?? null,
+        hydrationError: input.hydrationError ?? null,
       },
     });
   } catch (error) {

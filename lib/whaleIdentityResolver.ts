@@ -70,6 +70,7 @@ export interface ResolvedWhaleIdentity {
 /** `/api/whales/wallet-qualification` entry shape. */
 export type WalletQualificationApiEntry = WalletFeedQualificationInput & {
   qualified?: boolean;
+  hydrationState?: "pending" | "complete" | "failed";
   identity?: ResolvedWhaleIdentity;
 };
 

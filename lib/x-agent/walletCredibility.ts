@@ -10,13 +10,17 @@ import {
 } from "@/lib/x-agent/gateMetrics";
 import { calculateAvgEv, type ResolvedBet } from "@/lib/x-agent/math";
 import {
-  findWhaleByWallet,
   findWhaleByWalletCaseInsensitive,
   formatWalletPseudonym,
   isAnonymousWalletAddress,
   normalizeWalletAddress,
   upsertWhaleRegistry,
 } from "@/lib/x-agent/whaleRegistryDb";
+import {
+  resolveWalletHydrationStatus,
+  walletNeedsHistoryHydration,
+  type WalletHydrationStatus,
+} from "@/lib/x-agent/walletHydrationState";
 
 export interface WalletCredibilityStats {
   resolvedBetsCount: number;
@@ -34,6 +38,7 @@ export interface WalletCredibilityResolution {
     | "anonymous"
     | "unavailable";
   stats?: WalletCredibilityStats;
+  hydrationStatus?: WalletHydrationStatus;
 }
 
 const LOW_CREDIBILITY_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
@@ -152,6 +157,32 @@ function buildQualifiedTestingFallbackStats(): WalletCredibilityStats {
   };
 }
 
+async function persistWalletHydrationOutcome(input: {
+  walletAddress: string;
+  stats?: WalletCredibilityStats;
+  hydrationStatus: WalletHydrationStatus;
+  hydrationError?: string | null;
+  attemptedAt?: Date;
+}): Promise<WhaleRegistry | null> {
+  const attemptedAt = input.attemptedAt ?? new Date();
+  const isComplete = input.hydrationStatus === "complete";
+
+  return upsertWhaleRegistry({
+    walletAddress: input.walletAddress,
+    ...(input.stats
+      ? {
+          resolvedBetsCount: input.stats.resolvedBetsCount,
+          avgEv: input.stats.avgEv,
+          winRate: input.stats.winRate,
+        }
+      : {}),
+    hydrationStatus: input.hydrationStatus,
+    hydratedAt: isComplete ? attemptedAt : null,
+    lastHydrationAttemptAt: attemptedAt,
+    hydrationError: input.hydrationError ?? null,
+  });
+}
+
 async function resolveTestingFallbackWhale(
   walletAddress: string,
   reason: string
@@ -164,6 +195,10 @@ async function resolveTestingFallbackWhale(
     resolvedBetsCount: stats.resolvedBetsCount,
     avgEv: stats.avgEv,
     winRate: stats.winRate,
+    hydrationStatus: "complete",
+    hydratedAt: new Date(),
+    lastHydrationAttemptAt: new Date(),
+    hydrationError: null,
   });
 
   console.log("[x-agent/walletCredibility] using qualified testing fallback", {
@@ -213,6 +248,10 @@ export function buildInMemoryWhaleProfile(
     winRate: stats.winRate,
     avgStakeNotional: 0,
     postedCount30d: 0,
+    hydrationStatus: "pending",
+    hydratedAt: null,
+    lastHydrationAttemptAt: null,
+    hydrationError: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -237,8 +276,8 @@ export function coalesceHydratedWhale(
 }
 
 /**
- * Hydrate wallet stats from registry or Polymarket Data API when the wallet is
- * missing or has zero resolved bets. Always await before credibility checks.
+ * Hydrate wallet stats from registry or Polymarket Data API when hydration is
+ * pending or failed. Always await before credibility checks.
  */
 export async function hydrateWalletStats(
   walletAddress: string,
@@ -253,11 +292,47 @@ export async function hydrateWalletStats(
     return { whale: null, source: "unavailable" };
   }
 
-  if (existing && (existing.resolvedBetsCount ?? 0) > 0) {
-    return { whale: existing, source: "registry" };
+  if (existing && !walletNeedsHistoryHydration(existing)) {
+    return {
+      whale: existing,
+      source: "registry",
+      hydrationStatus: resolveWalletHydrationStatus(existing),
+    };
   }
 
-  return resolveWhaleForCredibilityGate(normalized);
+  return resolveWhaleForCredibilityGate(normalized, existing);
+}
+
+/**
+ * Worker/feed path: ensure wallet history is hydrated before feed qualification.
+ * Does not trigger X-post generation.
+ */
+export async function ensureWalletCredibilityHydrated(
+  walletAddress: string,
+  options?: { tradeId?: string; existingWhale?: WhaleRegistry | null }
+): Promise<WalletCredibilityResolution> {
+  if (isAnonymousWalletAddress(walletAddress)) {
+    return { whale: null, source: "anonymous" };
+  }
+
+  const normalized = normalizeWalletAddress(walletAddress);
+  if (!normalized) {
+    return { whale: null, source: "unavailable" };
+  }
+
+  const existing =
+    options?.existingWhale ??
+    (await findWhaleByWalletCaseInsensitive(normalized));
+
+  if (existing && !walletNeedsHistoryHydration(existing)) {
+    return {
+      whale: existing,
+      source: "registry",
+      hydrationStatus: resolveWalletHydrationStatus(existing),
+    };
+  }
+
+  return hydrateWalletStats(normalized, existing);
 }
 
 /**
@@ -268,7 +343,8 @@ export async function hydrateWalletStats(
  * 4. Registry re-check after API (race with concurrent upserts)
  */
 export async function resolveWhaleForCredibilityGate(
-  wallet: string
+  wallet: string,
+  existing?: WhaleRegistry | null
 ): Promise<WalletCredibilityResolution> {
   if (isAnonymousWalletAddress(wallet)) {
     return { whale: null, source: "anonymous" };
@@ -279,9 +355,14 @@ export async function resolveWhaleForCredibilityGate(
     return { whale: null, source: "unavailable" };
   }
 
-  const fromRegistry = await findWhaleByWalletCaseInsensitive(walletAddress);
-  if (fromRegistry && (fromRegistry.resolvedBetsCount ?? 0) > 0) {
-    return { whale: fromRegistry, source: "registry" };
+  const fromRegistry =
+    existing ?? (await findWhaleByWalletCaseInsensitive(walletAddress));
+  if (fromRegistry && !walletNeedsHistoryHydration(fromRegistry)) {
+    return {
+      whale: fromRegistry,
+      source: "registry",
+      hydrationStatus: resolveWalletHydrationStatus(fromRegistry),
+    };
   }
 
   const cached = readLowCredibilityCache(walletAddress);
@@ -298,85 +379,103 @@ export async function resolveWhaleForCredibilityGate(
       "[x-agent/walletCredibility] low-credibility cache hit",
       walletAddress
     );
+    const persisted = await persistWalletHydrationOutcome({
+      walletAddress,
+      stats: cached.stats,
+      hydrationStatus: "complete",
+    });
     return {
-      whale: buildInMemoryWhaleProfile(walletAddress, cached.stats),
+      whale: persisted ?? buildInMemoryWhaleProfile(walletAddress, cached.stats),
       source: "low_credibility_cache",
       stats: cached.stats,
+      hydrationStatus: "complete",
     };
   }
 
+  const attemptedAt = new Date();
   let closedPositions: unknown[] = [];
   try {
     closedPositions = await fetchClosedPositions(walletAddress);
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     console.warn("[x-agent/walletCredibility] Polymarket fetch failed", {
       wallet: walletAddress,
-      error: error instanceof Error ? error.message : error,
+      error: message,
     });
     const retryRegistry = await findWhaleByWalletCaseInsensitive(walletAddress);
-    if (retryRegistry) {
-      return { whale: retryRegistry, source: "registry" };
+    if (retryRegistry && !walletNeedsHistoryHydration(retryRegistry)) {
+      return {
+        whale: retryRegistry,
+        source: "registry",
+        hydrationStatus: resolveWalletHydrationStatus(retryRegistry),
+      };
     }
     const testingFallback = await resolveTestingFallbackWhale(
       walletAddress,
       "polymarket_fetch_failed"
     );
     if (testingFallback) return testingFallback;
-    const emptyStats = emptyWalletCredibilityStats();
+
+    const failed = await persistWalletHydrationOutcome({
+      walletAddress,
+      hydrationStatus: "failed",
+      hydrationError: message,
+      attemptedAt,
+    });
+
     return {
-      whale: buildInMemoryWhaleProfile(walletAddress, emptyStats),
+      whale: failed,
       source: "unavailable",
-      stats: emptyStats,
+      hydrationStatus: "failed",
     };
   }
 
   const registryAfterFetch =
     await findWhaleByWalletCaseInsensitive(walletAddress);
-  if (registryAfterFetch && (registryAfterFetch.resolvedBetsCount ?? 0) > 0) {
-    return { whale: registryAfterFetch, source: "registry" };
+  if (
+    registryAfterFetch &&
+    !walletNeedsHistoryHydration(registryAfterFetch)
+  ) {
+    return {
+      whale: registryAfterFetch,
+      source: "registry",
+      hydrationStatus: resolveWalletHydrationStatus(registryAfterFetch),
+    };
   }
 
   const stats = computeWalletCredibilityStats(closedPositions);
-  const inMemoryWhale = buildInMemoryWhaleProfile(walletAddress, stats);
+  const upserted = await persistWalletHydrationOutcome({
+    walletAddress,
+    stats,
+    hydrationStatus: "complete",
+    hydrationError: null,
+    attemptedAt,
+  });
+  const hydratedWhale =
+    upserted ?? buildInMemoryWhaleProfile(walletAddress, stats);
 
   if (walletMeetsCredibilityCriteria(stats)) {
-    const upserted = await upsertWhaleRegistry({
-      walletAddress,
-      resolvedBetsCount: stats.resolvedBetsCount,
-      avgEv: stats.avgEv,
-      winRate: stats.winRate,
-    });
-
     if (upserted) {
       console.log("[x-agent/walletCredibility] upserted credible wallet", {
         wallet: walletAddress,
         resolvedBetsCount: stats.resolvedBetsCount,
         avgEv: stats.avgEv,
       });
-      return {
-        whale: upserted,
-        source: "polymarket_api",
-        stats,
-      };
+    } else {
+      console.log(
+        "[x-agent/walletCredibility] registry upsert unavailable — using in-memory profile",
+        {
+          wallet: walletAddress,
+          resolvedBetsCount: stats.resolvedBetsCount,
+          avgEv: stats.avgEv,
+        }
+      );
     }
-
-    const fallback = await findWhaleByWallet(walletAddress);
-    if (fallback) {
-      return { whale: fallback, source: "registry", stats };
-    }
-
-    console.log(
-      "[x-agent/walletCredibility] registry upsert unavailable — using in-memory profile",
-      {
-        wallet: walletAddress,
-        resolvedBetsCount: stats.resolvedBetsCount,
-        avgEv: stats.avgEv,
-      }
-    );
     return {
-      whale: inMemoryWhale,
+      whale: hydratedWhale,
       source: "polymarket_api",
       stats,
+      hydrationStatus: "complete",
     };
   }
 
@@ -396,9 +495,10 @@ export async function resolveWhaleForCredibilityGate(
   }
 
   return {
-    whale: inMemoryWhale,
+    whale: hydratedWhale,
     source: "low_credibility_cache",
     stats,
+    hydrationStatus: "complete",
   };
 }
 

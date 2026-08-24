@@ -21,6 +21,7 @@ import { ensureFullyComputedTradeEv } from "@/lib/evPipeline/resolveTradeEv";
 import { pipelineEvLookupKey } from "@/lib/evPipeline/types";
 import { tradeToWhale } from "@/lib/whaleTrades";
 import { processWhaleTradeForXAgent } from "@/lib/x-agent/enqueueWhaleTrade";
+import { ensureWalletCredibilityHydrated } from "@/lib/x-agent/walletCredibility";
 import { flushAllBatchedNeonWrites } from "@/lib/x-agent/batchedNeonWrites";
 import {
   passesShadowProductFeedGate,
@@ -56,6 +57,32 @@ const SOCKET_START_RETRY_MAX_MS = 30_000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Worker path: hydrate wallet credibility before feed persistence and X-agent gates. */
+export async function runShadowWorkerTradePipeline(
+  trade: SocketTrade,
+  handlers: {
+    persistFeedTrade: (
+      trade: SocketTrade,
+      whale: Awaited<ReturnType<typeof socketTradeToWhale>>
+    ) => Promise<void>;
+    processXAgent: (
+      whale: Awaited<ReturnType<typeof socketTradeToWhale>>,
+      hydrationResolution: Awaited<
+        ReturnType<typeof ensureWalletCredibilityHydrated>
+      > | null
+    ) => Promise<void>;
+  }
+): Promise<void> {
+  const whale = await socketTradeToWhale(trade);
+  const hydrationResolution = whale.proxyWallet?.trim()
+    ? await ensureWalletCredibilityHydrated(whale.proxyWallet, {
+        tradeId: trade.id,
+      })
+    : null;
+  await handlers.persistFeedTrade(trade, whale);
+  await handlers.processXAgent(whale, hydrationResolution);
 }
 
 export async function socketTradeToWhale(trade: SocketTrade) {
@@ -286,9 +313,14 @@ export class ShadowCronDaemon {
       try {
         if (!(await passesShadowProductFeedGate(trade))) continue;
 
-        const whale = await socketTradeToWhale(trade);
-        await this.persistFeedTrade(trade, whale);
-        await processWhaleTradeForXAgent(whale, this.rolling);
+        await runShadowWorkerTradePipeline(trade, {
+          persistFeedTrade: (socketTrade, hydratedWhale) =>
+            this.persistFeedTrade(socketTrade, hydratedWhale),
+          processXAgent: (hydratedWhale, hydrationResolution) =>
+            processWhaleTradeForXAgent(hydratedWhale, this.rolling, {
+              preHydratedResolution: hydrationResolution ?? undefined,
+            }),
+        });
         this.stats.tradesProcessed += 1;
       } catch (err) {
         this.stats.tradesFailed += 1;

@@ -183,6 +183,9 @@ export function isTraderMetricsUncalculated(
 export function passesPolymarketTraderCredibilityForFeed(
   stats: WalletFeedQualificationInput
 ): boolean {
+  if (stats.hydrationState != null && stats.hydrationState !== "complete") {
+    return false;
+  }
   return isQualifiedTraderForProductFeed(stats);
 }
 
@@ -409,6 +412,8 @@ export interface WalletFeedQualificationInput {
   resolvedBetsCount?: number | null;
   avgStakeNotional?: number | null;
   resolvedVolumeUSD?: number | null;
+  /** Wallet history hydration lifecycle — credibility gates apply only when complete. */
+  hydrationState?: "pending" | "complete" | "failed" | null;
 }
 
 export function isQualifiedWalletForFeed(

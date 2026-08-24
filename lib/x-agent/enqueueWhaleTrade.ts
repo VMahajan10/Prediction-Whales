@@ -146,7 +146,10 @@ function buildTradePayload(
  */
 export async function processWhaleTradeForXAgent(
   trade: WhaleTrade,
-  metrics?: GateSummary | GateMetricsCollector
+  metrics?: GateSummary | GateMetricsCollector,
+  options?: {
+    preHydratedResolution?: import("@/lib/x-agent/walletCredibility").WalletCredibilityResolution;
+  }
 ): Promise<void> {
   if (trade.source === "kalshi") {
     if (KALSHI_PUBLIC_POSTING_DISABLED) {
@@ -251,6 +254,7 @@ export async function processWhaleTradeForXAgent(
       tradeId: payload.tradeId,
       walletAddress,
       stakeNotional: payload.stakeNotional,
+      preHydratedResolution: options?.preHydratedResolution,
     });
     whaleForGates = credibility.whale;
     resolvedBetCount = credibility.resolvedBetCount;

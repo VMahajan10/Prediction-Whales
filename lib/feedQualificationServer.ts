@@ -26,6 +26,7 @@ import {
   type WhaleRegistryStats,
 } from "@/lib/whaleIdentityResolver";
 import { findWhaleByWalletCaseInsensitive } from "@/lib/x-agent/whaleRegistryDb";
+import { resolveWalletHydrationStatus } from "@/lib/x-agent/walletHydrationState";
 import type { WhaleRegistry } from "@/lib/crossmarket/store/schema";
 import { enrichTradesWithWhaleAlias } from "@/lib/trades/getTrades";
 
@@ -33,6 +34,7 @@ export interface WalletFeedQualification extends WalletFeedQualificationInput {
   qualified: boolean;
   resolvedVolumeUSD: number | null;
   identity: ResolvedWhaleIdentity;
+  hydrationState: "pending" | "complete" | "failed";
 }
 
 /** Registry lookups are one DB round trip each — cap parallel wallet queries. */
@@ -79,6 +81,21 @@ export async function qualifyWalletForFeed(
   if (!whale) {
     return {
       qualified: false,
+      hydrationState: "pending",
+      avgEv: null,
+      resolvedBetsCount: null,
+      avgStakeNotional: null,
+      resolvedVolumeUSD: null,
+      identity,
+    };
+  }
+
+  const hydrationState = resolveWalletHydrationStatus(whale);
+
+  if (hydrationState !== "complete") {
+    return {
+      qualified: false,
+      hydrationState,
       avgEv: null,
       resolvedBetsCount: null,
       avgStakeNotional: null,
@@ -91,11 +108,13 @@ export async function qualifyWalletForFeed(
     avgEv: whale.avgEv,
     resolvedBetsCount: whale.resolvedBetsCount,
     avgStakeNotional: whale.avgStakeNotional,
+    hydrationState,
   };
   const resolvedVolumeUSD = resolveTraderResolvedVolumeUsd(stats);
 
   return {
     qualified: isQualifiedWalletForProductFeed(stats),
+    hydrationState,
     avgEv: whale.avgEv,
     resolvedBetsCount: whale.resolvedBetsCount,
     avgStakeNotional: whale.avgStakeNotional,

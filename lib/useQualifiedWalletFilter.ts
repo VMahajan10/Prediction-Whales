@@ -9,6 +9,7 @@ import type {
 
 export interface WalletQualification extends WalletFeedQualificationInput {
   qualified: boolean;
+  hydrationState?: "pending" | "complete" | "failed";
   identity: ResolvedWhaleIdentity;
 }
 
@@ -75,6 +76,7 @@ export function useQualifiedWalletFilter(
             )) {
               next.set(wallet.toLowerCase(), {
                 qualified: result.qualified === true,
+                hydrationState: result.hydrationState ?? "pending",
                 avgEv: result.avgEv ?? null,
                 resolvedBetsCount: result.resolvedBetsCount ?? null,
                 avgStakeNotional: result.avgStakeNotional ?? null,
@@ -86,6 +88,7 @@ export function useQualifiedWalletFilter(
               if (!next.has(wallet)) {
                 next.set(wallet, {
                   qualified: false,
+                  hydrationState: "pending",
                   avgEv: null,
                   resolvedBetsCount: null,
                   avgStakeNotional: null,

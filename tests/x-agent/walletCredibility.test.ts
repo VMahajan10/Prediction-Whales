@@ -1,9 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import {
   buildInMemoryWhaleProfile,
   clearLowCredibilityCacheForTests,
   closedPositionsToResolvedBets,
-  coalesceHydratedWhale,
   computeWalletCredibilityStats,
   resolveWhaleForCredibilityGate,
   walletMeetsCredibilityCriteria,
@@ -11,7 +10,56 @@ import {
 import { MIN_WALLET_RESOLVED_BETS } from "@/lib/x-agent/gateMetrics";
 import { ANONYMOUS_WALLET_ADDRESS } from "@/lib/x-agent/whaleRegistryDb";
 
+const { mockFetchClosedPositions, mockUpsertWhaleRegistry, mockFindWhale } =
+  vi.hoisted(() => ({
+    mockFetchClosedPositions: vi.fn(),
+    mockUpsertWhaleRegistry: vi.fn(),
+    mockFindWhale: vi.fn(),
+  }));
+
+vi.mock("@/lib/polymarket", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/polymarket")>();
+  return {
+    ...actual,
+    fetchClosedPositions: (...args: unknown[]) =>
+      mockFetchClosedPositions(...args),
+  };
+});
+
+vi.mock("@/lib/x-agent/whaleRegistryDb", () => ({
+  ANONYMOUS_WALLET_ADDRESS:
+    "0x0000000000000000000000000000000000000000",
+  isAnonymousWalletAddress: (wallet: string | null | undefined) => {
+    if (wallet == null) return true;
+    const normalized = wallet.trim().toLowerCase();
+    return (
+      !normalized ||
+      normalized === "0x0000000000000000000000000000000000000000"
+    );
+  },
+  normalizeWalletAddress: (wallet: string) => wallet.trim().toLowerCase(),
+  formatWalletPseudonym: (wallet: string) => wallet,
+  findWhaleByWalletCaseInsensitive: (...args: unknown[]) =>
+    mockFindWhale(...args),
+  upsertWhaleRegistry: (...args: unknown[]) =>
+    mockUpsertWhaleRegistry(...args),
+}));
+
+const WALLET = "0xabc123def4567890abcdef1234567890abcdef12";
+
 describe("walletCredibility", () => {
+  beforeEach(() => {
+    mockFetchClosedPositions.mockReset();
+    mockUpsertWhaleRegistry.mockReset();
+    mockFindWhale.mockReset();
+    clearLowCredibilityCacheForTests();
+    process.env.X_AGENT_WALLET_HYDRATION_FALLBACK = "false";
+    process.env.NODE_ENV = "production";
+  });
+
+  afterEach(() => {
+    delete process.env.X_AGENT_WALLET_HYDRATION_FALLBACK;
+  });
   it("maps closed positions into resolved bets for avgEv", () => {
     const bets = closedPositionsToResolvedBets([
       { avgPrice: 0.4, realizedPnl: 12 },
@@ -101,23 +149,62 @@ describe("walletCredibility", () => {
     expect(whale.winRate).toBe(0.55);
   });
 
-  it("coalesces hydrated stats into a whale when registry row is missing", () => {
-    const wallet = "0xabc123def4567890abcdef1234567890abcdef12";
-    const stats = {
-      resolvedBetsCount: 12,
-      avgEv: 0.005,
-      winRate: 0.4,
-      closedCount: 12,
-    };
-
-    const whale = coalesceHydratedWhale(wallet, {
-      whale: null,
-      source: "low_credibility_cache",
-      stats,
+  it("persists failed hydration without fabricating resolved bet metrics", async () => {
+    mockFindWhale.mockResolvedValue(null);
+    mockFetchClosedPositions.mockRejectedValue(new Error("upstream timeout"));
+    mockUpsertWhaleRegistry.mockResolvedValue({
+      walletAddress: WALLET,
+      hydrationStatus: "failed",
+      hydrationError: "upstream timeout",
+      resolvedBetsCount: 0,
+      avgEv: 0,
+      winRate: 0,
     });
 
-    expect(whale).not.toBeNull();
-    expect(whale?.resolvedBetsCount).toBe(12);
-    expect(whale?.avgEv).toBe(0.005);
+    const resolution = await resolveWhaleForCredibilityGate(WALLET);
+
+    expect(resolution.hydrationStatus).toBe("failed");
+    expect(resolution.whale?.resolvedBetsCount ?? 0).toBe(0);
+    expect(mockUpsertWhaleRegistry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        walletAddress: WALLET,
+        hydrationStatus: "failed",
+        hydrationError: "upstream timeout",
+      })
+    );
+  });
+
+  it("persists complete hydration even when credibility thresholds fail", async () => {
+    mockFindWhale.mockResolvedValue(null);
+    mockFetchClosedPositions.mockResolvedValue([
+      { avgPrice: 0.4, realizedPnl: 5 },
+    ]);
+    mockUpsertWhaleRegistry.mockImplementation(async (input) => ({
+      walletAddress: WALLET,
+      pseudonym: "Test",
+      resolvedBetsCount: input.resolvedBetsCount ?? 0,
+      avgEv: input.avgEv ?? 0,
+      winRate: input.winRate ?? 0,
+      avgStakeNotional: 0,
+      postedCount30d: 0,
+      hydrationStatus: input.hydrationStatus ?? "pending",
+      hydratedAt: input.hydratedAt ?? null,
+      lastHydrationAttemptAt: input.lastHydrationAttemptAt ?? null,
+      hydrationError: input.hydrationError ?? null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }));
+
+    const resolution = await resolveWhaleForCredibilityGate(WALLET);
+
+    expect(resolution.hydrationStatus).toBe("complete");
+    expect(resolution.stats?.resolvedBetsCount).toBe(1);
+    expect(walletMeetsCredibilityCriteria(resolution.stats!)).toBe(false);
+    expect(mockUpsertWhaleRegistry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hydrationStatus: "complete",
+        resolvedBetsCount: 1,
+      })
+    );
   });
 });

@@ -166,6 +166,10 @@ model WhaleRegistry {
   winRate           Float    @default(0.0) @map("win_rate")
   avgStakeNotional  Float    @default(0.0) @map("avg_stake_notional")
   postedCount30d    Int      @default(0) @map("posted_count_30d")
+  hydrationStatus   String   @default("pending") @map("hydration_status")
+  hydratedAt        DateTime? @map("hydrated_at")
+  lastHydrationAttemptAt DateTime? @map("last_hydration_attempt_at")
+  hydrationError    String?  @map("hydration_error")
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 

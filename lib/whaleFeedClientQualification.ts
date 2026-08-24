@@ -21,7 +21,7 @@ export type WalletQualificationMap = ReadonlyMap<string, WalletQualification>;
 
 export type PolymarketWalletQualificationState = "pending" | "pass" | "fail";
 
-/** Wallet qualification resolution for client feed admission — unknown wallets stay pending. */
+/** Wallet qualification resolution for client feed admission. */
 export function resolvePolymarketWalletQualificationState(
   wallet: string | undefined,
   walletQualifications: WalletQualificationMap
@@ -31,6 +31,9 @@ export function resolvePolymarketWalletQualificationState(
   if (!walletQualifications.has(normalized)) return "pending";
 
   const qualification = walletQualifications.get(normalized);
+  if (qualification?.hydrationState === "pending") return "pending";
+  if (qualification?.hydrationState === "failed") return "fail";
+
   return passesPolymarketFeedTraderGate(normalized, qualification)
     ? "pass"
     : "fail";

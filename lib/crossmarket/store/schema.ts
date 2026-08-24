@@ -499,6 +499,14 @@ export const whaleRegistry = pgTable("whale_registry", {
   winRate: real("win_rate").notNull().default(0),
   avgStakeNotional: real("avg_stake_notional").notNull().default(0),
   postedCount30d: integer("posted_count_30d").notNull().default(0),
+  /** pending | complete | failed — distinguishes unhydrated defaults from computed stats. */
+  hydrationStatus: text("hydration_status").notNull().default("pending"),
+  hydratedAt: timestamp("hydrated_at", { withTimezone: true, mode: "date" }),
+  lastHydrationAttemptAt: timestamp("last_hydration_attempt_at", {
+    withTimezone: true,
+    mode: "date",
+  }),
+  hydrationError: text("hydration_error"),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
     .defaultNow()
     .notNull(),

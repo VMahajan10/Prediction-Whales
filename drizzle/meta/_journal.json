@@ -129,10 +129,24 @@
       "breakpoints": true
     },
     {
+      "idx": 19,
+      "version": "7",
+      "when": 1785464000000,
+      "tag": "0019_market_category",
+      "breakpoints": true
+    },
+    {
       "idx": 20,
       "version": "7",
       "when": 1785465000000,
       "tag": "0020_feed_daily_metrics",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1785466000000,
+      "tag": "0021_whale_registry_hydration_state",
       "breakpoints": true
     }
   ]
