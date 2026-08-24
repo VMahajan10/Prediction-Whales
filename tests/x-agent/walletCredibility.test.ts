@@ -46,6 +46,24 @@ describe("walletCredibility", () => {
 
     expect(
       walletMeetsCredibilityCriteria({
+        resolvedBetsCount: 600,
+        avgEv: 0.03,
+        winRate: 0.55,
+        closedCount: 600,
+      })
+    ).toBe(true);
+
+    expect(
+      walletMeetsCredibilityCriteria({
+        resolvedBetsCount: 600,
+        avgEv: 0.0299,
+        winRate: 0.55,
+        closedCount: 600,
+      })
+    ).toBe(false);
+
+    expect(
+      walletMeetsCredibilityCriteria({
         resolvedBetsCount: MIN_WALLET_RESOLVED_BETS - 1,
         avgEv: 0.1,
         winRate: 0.7,

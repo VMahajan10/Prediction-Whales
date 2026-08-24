@@ -80,6 +80,20 @@ describe("filterQualifiedPolymarketFeedTrades", () => {
 
     expect(trades).toHaveLength(0);
   });
+  it("drops trades from traders below product-feed wallet AVG EV", async () => {
+    vi.mocked(resolveFeedTradeEvPercents).mockResolvedValue(
+      new Map([[baseTrade.id, 4.2]])
+    );
+    vi.mocked(findWhaleByWalletCaseInsensitive).mockResolvedValue({
+      ...qualifiedWhale,
+      avgEv: 0.02,
+    } as never);
+
+    const trades = await filterQualifiedPolymarketFeedTrades([baseTrade]);
+
+    expect(trades).toHaveLength(0);
+  });
+
   it("drops trades from traders below product-feed credibility", async () => {
     vi.mocked(resolveFeedTradeEvPercents).mockResolvedValue(
       new Map([[baseTrade.id, 4.2]])

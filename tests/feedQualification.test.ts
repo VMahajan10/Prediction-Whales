@@ -153,11 +153,18 @@ describe("feedQualification", () => {
     expect(passesStrictFeedTradeEv({})).toBe(false);
   });
 
-  it("enforces the minimum wallet avg EV threshold", () => {
+  it("enforces the minimum wallet avg EV threshold (+3.0%)", () => {
+    expect(meetsWalletAvgEvThreshold(0.03)).toBe(true);
+    expect(meetsWalletAvgEvThreshold(0.031)).toBe(true);
     expect(meetsWalletAvgEvThreshold(MIN_AVG_EV_THRESHOLD)).toBe(true);
+    expect(meetsWalletAvgEvThreshold(0.0299)).toBe(false);
     expect(meetsWalletAvgEvThreshold(MIN_AVG_EV_THRESHOLD - 0.001)).toBe(
       false
     );
+    expect(meetsWalletAvgEvThreshold(0)).toBe(false);
+    expect(meetsWalletAvgEvThreshold(null)).toBe(false);
+    expect(meetsWalletAvgEvThreshold(undefined)).toBe(false);
+    expect(meetsWalletAvgEvThreshold(Number.NaN)).toBe(false);
     expect(meetsWalletAvgEvThreshold(-0.001)).toBe(false);
   });
 
@@ -252,7 +259,13 @@ describe("feedQualification", () => {
     ).toBe(true);
   });
 
-  it("enforces product feed trader credibility (10+ resolved bets, $300+ volume)", () => {
+  it("enforces product feed trader credibility (10+ resolved bets, $300+ volume, +3% wallet AVG EV)", () => {
+    const credibleTrader = {
+      resolvedBetsCount: 10,
+      avgStakeNotional: 30,
+      avgEv: 0.03,
+    };
+
     expect(meetsProductFeedResolvedBetsThreshold(MIN_PRODUCT_FEED_RESOLVED_BETS)).toBe(
       true
     );
@@ -278,34 +291,43 @@ describe("feedQualification", () => {
       })
     ).toBe(500);
 
-    expect(
-      isQualifiedTraderForProductFeed({
-        resolvedBetsCount: 10,
-        avgStakeNotional: 30,
-      })
-    ).toBe(true);
+    expect(isQualifiedTraderForProductFeed(credibleTrader)).toBe(true);
+    expect(isQualifiedWalletForProductFeed(credibleTrader)).toBe(true);
 
     expect(
       isQualifiedTraderForProductFeed({
+        ...credibleTrader,
         resolvedBetsCount: 9,
-        avgStakeNotional: 50,
       })
     ).toBe(false);
 
     expect(
       isQualifiedTraderForProductFeed({
-        resolvedBetsCount: 10,
+        ...credibleTrader,
         avgStakeNotional: 20,
       })
     ).toBe(false);
 
     expect(
-      isQualifiedWalletForProductFeed({
-        avgEv: null,
-        resolvedBetsCount: 10,
-        avgStakeNotional: 30,
+      isQualifiedTraderForProductFeed({
+        ...credibleTrader,
+        avgEv: 0.02,
+      })
+    ).toBe(false);
+
+    expect(
+      isQualifiedTraderForProductFeed({
+        ...credibleTrader,
+        avgEv: 0.03,
       })
     ).toBe(true);
+
+    expect(
+      isQualifiedWalletForProductFeed({
+        ...credibleTrader,
+        avgEv: null,
+      })
+    ).toBe(false);
   });
 
   it("allows Polymarket feed rows while trader metrics are still backfilling", () => {
@@ -359,6 +381,24 @@ describe("feedQualification", () => {
         resolvedVolumeUSD: 100,
       })
     ).toBe(false);
+
+    expect(
+      passesPolymarketTraderCredibilityForFeed({
+        avgEv: 0.02,
+        resolvedBetsCount: 10,
+        avgStakeNotional: 30,
+        resolvedVolumeUSD: 300,
+      })
+    ).toBe(false);
+
+    expect(
+      passesPolymarketTraderCredibilityForFeed({
+        avgEv: 0.03,
+        resolvedBetsCount: 10,
+        avgStakeNotional: 30,
+        resolvedVolumeUSD: 300,
+      })
+    ).toBe(true);
 
     expect(
       passesPolymarketTraderCredibilityForFeed(

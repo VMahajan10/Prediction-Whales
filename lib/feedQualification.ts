@@ -10,7 +10,7 @@ import {
 export const CREDIBILITY_CONFIG = {
   MIN_RESOLVED_BETS: 10,
   MIN_STAKE_USD: 250,
-  MIN_AVG_EV: 0.01,
+  MIN_AVG_EV: 0.03,
 } as const;
 
 /** Minimum stake to ingest/cache raw live socket trades (worker + browser). */
@@ -66,7 +66,7 @@ export const MIN_FEED_STAKE_PREFILTER_USD = STAKE_FLOOR_SPORTS_ENTERTAINMENT_USD
 /** Minimum USD stake for qualified whale feed trades. */
 export const MIN_STAKE_THRESHOLD = CREDIBILITY_CONFIG.MIN_STAKE_USD;
 
-/** Minimum wallet historical avg EV for qualified feed (+1.0%). */
+/** Minimum wallet historical avg EV for qualified feed (+3.0%). */
 export const MIN_AVG_EV_THRESHOLD = CREDIBILITY_CONFIG.MIN_AVG_EV;
 
 /** Product feed trader credibility — minimum resolved bet count. */
@@ -102,6 +102,8 @@ export interface ProductFeedTraderStats {
   resolvedBetCount?: number | null;
   /** @deprecated Use resolvedBetCount */
   resolvedBetsCount?: number | null;
+  /** Wallet historical AVG EV decimal (+3% → 0.03). */
+  avgEv?: number | null;
   avgStakeNotional?: number | null;
   resolvedVolumeUSD?: number | null;
 }
@@ -134,7 +136,7 @@ export function resolveTraderResolvedVolumeUsd(
   return 0;
 }
 
-/** Product feed trader gate — resolved bet count + resolved volume only (no wallet avg EV). */
+/** Product feed trader gate — resolved bets, resolved volume, and wallet historical AVG EV. */
 export function isQualifiedTraderForProductFeed(
   stats: ProductFeedTraderStats
 ): boolean {
@@ -143,7 +145,8 @@ export function isQualifiedTraderForProductFeed(
   const volumeUsd = resolveTraderResolvedVolumeUsd(stats);
   return (
     meetsProductFeedResolvedBetsThreshold(resolvedBetCount) &&
-    meetsProductFeedResolvedVolumeThreshold(volumeUsd)
+    meetsProductFeedResolvedVolumeThreshold(volumeUsd) &&
+    meetsWalletAvgEvThreshold(stats.avgEv)
   );
 }
 
@@ -423,7 +426,7 @@ export function isQualifiedWalletForFeed(
   );
 }
 
-/** Product feed wallet gate — 10+ resolved bets and $300+ resolved volume. */
+/** Product feed wallet gate — resolved bets, resolved volume, and wallet AVG EV. */
 export function isQualifiedWalletForProductFeed(
   input: WalletFeedQualificationInput
 ): boolean {
