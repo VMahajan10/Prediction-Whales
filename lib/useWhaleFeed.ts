@@ -9,11 +9,15 @@ import {
   aggregatePolymarketFeedMetrics,
   collectPolymarketWalletAddresses,
   isPolymarketTradeEligibleForFeed,
-  isRenderableFeedWhale,
   isVisibleInClientFeed,
-  passesPolymarketClientFeedAdmissionGate,
   passesPolymarketWalletCredibilityForClient,
 } from "@/lib/whaleFeedClientQualification";
+import {
+  admitPolymarketWhalesToBuffer,
+  buildQualifiedPolymarketWhales,
+  pruneWhaleBufferForVisibility,
+  whaleKeyForTrade,
+} from "@/lib/whaleFeed/polymarketBufferAdmission";
 import {
   meetsProductFeedStakeThreshold,
   meetsProductFeedEvThreshold,
@@ -28,6 +32,7 @@ import {
   summarizeFeedVolumeDrops,
 } from "@/lib/feed/feedVolumeDiagnostics";
 import { recentTradeToWhale } from "@/lib/feed/whaleFeedHydration";
+import { hydrateWhaleFeedSeed } from "@/lib/whaleFeed/hydrateWhaleFeedSeed";
 import type { FeedTrade } from "@/lib/feedTradeTypes";
 import {
   isKalshiTradeVisibleInUserFeed,
@@ -37,10 +42,7 @@ import {
 } from "@/lib/feed/kalshiFeedTrades";
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import { translateWhaleTradeMarket } from "@/lib/marketTranslator";
-import {
-  pipelineEvKeyForWhale,
-  resolvePipelineEvForWhale,
-} from "@/lib/pipelineEvClient";
+import { resolvePipelineEvForWhale } from "@/lib/pipelineEvClient";
 import {
   mergePipelineEvOntoWhale,
   stampWhaleFeedAdmissionEv,
@@ -182,9 +184,7 @@ function byDetectedDesc(a: WhaleTrade, b: WhaleTrade): number {
 }
 
 function whaleKey(trade: WhaleTrade): string {
-  return trade.source === "kalshi"
-    ? `kalshi:${trade.id}`
-    : trade.transactionHash || trade.id;
+  return whaleKeyForTrade(trade);
 }
 
 /** Prepend new whales, dedupe by key, cap at WHALE_FEED_LIVE_MAX. */
@@ -472,13 +472,12 @@ export function useWhaleFeed() {
       }
     };
 
-    const hydrate = async () => {
-      try {
-        await Promise.allSettled([loadRecentSeed(), load()]);
-      } finally {
-        markSeedLoaded();
-      }
-    };
+    const hydrate = () =>
+      hydrateWhaleFeedSeed({
+        loadRecentSeed,
+        loadBackfill: load,
+        markSeedLoaded,
+      });
 
     void hydrate();
     return () => abort.abort();
@@ -589,28 +588,12 @@ export function useWhaleFeed() {
 
   const qualifiedPolymarketWhales = useMemo(
     () =>
-      polymarketWhales
-        .filter((trade) =>
-          passesPolymarketClientFeedAdmissionGate(
-            trade,
-            walletQualifications,
-            pipelineEvIndex,
-            loggedFilterRejects.current
-          )
-        )
-        .map((trade) => {
-          const pipelineKey = pipelineEvKeyForWhale(trade);
-          const withIdentity = attachWhaleIdentity(
-            trade,
-            trade.proxyWallet
-              ? walletQualifications.get(trade.proxyWallet.trim().toLowerCase())
-              : undefined
-          );
-          return mergePipelineEvOntoWhale(
-            withIdentity,
-            pipelineKey ? pipelineEvIndex.get(pipelineKey) : undefined
-          );
-        }),
+      buildQualifiedPolymarketWhales(
+        polymarketWhales,
+        walletQualifications,
+        pipelineEvIndex,
+        loggedFilterRejects.current
+      ),
     [polymarketWhales, walletQualifications, pipelineEvIndex]
   );
 
@@ -684,7 +667,8 @@ export function useWhaleFeed() {
       if (
         !passesPolymarketWalletCredibilityForClient(
           wallet,
-          wallet ? walletQualifications.get(wallet) : undefined
+          wallet ? walletQualifications.get(wallet) : undefined,
+          walletQualifications
         )
       ) {
         continue;
@@ -714,14 +698,12 @@ export function useWhaleFeed() {
       incoming.push(admitted);
     }
 
-    for (const whale of qualifiedPolymarketWhales) {
-      const key = whaleKey(whale);
-      if (!key || whaleBufferSeen.current.has(key)) continue;
-      const admitted = stampWhaleForFeedAdmission(whale, pipelineEvIndex);
-      if (!admitted) continue;
-      whaleBufferSeen.current.add(key);
-      incoming.push(admitted);
-    }
+    const polymarketIncoming = admitPolymarketWhalesToBuffer(
+      qualifiedPolymarketWhales,
+      whaleBufferSeen.current,
+      pipelineEvIndex
+    );
+    incoming.push(...polymarketIncoming);
 
     if (incoming.length === 0) return;
 
@@ -743,17 +725,15 @@ export function useWhaleFeed() {
 
   useEffect(() => {
     if (!backfillLoaded) return;
-    setWhaleBuffer((prev) => {
-      const pruned = prev.filter((trade) =>
-        isVisibleInClientFeed(
-          trade,
-          walletQualifications,
-          pipelineEvIndex,
-          loggedFilterRejects.current
-        )
-      );
-      return pruned.length === prev.length ? prev : pruned;
-    });
+    setWhaleBuffer((prev) =>
+      pruneWhaleBufferForVisibility(
+        prev,
+        whaleBufferSeen.current,
+        walletQualifications,
+        pipelineEvIndex,
+        loggedFilterRejects.current
+      )
+    );
   }, [backfillLoaded, pipelineEvIndex, walletQualifications]);
 
   const whales = useMemo(
@@ -843,7 +823,8 @@ export function useWhaleFeed() {
       if (
         !passesPolymarketWalletCredibilityForClient(
           wallet,
-          wallet ? walletQualifications.get(wallet) : undefined
+          wallet ? walletQualifications.get(wallet) : undefined,
+          walletQualifications
         )
       ) {
         continue;

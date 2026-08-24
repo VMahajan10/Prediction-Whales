@@ -7,6 +7,7 @@ import TraderAlertSync from "@/components/TraderAlertSync";
 import WatchlistFilterSheet from "@/components/WatchlistFilterSheet";
 import WatchlistTraderCard from "@/components/WatchlistTraderCard";
 import { LiveFeedPlatformProvider } from "@/lib/LiveFeedPlatformContext";
+import { useWhaleFeed } from "@/lib/useWhaleFeed";
 import { useBookmarkedTraders } from "@/lib/useBookmarkedTraders";
 import { useWatchlistProfiles } from "@/lib/useWatchlistProfiles";
 import {
@@ -103,10 +104,12 @@ function WatchlistContent() {
 }
 
 export default function FollowingPage() {
+  const { whales } = useWhaleFeed();
+
   return (
     <LiveFeedPlatformProvider>
       <MobileAppShell>
-        <TraderAlertSync />
+        <TraderAlertSync whales={whales} />
         <WatchlistContent />
       </MobileAppShell>
     </LiveFeedPlatformProvider>

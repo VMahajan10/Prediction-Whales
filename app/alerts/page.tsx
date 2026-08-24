@@ -8,6 +8,7 @@ import TraderAlertSync from "@/components/TraderAlertSync";
 import { LiveFeedPlatformProvider } from "@/lib/LiveFeedPlatformContext";
 import type { TraderAlert } from "@/lib/traderAlerts";
 import { useTraderAlertsStore } from "@/lib/useTraderAlertsStore";
+import { useWhaleFeed } from "@/lib/useWhaleFeed";
 
 type AlertTab = "all" | "unread";
 
@@ -275,10 +276,12 @@ function AlertsContent() {
 }
 
 export default function AlertsPage() {
+  const { whales } = useWhaleFeed();
+
   return (
     <LiveFeedPlatformProvider>
       <MobileAppShell>
-        <TraderAlertSync />
+        <TraderAlertSync whales={whales} />
         <AlertsContent />
       </MobileAppShell>
     </LiveFeedPlatformProvider>

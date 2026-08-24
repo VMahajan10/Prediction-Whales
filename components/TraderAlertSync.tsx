@@ -8,7 +8,6 @@ import {
   alertFromWhaleTrade,
   upsertTraderAlert,
 } from "@/lib/traderAlerts";
-import { useWhaleFeed } from "@/lib/useWhaleFeed";
 import type { WhaleTrade } from "@/lib/whaleTrades";
 
 function walletForWhale(trade: WhaleTrade): string | undefined {
@@ -18,8 +17,11 @@ function walletForWhale(trade: WhaleTrade): string | undefined {
   );
 }
 
-export default function TraderAlertSync() {
-  const { whales } = useWhaleFeed();
+interface TraderAlertSyncProps {
+  whales: WhaleTrade[];
+}
+
+export default function TraderAlertSync({ whales }: TraderAlertSyncProps) {
   const { bookmarks } = useBookmarkedTraders();
   const seen = useRef<Set<string>>(new Set());
 

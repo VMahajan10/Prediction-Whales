@@ -150,7 +150,7 @@ function HomeDashboard() {
 
   return (
     <MobileAppShell showNav={!explorerMode}>
-      <TraderAlertSync />
+      <TraderAlertSync whales={whales} />
       <main className="min-h-screen px-4 py-5">
         <header className="mb-6 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">

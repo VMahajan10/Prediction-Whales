@@ -19,6 +19,23 @@ import type { WhaleTrade } from "@/lib/whaleTrades";
 
 export type WalletQualificationMap = ReadonlyMap<string, WalletQualification>;
 
+export type PolymarketWalletQualificationState = "pending" | "pass" | "fail";
+
+/** Wallet qualification resolution for client feed admission — unknown wallets stay pending. */
+export function resolvePolymarketWalletQualificationState(
+  wallet: string | undefined,
+  walletQualifications: WalletQualificationMap
+): PolymarketWalletQualificationState {
+  const normalized = wallet?.trim().toLowerCase();
+  if (!normalized) return "fail";
+  if (!walletQualifications.has(normalized)) return "pending";
+
+  const qualification = walletQualifications.get(normalized);
+  return passesPolymarketFeedTraderGate(normalized, qualification)
+    ? "pass"
+    : "fail";
+}
+
 /** Trade-level stake + EV gate for Polymarket feed rows (not wallet credibility). */
 export function isPolymarketTradeQualifiedForFeed(
   trade: WhaleTrade,
@@ -63,12 +80,22 @@ export function isPolymarketTradeQualifiedForFeed(
   return qualified;
 }
 
-/** Wallet credibility gate — fail closed when metrics are missing or below thresholds. */
+/** Wallet credibility gate — only passes once qualification is known and meets thresholds. */
 export function passesPolymarketWalletCredibilityForClient(
   wallet: string | undefined,
-  qualification: WalletQualification | undefined
+  qualification: WalletQualification | undefined,
+  walletQualifications?: WalletQualificationMap
 ): boolean {
-  return passesPolymarketFeedTraderGate(wallet, qualification);
+  if (walletQualifications) {
+    return (
+      resolvePolymarketWalletQualificationState(wallet, walletQualifications) ===
+      "pass"
+    );
+  }
+
+  const normalized = wallet?.trim().toLowerCase();
+  if (!normalized || !qualification) return false;
+  return passesPolymarketFeedTraderGate(normalized, qualification);
 }
 
 export function isPolymarketTradeEligibleForFeed(
@@ -113,7 +140,8 @@ export function passesPolymarketClientFeedVisibilityGate(
   const wallet = trade.proxyWallet?.trim().toLowerCase();
   return passesPolymarketWalletCredibilityForClient(
     wallet,
-    wallet ? walletQualifications.get(wallet) : undefined
+    wallet ? walletQualifications.get(wallet) : undefined,
+    walletQualifications
   );
 }
 
@@ -158,7 +186,8 @@ export function passesPolymarketClientFeedAdmissionGate(
   const wallet = trade.proxyWallet?.trim().toLowerCase();
   return passesPolymarketWalletCredibilityForClient(
     wallet,
-    wallet ? walletQualifications.get(wallet) : undefined
+    wallet ? walletQualifications.get(wallet) : undefined,
+    walletQualifications
   );
 }
 

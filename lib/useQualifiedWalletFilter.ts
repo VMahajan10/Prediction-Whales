@@ -51,11 +51,13 @@ export function useQualifiedWalletFilter(
     );
     if (missing.length === 0) return;
 
-    for (const wallet of missing) {
-      fetchedWallets.current.add(wallet);
-    }
-
     let cancelled = false;
+
+    const markWalletsFetched = (walletsToMark: string[]) => {
+      for (const wallet of walletsToMark) {
+        fetchedWallets.current.add(wallet);
+      }
+    };
 
     void fetch("/api/whales/wallet-qualification", {
       method: "POST",
@@ -65,6 +67,7 @@ export function useQualifiedWalletFilter(
       .then((response) => response.json())
       .then((data: WalletQualificationApiResponse) => {
           if (cancelled) return;
+          markWalletsFetched(missing);
           setQualifications((current) => {
             const next = new Map(current);
             for (const [wallet, result] of Object.entries(
@@ -96,6 +99,7 @@ export function useQualifiedWalletFilter(
       })
       .catch(() => {
         if (cancelled) return;
+        markWalletsFetched(missing);
         setQualifications((current) => {
           const next = new Map(current);
           for (const wallet of missing) {
