@@ -70,8 +70,7 @@ function classifyPolymarketTradeDrop(
   if (
     !passesPolymarketFeedTraderGate(
       wallet,
-      wallet ? walletQualifications.get(wallet) : undefined,
-      true
+      wallet ? walletQualifications.get(wallet) : undefined
     )
   ) {
     return "walletCredibility";

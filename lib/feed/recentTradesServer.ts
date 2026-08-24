@@ -24,8 +24,9 @@ import {
   resolvePolymarketTradeNotionalUsd,
 } from "@/lib/feedQualification";
 import {
-  enrichTradesWithWhaleAlias,
-} from "@/lib/trades/getTrades";
+  filterPolymarketTradesByWalletCredibility,
+} from "@/lib/feedQualificationServer";
+import { enrichTradesWithWhaleAlias } from "@/lib/trades/getTrades";
 import { extractTraderWalletAddress } from "@/lib/whaleIdentityResolver";
 import { initGlobalLocalEvCache } from "@/lib/evPipeline/redisCache";
 import type { PipelineTradeEv } from "@/lib/evPipeline/types";
@@ -464,6 +465,9 @@ function kalshiShadowToFeedTrade(row: KalshiShadowTrade): RecentFeedTrade | null
   };
 }
 
+/** Extra Polymarket rows to read when wallet gate rejects trade-qualified candidates. */
+const POLYMARKET_DB_READ_MULTIPLIER = 3;
+
 async function fetchRecentPolymarketTrades(
   options: RecentFetchOptions = {}
 ): Promise<RecentFeedTrade[]> {
@@ -486,7 +490,7 @@ async function fetchRecentPolymarketTrades(
       .from(feedTrades)
       .where(and(...predicates))
       .orderBy(desc(feedTrades.tradedAt))
-      .limit(limit);
+      .limit(limit * POLYMARKET_DB_READ_MULTIPLIER);
 
     const trades = rows
       .map((row) =>
@@ -502,7 +506,14 @@ async function fetchRecentPolymarketTrades(
         (trade) => !options.excludeKeys?.has(recentTradeDedupeKey(trade))
       );
 
-    return applyRecentCategoryFilter(trades, categoryFilter);
+    const walletQualified = await filterPolymarketTradesByWalletCredibility(
+      trades
+    );
+
+    return applyRecentCategoryFilter(
+      walletQualified.slice(0, limit),
+      categoryFilter
+    );
   } catch (error) {
     if (isPostgresSchemaDriftError(error)) {
       console.warn(

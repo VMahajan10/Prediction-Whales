@@ -273,17 +273,12 @@ function isPolymarketTradeQualifiedForFeed(
   return qualified;
 }
 
-/** Pending wallet qual fetch allows trade-level-qualified Polymarket rows through. */
+/** Wallet credibility gate — fail closed when metrics are missing or below thresholds. */
 function passesPolymarketWalletCredibilityForClient(
   wallet: string | undefined,
-  qualification: WalletQualification | undefined,
-  tradePassesProductFeedGates: boolean
+  qualification: WalletQualification | undefined
 ): boolean {
-  return passesPolymarketFeedTraderGate(
-    wallet,
-    qualification,
-    tradePassesProductFeedGates
-  );
+  return passesPolymarketFeedTraderGate(wallet, qualification);
 }
 
 function attachWhaleIdentity(
@@ -680,8 +675,7 @@ export function useWhaleFeed() {
           const wallet = trade.proxyWallet?.trim().toLowerCase();
           return passesPolymarketWalletCredibilityForClient(
             wallet,
-            wallet ? walletQualifications.get(wallet) : undefined,
-            true
+            wallet ? walletQualifications.get(wallet) : undefined
           );
         })
         .map((trade) => {
@@ -770,8 +764,7 @@ export function useWhaleFeed() {
       if (
         !passesPolymarketWalletCredibilityForClient(
           wallet,
-          wallet ? walletQualifications.get(wallet) : undefined,
-          true
+          wallet ? walletQualifications.get(wallet) : undefined
         )
       ) {
         continue;
@@ -970,8 +963,7 @@ export function useWhaleFeed() {
       if (
         !passesPolymarketWalletCredibilityForClient(
           wallet,
-          wallet ? walletQualifications.get(wallet) : undefined,
-          true
+          wallet ? walletQualifications.get(wallet) : undefined
         )
       ) {
         continue;

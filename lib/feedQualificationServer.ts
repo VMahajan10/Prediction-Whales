@@ -124,8 +124,9 @@ export async function qualifyWalletsForFeed(
   return Object.fromEntries(entries);
 }
 
-async function filterPolymarketFeedTradesByTraderCredibility<
-  T extends PolymarketFeedTradeLike,
+/** Shared Polymarket wallet gate for live feed, recent/backfill, and history writes. */
+export async function filterPolymarketTradesByWalletCredibility<
+  T extends { proxyWallet?: string | null },
 >(trades: T[]): Promise<T[]> {
   const wallets = trades
     .map((trade) => trade.proxyWallet?.trim().toLowerCase())
@@ -137,22 +138,17 @@ async function filterPolymarketFeedTradesByTraderCredibility<
   return trades.filter((trade) => {
     const wallet = trade.proxyWallet?.trim().toLowerCase();
     const qualification = wallet ? qualifications[wallet] : undefined;
-    return passesPolymarketFeedTraderGate(wallet, qualification, true);
+    return passesPolymarketFeedTraderGate(wallet, qualification);
   });
 }
 
 export async function traderMeetsProductFeedCredibility(
-  walletAddress: string | null | undefined,
-  tradePassesProductFeedGates = true
+  walletAddress: string | null | undefined
 ): Promise<boolean> {
   const wallet = walletAddress?.trim();
   if (!wallet) return false;
   const qualification = await qualifyWalletForFeed(wallet);
-  return passesPolymarketFeedTraderGate(
-    wallet,
-    qualification,
-    tradePassesProductFeedGates
-  );
+  return passesPolymarketFeedTraderGate(wallet, qualification);
 }
 
 export interface PolymarketFeedTradeLike {
@@ -248,7 +244,7 @@ export async function collectPolymarketFeedCandidates<
     });
   }
 
-  const traderQualified = await filterPolymarketFeedTradesByTraderCredibility(
+  const traderQualified = await filterPolymarketTradesByWalletCredibility(
     candidates
   );
 
@@ -309,7 +305,7 @@ export async function filterQualifiedPolymarketFeedTrades<
     });
   }
 
-  const traderQualified = await filterPolymarketFeedTradesByTraderCredibility(
+  const traderQualified = await filterPolymarketTradesByWalletCredibility(
     qualified
   );
 
@@ -350,7 +346,7 @@ export async function enrichPolymarketFeedTradesWithIdentity<
 
     const wallet = trade.proxyWallet?.trim().toLowerCase();
     const qualification = wallet ? qualifications[wallet] : undefined;
-    if (!passesPolymarketFeedTraderGate(wallet, qualification, true)) {
+    if (!passesPolymarketFeedTraderGate(wallet, qualification)) {
       return [];
     }
 

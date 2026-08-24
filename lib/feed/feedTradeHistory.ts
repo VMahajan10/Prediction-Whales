@@ -36,7 +36,7 @@ async function filterRecordableByTraderCredibility(
   return trades.filter((trade) => {
     const wallet = trade.proxyWallet?.trim().toLowerCase();
     const qualification = wallet ? qualifications[wallet] : undefined;
-    return passesPolymarketFeedTraderGate(wallet, qualification, true);
+    return passesPolymarketFeedTraderGate(wallet, qualification);
   });
 }
 
@@ -131,7 +131,7 @@ export async function fetchFallbackFeedTrades<T>(
     for (const row of rows) {
       const wallet = row.proxyWallet?.trim().toLowerCase();
       const qualification = wallet ? qualifications[wallet] : undefined;
-      if (!passesPolymarketFeedTraderGate(wallet, qualification, true)) {
+      if (!passesPolymarketFeedTraderGate(wallet, qualification)) {
         continue;
       }
       payloads.push(row.payload as T);

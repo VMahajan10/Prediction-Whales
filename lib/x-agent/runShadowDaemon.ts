@@ -335,7 +335,7 @@ export class ShadowCronDaemon {
       : null;
     if (
       wallet &&
-      !passesPolymarketFeedTraderGate(wallet, traderQualification, true)
+      !passesPolymarketFeedTraderGate(wallet, traderQualification)
     ) {
       return;
     }

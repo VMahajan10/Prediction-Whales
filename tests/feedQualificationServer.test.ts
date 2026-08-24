@@ -109,7 +109,7 @@ describe("filterQualifiedPolymarketFeedTrades", () => {
     expect(trades).toHaveLength(0);
   });
 
-  it("includes trades from unindexed Polymarket wallets while metrics backfill", async () => {
+  it("drops trades from unindexed Polymarket wallets when metrics are unavailable", async () => {
     vi.mocked(resolveFeedTradeEvPercents).mockResolvedValue(
       new Map([[baseTrade.id, 4.2]])
     );
@@ -117,11 +117,10 @@ describe("filterQualifiedPolymarketFeedTrades", () => {
 
     const trades = await filterQualifiedPolymarketFeedTrades([baseTrade]);
 
-    expect(trades).toHaveLength(1);
-    expect(trades[0]!.netEvPercent).toBe(4.2);
+    expect(trades).toHaveLength(0);
   });
 
-  it("includes trades from registry rows with schema zero defaults before hydration", async () => {
+  it("drops trades from registry rows with schema zero defaults before hydration", async () => {
     vi.mocked(resolveFeedTradeEvPercents).mockResolvedValue(
       new Map([[baseTrade.id, 4.2]])
     );
@@ -133,10 +132,10 @@ describe("filterQualifiedPolymarketFeedTrades", () => {
 
     const trades = await filterQualifiedPolymarketFeedTrades([baseTrade]);
 
-    expect(trades).toHaveLength(1);
+    expect(trades).toHaveLength(0);
   });
 
-  it("includes trades missing proxyWallet when stake and EV already pass", async () => {
+  it("drops trades missing proxyWallet even when stake and EV pass", async () => {
     vi.mocked(resolveFeedTradeEvPercents).mockResolvedValue(
       new Map([[baseTrade.id, 4.2]])
     );
@@ -145,7 +144,18 @@ describe("filterQualifiedPolymarketFeedTrades", () => {
       { ...baseTrade, proxyWallet: undefined },
     ]);
 
+    expect(trades).toHaveLength(0);
+  });
+
+  it("includes trades when trade and wallet qualification both pass", async () => {
+    vi.mocked(resolveFeedTradeEvPercents).mockResolvedValue(
+      new Map([[baseTrade.id, 4.2]])
+    );
+
+    const trades = await filterQualifiedPolymarketFeedTrades([baseTrade]);
+
     expect(trades).toHaveLength(1);
+    expect(trades[0]!.netEvPercent).toBe(4.2);
   });
 });
 

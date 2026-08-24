@@ -176,37 +176,33 @@ export function isTraderMetricsUncalculated(
 }
 
 /**
- * Polymarket feed trader gate — strict when metrics exist; fallback while backfilling.
- * Call with `tradePassesProductFeedGates=true` only after stake + EV gates pass.
+ * Polymarket feed wallet gate — fail closed when registry metrics are missing or
+ * below product-feed credibility thresholds. Trade-level stake/EV gates are
+ * evaluated separately.
  */
 export function passesPolymarketTraderCredibilityForFeed(
-  stats: WalletFeedQualificationInput,
-  tradePassesProductFeedGates = true
+  stats: WalletFeedQualificationInput
 ): boolean {
-  if (isQualifiedTraderForProductFeed(stats)) return true;
-  if (!tradePassesProductFeedGates) return false;
-  return isTraderMetricsUncalculated(stats);
+  return isQualifiedTraderForProductFeed(stats);
 }
 
 /**
- * Polymarket feed trader gate for a trade row — missing wallet admits when trade
- * gates already passed (stake + EV); Kalshi has no analogous wallet column.
+ * Polymarket feed wallet gate for a trade row. Missing wallet address or
+ * unqualified registry stats reject the trade; Kalshi has no analogous wallet column.
  */
 export function passesPolymarketFeedTraderGate(
   walletAddress: string | null | undefined,
-  qualification: WalletFeedQualificationInput | null | undefined,
-  tradePassesProductFeedGates = true
+  qualification: WalletFeedQualificationInput | null | undefined
 ): boolean {
   const wallet = walletAddress?.trim().toLowerCase();
-  if (!wallet) return tradePassesProductFeedGates;
+  if (!wallet) return false;
   return passesPolymarketTraderCredibilityForFeed(
     qualification ?? {
       avgEv: null,
       resolvedBetsCount: null,
       avgStakeNotional: null,
       resolvedVolumeUSD: null,
-    },
-    tradePassesProductFeedGates
+    }
   );
 }
 
