@@ -41,6 +41,10 @@ import {
   resolveXPublisherIntervalMs,
 } from "../lib/x-agent/xPublisherScheduler";
 import { isVerboseXAgentLoggingEnabled } from "../lib/x-agent/verboseLogging";
+import {
+  startShadowWorkerHeartbeat,
+  stopShadowWorkerHeartbeat,
+} from "../lib/x-agent/shadowWorkerHeartbeat";
 
 const PENDING_QUEUE_STATUSES = [
   "PENDING",
@@ -111,6 +115,8 @@ async function shutdown(signal: string, exitCode = 0): Promise<void> {
     clearInterval(heartbeatTicker);
     heartbeatTicker = null;
   }
+
+  stopShadowWorkerHeartbeat();
 
   if (keepAliveTicker) {
     clearInterval(keepAliveTicker);
@@ -259,6 +265,7 @@ async function runDaemon(): Promise<void> {
 
   daemon = await runShadowCronDaemon(options);
   summaryTicker = daemon.startSummaryTicker();
+  startShadowWorkerHeartbeat();
   startHeartbeat();
   startKeepAlive();
   startScheduledPublisherTicker();

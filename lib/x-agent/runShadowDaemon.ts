@@ -21,6 +21,10 @@ import { ensureFullyComputedTradeEv } from "@/lib/evPipeline/resolveTradeEv";
 import { pipelineEvLookupKey } from "@/lib/evPipeline/types";
 import { tradeToWhale } from "@/lib/whaleTrades";
 import { processWhaleTradeForXAgent } from "@/lib/x-agent/enqueueWhaleTrade";
+import {
+  setShadowWorkerWebSocketConnected,
+  writeShadowWorkerHeartbeat,
+} from "@/lib/x-agent/shadowWorkerHeartbeat";
 import { ensureWalletCredibilityHydrated } from "@/lib/x-agent/walletCredibility";
 import { flushAllBatchedNeonWrites } from "@/lib/x-agent/batchedNeonWrites";
 import {
@@ -257,6 +261,8 @@ export class ShadowCronDaemon {
         console.log(
           "[Shadow Daemon] Polymarket WebSocket connected — listening for live trades"
         );
+        setShadowWorkerWebSocketConnected(true);
+        void writeShadowWorkerHeartbeat();
         return;
       } catch (err) {
         const delay = Math.min(
@@ -274,6 +280,7 @@ export class ShadowCronDaemon {
 
   async stop(): Promise<void> {
     this.stopping = true;
+    setShadowWorkerWebSocketConnected(false);
     this.socket?.stop();
     this.socket = null;
 
