@@ -6,6 +6,7 @@ import {
   type OutcomeSide,
   type ParsedGameKey,
 } from "@/lib/crossMarketEv";
+import { logger } from "@/lib/logger";
 import {
   getEnrichedConsensusIndex,
 } from "@/lib/evPipeline/consensusIndexBuilder";
@@ -710,7 +711,7 @@ async function tryEnsembleBaselineFallback(
     return null;
   }
 
-  console.log("[exchangeConsensusArb] ensemble fallback baseline", {
+  logger.debug("[exchangeConsensusArb] ensemble fallback baseline", {
     tokenId: params.tokenId ?? null,
     slug: params.slug ?? null,
     ensemblePTrue: ensembleBaseline.ensemblePTrue,
@@ -986,7 +987,7 @@ function resolveSportsbookForPmOutcome(
 
   const byGame = findSportsbookByGameAndOutcome(index, target.game, target.outcome);
   if (byGame) {
-    console.log("[exchangeConsensusArb] sportsbook matched by normalized teams", {
+    logger.debug("[exchangeConsensusArb] sportsbook matched by normalized teams", {
       pmMatchId: target.matchId,
       resolvedMatchId: byGame.matchId,
       pmTeams: [target.game.pmTeamA, target.game.pmTeamB],
@@ -1153,7 +1154,7 @@ export async function lookupExchangeConsensusBaseline(params: {
     outcomeName = gamma.outcomeName;
     if (!slug && gamma.slug) slug = gamma.slug;
     if (!title && gamma.question) title = gamma.question;
-    console.log("[exchangeConsensusArb] gamma market for token", {
+    logger.debug("[exchangeConsensusArb] gamma market for token", {
       tokenId: params.tokenId,
       slugFromToken: gamma.slug,
       questionFromToken: gamma.question,
@@ -1170,7 +1171,7 @@ export async function lookupExchangeConsensusBaseline(params: {
     index,
   });
 
-  console.log("[exchangeConsensusArb] resolve attempt", {
+  logger.debug("[exchangeConsensusArb] resolve attempt", {
     tokenId: params.tokenId ?? null,
     slug,
     title,
@@ -1185,7 +1186,7 @@ export async function lookupExchangeConsensusBaseline(params: {
       title,
     });
     if (pmOutcome) {
-      console.log("[exchangeConsensusArb] prop index-derived pm outcome", pmOutcome);
+      logger.debug("[exchangeConsensusArb] prop index-derived pm outcome", pmOutcome);
     }
   }
 
@@ -1199,7 +1200,7 @@ export async function lookupExchangeConsensusBaseline(params: {
           entry.outcome,
           outcomeName ?? entry.label
         );
-        console.log("[exchangeConsensusArb] title-derived pm outcome", pmOutcome);
+        logger.debug("[exchangeConsensusArb] title-derived pm outcome", pmOutcome);
       }
     }
   }
@@ -1228,7 +1229,7 @@ export async function lookupExchangeConsensusBaseline(params: {
       aligned.inverted,
       pmOutcome.outcomeLabel
     );
-    console.log("[exchangeConsensusArb] aligned sportsbook baseline", {
+    logger.debug("[exchangeConsensusArb] aligned sportsbook baseline", {
       baseline: cachedBaseline,
       pmOutcomeLabel: pmOutcome.outcomeLabel,
       inverted: aligned.inverted,

@@ -47,3 +47,4 @@ ios/App/Pods/
 *.keystore
 .env*
 backup.sql
+tmp/

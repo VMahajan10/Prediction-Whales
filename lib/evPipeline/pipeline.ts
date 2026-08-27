@@ -8,6 +8,7 @@ import {
   type SyncRunCounts,
 } from "@/lib/crossmarket/store/schema";
 import { runMarketMapping } from "@/lib/evPipeline/mapMarkets";
+import { logger } from "@/lib/logger";
 import {
   DEFAULT_KALSHI_MAX_PAGES,
   DEFAULT_PM_LIMIT,
@@ -105,7 +106,7 @@ export async function matchMarkets(): Promise<PipelineStageResult> {
       return { ok: false, count: 0, error, ms: elapsed(start) };
     }
 
-    console.info("[ev-pipeline] matchMarkets stage starting…");
+    logger.info("[ev-pipeline] matchMarkets stage starting…");
     const result = await runMarketMapping({
       persist: true,
       polymarketLimit: DEFAULT_PM_LIMIT,
@@ -115,7 +116,7 @@ export async function matchMarkets(): Promise<PipelineStageResult> {
       (m) => m.matchMethod !== "TEST_FALLBACK_PAIR"
     );
 
-    console.info("[ev-pipeline] matchMarkets stage finished:", {
+    logger.info("[ev-pipeline] matchMarkets stage finished:", {
       ok: result.ok,
       polymarketCount: result.polymarketCount,
       kalshiCount: result.kalshiCount,
@@ -224,7 +225,7 @@ export async function refreshConsensusIndexStage(): Promise<PipelineStageResult>
   const start = Date.now();
   try {
     const result = await refreshConsensusIndex();
-    console.info(
+    logger.info(
       `[ev-pipeline] refreshConsensusIndex entries=${result.entryCount} prop_aliases=${result.propAliasCount}`
     );
     return {
@@ -249,7 +250,7 @@ export async function ingestRagContextStage(): Promise<PipelineStageResult> {
   const start = Date.now();
   try {
     const result = await ingestRagContext(activeMatchedPairs);
-    console.info(
+    logger.info(
       `[ev-pipeline] ingestRagContext similar=${result.similarMarketCount} odds_seeded=${result.oddsHistorySeeded}`
     );
     return {
@@ -281,14 +282,14 @@ export async function computePTrue(): Promise<PipelineStageResult> {
     const computed = await processMappedPTrue(db, activeMatchedPairs);
 
     if (computed > 0) {
-      console.info(
+      logger.info(
         `[ev-pipeline] computePTrue processed ${computed} mapped pair(s)`
       );
     }
 
     try {
       const coverage = await collectPipelineCoverageReport(db);
-      console.info(formatPipelineCoverageSummary(coverage));
+      logger.info(formatPipelineCoverageSummary(coverage));
     } catch (coverageErr) {
       console.warn(
         "[ev-pipeline] coverage report failed:",
@@ -313,7 +314,7 @@ export async function warmWhaleFeedEvStage(): Promise<PipelineStageResult> {
   const start = Date.now();
   try {
     const result = await warmWhaleFeedTradeEv();
-    console.info(
+    logger.info(
       `[ev-pipeline] warmWhaleFeedEv candidates=${result.candidates} warmed=${result.warmed} skipped=${result.skippedCached} errors=${result.errors}`
     );
     return {
@@ -349,7 +350,7 @@ export async function computeTraderEv(): Promise<PipelineStageResult> {
         : 0;
 
     if (count > 0) {
-      console.info(
+      logger.info(
         `[ev-pipeline] computeTraderEv fallback cached trade EV for ${count} mapped pair(s)`
       );
     }

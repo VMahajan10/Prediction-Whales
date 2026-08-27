@@ -9,6 +9,7 @@ import {
   type LiveFeedQualificationTrade,
 } from "@/lib/feedQualification";
 import { inferCategoryBadge } from "@/lib/marketCategory";
+import { logger } from "@/lib/logger";
 import { normalizeFeedCategory } from "@/lib/x-agent/stakeFloor";
 
 export type FeedGateRejectReason =
@@ -80,7 +81,7 @@ export function logFeedGateReject(
   const id = context.id ?? "unknown";
   const source = context.source ?? "unknown";
 
-  console.log(
+  logger.debug(
     `[Feed Gate Reject] id=${id} | source=${source} | calculatedEv=${formatEvForLog(result.calculatedEvPercent)} | stake=${formatStakeForLog(result.stakeUsd)} | notional=${formatStakeForLog(result.stakeUsd)} | requiredEv>=${result.requiredEvPercent}% (${result.requiredEvDecimal}) | requiredStake>=${formatStakeForLog(result.requiredStakeFloorUsd)} | category=${category} | reason=${result.reason} (${rejectionReasonLabel(result.reason!)})`
   );
 }

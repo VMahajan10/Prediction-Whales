@@ -8,6 +8,7 @@ import {
 } from "@/lib/evPipeline/types";
 import { normalizePipelineTradeEv } from "@/lib/evPipeline/tradeEvRecord";
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
+import { logger } from "@/lib/logger";
 import {
   enrichPipelineTradeEvCrossIds,
   indexPipelineTradeEvAliases,
@@ -148,7 +149,7 @@ function logPipelineEvDebug(trade: WhaleTrade, pipeline: PipelineTradeEv): void 
     pipeline
   );
 
-  console.log(
+  logger.debug(
     `[EV Debug] Market: ${trade.title} | Raw EV: ${rawEv ?? "null"} | Output EV: ${outputEv ?? "null"}`
   );
 }

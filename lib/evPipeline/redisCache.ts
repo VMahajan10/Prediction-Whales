@@ -15,6 +15,8 @@ import {
   pipelineMappingPairKey,
 } from "@/lib/evPipeline/crossAssetLookup";
 
+import { logger } from "@/lib/logger";
+
 type GlobalWithLocalEvCache = typeof globalThis & {
   localEvCache?: Map<string, PipelineTradeEv>;
 };
@@ -46,7 +48,7 @@ export function seedPipelineLocalEvCache(
   indexPipelineTradeEvAliases(cache, normalized, lookupKey);
 
   const evPercent = normalized.netEvPercent ?? 0;
-  console.log(
+  logger.debug(
     `[Pipeline Cache] Seeding key: ${lookupKey} with ${evPercent}% EV`
   );
 
@@ -263,7 +265,7 @@ type RedisSetCommand = {
 function logRedisBatchError(label: string, err: unknown): void {
   const message = err instanceof Error ? err.message : String(err);
   if (isRedisQuotaOrLimitError(err)) {
-    console.log(
+    logger.debug(
       `[Pipeline Redis Bypass] ${label} quota/limit hit — local cache remains authoritative`
     );
     return;
@@ -694,7 +696,7 @@ export async function safeCacheTradeEvLookupRedis(
     });
   } catch (err) {
     if (isRedisQuotaOrLimitError(err)) {
-      console.log(
+      logger.debug(
         "[Pipeline Redis Bypass] Database full, proceeding with local memory fallback only"
       );
     } else {

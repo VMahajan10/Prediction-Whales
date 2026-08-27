@@ -7,6 +7,7 @@ import {
 import { resolveFeedFilterCategoryLabel } from "@/lib/feedFilterDiagnostics";
 import { diagnoseKalshiFeedTradeGate } from "@/lib/feed/kalshiFeedTrades";
 import { diagnoseLiveFeedTradeGate } from "@/lib/feedGate";
+import { logger } from "@/lib/logger";
 import { resolveFeedTradeEvPercent } from "@/lib/feedTradeEv";
 import { translateWhaleTradeMarket } from "@/lib/marketTranslator";
 import {
@@ -144,7 +145,7 @@ export function logFeedVolumeDiagnostics(counts: FeedVolumeDropCounts): void {
       ? "EV disabled (missing allowed)"
       : `EV>=${minEv}%${FEED_ALLOW_MISSING_EV ? " (missing allowed)" : ""}`;
 
-  console.log(
+  logger.routineDebug(
     `[Feed Volume] incoming pm=${counts.incomingPolymarket} kalshi=${counts.incomingKalshi} | admitted pm=${counts.admittedPolymarket} kalshi=${counts.admittedKalshi} | rejected stake=${counts.stakeFloor} ev=${counts.evGate} wallet=${counts.walletCredibility} translation=${counts.marketTranslation} unmappedTicker=${counts.unmappedTicker} | mode=${evLabel}`
   );
 }

@@ -5,6 +5,7 @@ import {
   getDailyPostLimitStatus,
 } from "@/lib/x-agent/dailyPostLimit";
 import { isXPublisherSchedulerActive } from "@/lib/x-agent/xPublisherScheduler";
+import { logger } from "@/lib/logger";
 
 export interface CronPublisherResult {
   scanned: number;
@@ -33,7 +34,7 @@ export async function runCronPublisher(): Promise<CronPublisherResult> {
   };
 
   if (!isXPublisherSchedulerActive()) {
-    console.log(
+    logger.info(
       `${LOG_PREFIX} Scheduler inactive — skipping x_post_queue scan (set SHADOW_CRON_X_PUBLISHER_ENABLED=true and X API credentials to enable)`
     );
     return result;
@@ -41,12 +42,12 @@ export async function runCronPublisher(): Promise<CronPublisherResult> {
 
   const dueCount = await countScheduledPostsReadyToPublish();
   if (dueCount === 0) {
-    console.log(`${LOG_PREFIX} No scheduled posts ready to publish`);
+    logger.info(`${LOG_PREFIX} No scheduled posts ready to publish`);
     return result;
   }
 
   const now = new Date();
-  console.log(
+  logger.info(
     `${LOG_PREFIX} Scanning for due posts (status=SCHEDULED, scheduledAt <= ${now.toISOString()}) | dueCount=${dueCount}`
   );
 
@@ -60,13 +61,13 @@ export async function runCronPublisher(): Promise<CronPublisherResult> {
   if (limitStatus.limited) {
     result.dailyLimitReached = true;
     result.skipped = ready.length;
-    console.log(
+    logger.info(
       formatDailyLimitLogMessage(
         limitStatus.publishedToday,
         limitStatus.maxDailyPosts
       )
     );
-    console.log(
+    logger.info(
       `${LOG_PREFIX} Run complete — scanned=${result.scanned} published=${result.published} failed=${result.failed} skipped=${result.skipped} (daily limit)`
     );
     return result;
@@ -76,7 +77,7 @@ export async function runCronPublisher(): Promise<CronPublisherResult> {
     return result;
   }
 
-  console.log(
+  logger.info(
     `${LOG_PREFIX} Found ${ready.length} scheduled post(s) ready to publish | publishedToday=${limitStatus.publishedToday}/${limitStatus.maxDailyPosts}`
   );
 
@@ -90,7 +91,7 @@ export async function runCronPublisher(): Promise<CronPublisherResult> {
       const remaining =
         ready.length - result.published - result.failed - result.skipped;
       result.skipped += remaining;
-      console.log(
+      logger.info(
         formatDailyLimitLogMessage(
           currentLimit.publishedToday,
           currentLimit.maxDailyPosts
@@ -100,7 +101,7 @@ export async function runCronPublisher(): Promise<CronPublisherResult> {
     }
 
     const scheduledLabel = item.scheduledFor?.toISOString() ?? "unknown";
-    console.log(
+    logger.info(
       `${LOG_PREFIX} Publishing queue id=${item.id} tradeId=${item.tradeId} scheduledAt=${scheduledLabel}`
     );
 
@@ -109,7 +110,7 @@ export async function runCronPublisher(): Promise<CronPublisherResult> {
 
       if (publish.ok) {
         result.published += 1;
-        console.log(
+        logger.info(
           `${LOG_PREFIX} ✅ Published id=${item.id} status=PUBLISHED xTweetId=${publish.tweetId ?? "n/a"} telegramMessageId=${publish.telegramMessageId ?? "n/a"}`
         );
         continue;
@@ -145,7 +146,7 @@ export async function runCronPublisher(): Promise<CronPublisherResult> {
     }
   }
 
-  console.log(
+  logger.info(
     `${LOG_PREFIX} Run complete — scanned=${result.scanned} published=${result.published} failed=${result.failed} skipped=${result.skipped}`
   );
 

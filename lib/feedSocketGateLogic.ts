@@ -3,6 +3,7 @@
  * Wired by `feedSocketGateClient` (browser) and `feedSocketGateWorker` (Render).
  */
 import { evaluateLiveFeedTradeGate } from "@/lib/feedGate";
+import { logger } from "@/lib/logger";
 import { resolveFeedFilterCategoryLabel } from "@/lib/feedFilterDiagnostics";
 import {
   meetsProductFeedStakeThreshold,
@@ -70,7 +71,7 @@ export async function resolveSocketTradeEvPercentWith(
     let tradeEvPercent = readEvPercent(pipeline);
 
     if (tradeEvPercent == null) {
-      console.log(`[Feed Gate] Enqueued trade ${trade.id} for EV calculation`);
+      logger.debug(`[Feed Gate] Enqueued trade ${trade.id} for EV calculation`);
       pipeline = (await fetchSingle(evRequest)) ?? undefined;
       tradeEvPercent = readEvPercent(pipeline);
     }
@@ -101,7 +102,7 @@ function buildSocketFeedTrade(
 }
 
 function logMissingAssetReject(trade: SocketTrade): void {
-  console.log(
+  logger.debug(
     `[Feed Gate Reject] id=${trade.id} | source=socket | calculatedEv=N/A | stake=$${trade.usdNotional.toFixed(2)} | notional=$${trade.usdNotional.toFixed(2)} | reason=missing_asset (no assetId for EV lookup)`
   );
 }

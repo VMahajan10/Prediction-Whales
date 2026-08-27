@@ -13,6 +13,7 @@ import {
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 import { buildNormalizedEmbeddingText } from "@/lib/evPipeline/embeddingTextNormalize";
 import type { MappingFailure, NormalizedMarketContract } from "@/lib/evPipeline/types";
+import { logger } from "@/lib/logger";
 
 const GAMMA_API_BASE = "https://gamma-api.polymarket.com";
 const GAMMA_PAGE_SIZE = 100;
@@ -135,7 +136,7 @@ function logPipelineSkipIfMissingIdentifier(market: {
   const tokenId = market.tokenId?.trim() || null;
   const ticker = market.ticker?.trim() || null;
   if (!tokenId && !ticker) {
-    console.log(
+    logger.debug(
       `[Pipeline Skip] Missing identifier for: ${market.title || market.name || market.question || "unknown"}`
     );
   }
@@ -431,7 +432,7 @@ function normalizePolymarketBatch(
     const normalized = normalizePolymarketGamma(raw);
     if (!normalized) {
       if (tokenIds[0]) {
-        console.log(
+        logger.debug(
           `[Pipeline Skip] Failed normalization for: ${gammaMarketLabel(raw)} (tokenId=${tokenIds[0]})`
         );
       }
@@ -476,7 +477,7 @@ export async function fetchActivePolymarketMarkets(
 
     const markets = normalizePolymarketBatch(rawMarkets);
 
-    console.info(
+    logger.info(
       `[ev/map-markets] Polymarket normalized ${markets.length} contracts from Gamma (${rawMarkets.length} raw merged: volume=${volumePass.fetched}, sports=${sportsPass.fetched})`
     );
     return { markets };
@@ -562,7 +563,7 @@ export async function fetchActiveKalshiMarkets(
       };
     }
 
-    console.info(
+    logger.info(
       `[ev/map-markets] Kalshi normalized ${markets.length} contracts`
     );
     return { markets };

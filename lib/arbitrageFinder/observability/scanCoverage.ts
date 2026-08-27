@@ -12,6 +12,7 @@ import {
 } from "@/lib/arbitrageFinder/observability/pairDiagnostics";
 import { scanArbitrageWindows } from "@/lib/arbitrageFinder/windowScanner";
 import { isEvRedisEnabled } from "@/lib/evPipeline/redisCache";
+import { logger } from "@/lib/logger";
 
 export {
   ARB_ORDER_BOOK_STALE_MS,
@@ -56,7 +57,7 @@ export async function collectArbitrageScanCoverage(
   }
 
   if (options.logSummary !== false) {
-    console.info(formatArbitrageScanCoverageSummary(report));
+    logger.info(formatArbitrageScanCoverageSummary(report));
   }
 
   return report;
@@ -99,7 +100,7 @@ export async function recordArbitrageScanCoverage(params: {
   await setArbScanMeta(report);
 
   if (params.logSummary !== false) {
-    console.info(formatArbitrageScanCoverageSummary(report));
+    logger.info(formatArbitrageScanCoverageSummary(report));
   }
 
   return report;

@@ -3,6 +3,7 @@ import { getDb, isDatabaseEnabled } from "@/lib/crossmarket/store/db";
 import { marketMappings } from "@/lib/crossmarket/store/schema";
 import { cosineSimilarity, embedTexts } from "@/lib/evPipeline/embeddings";
 import { computeEvForMappedPair } from "@/lib/evPipeline/computeMappedEv";
+import { logger } from "@/lib/logger";
 import {
   validateMatchMarketsPreflight,
   formatPreflightErrors,
@@ -59,18 +60,18 @@ function logTopMatchCandidates(
 ): void {
   const top = ranked.slice(0, 3);
   if (top.length === 0) {
-    console.log("[ev/map-markets] Top match candidates: none computed");
+    logger.debug("[ev/map-markets] Top match candidates: none computed");
     return;
   }
 
-  console.log(
+  logger.debug(
     `[ev/map-markets] Top ${top.length} match candidates (threshold=${appliedThreshold}, scores=adjusted):`
   );
   for (let idx = 0; idx < top.length; idx++) {
     const row = top[idx];
     const pm = polymarket[row.pmIndex];
     const km = kalshi[row.kalshiIndex];
-    console.log(
+    logger.debug(
       `[ev/map-markets] #${idx + 1} adjusted=${row.adjustedScore.toFixed(4)} raw=${row.rawScore.toFixed(4)} method=${row.method} PM="${pm.title}" ↔ Kalshi="${km.title}"`
     );
   }
@@ -335,7 +336,7 @@ export async function runMarketMapping(
       };
     }
 
-    console.info("[ev/map-markets] Fetching Polymarket + Kalshi markets…");
+    logger.info("[ev/map-markets] Fetching Polymarket + Kalshi markets…");
     const fetched = await fetchAndNormalizeMarkets(options);
     failures.push(...fetched.failures);
 
@@ -345,7 +346,7 @@ export async function runMarketMapping(
     const polymarketMarkets = fetched.polymarket;
     const kalshiMarkets = fetched.kalshi;
 
-    console.info(
+    logger.info(
       `[ev/map-markets] Evaluating full market set: PM ${polymarketMarkets.length}, Kalshi ${kalshiMarkets.length} (${polymarketMarkets.length * kalshiMarkets.length} pair matrix)`
     );
 
@@ -353,7 +354,7 @@ export async function runMarketMapping(
       polymarketMarkets,
       kalshiMarkets
     );
-    console.info(
+    logger.info(
       `[ev/map-markets] Sports structure pass (pre-embedding): ${sportsStructureMatches.length} pairs`
     );
 
@@ -384,7 +385,7 @@ export async function runMarketMapping(
     const pmTokens = polymarketMarkets.map(extractContractTokens);
     const kalshiTokens = kalshiMarkets.map(extractContractTokens);
 
-    console.info(
+    logger.info(
       `[ev/map-markets] Token pre-filter: PM avg ${avgTokenCount(pmTokens)} tokens, Kalshi avg ${avgTokenCount(kalshiTokens)} tokens`
     );
 
@@ -393,7 +394,7 @@ export async function runMarketMapping(
       ...kalshiMarkets.map((m) => m.embeddingText),
     ];
 
-    console.info(
+    logger.info(
       `[ev/map-markets] Embedding ${allTexts.length} contract texts (model text-embedding-3-small)…`
     );
     const embedded = await embedTexts(allTexts);
@@ -448,7 +449,7 @@ export async function runMarketMapping(
     );
     appliedThreshold = primaryThreshold;
 
-    console.info(
+    logger.info(
       `[ev/map-markets] Primary pass (threshold=${primaryThreshold}, token-adjusted): ${matches.length} pairs`
     );
 
@@ -469,7 +470,7 @@ export async function runMarketMapping(
         pmTokens,
         kalshiTokens
       );
-      console.info(
+      logger.info(
         `[ev/map-markets] Fallback pass (threshold=${appliedThreshold}): ${matches.length} pairs`
       );
     }
@@ -492,7 +493,7 @@ export async function runMarketMapping(
         kalshiTokens,
         false
       );
-      console.info(
+      logger.info(
         `[ev/map-markets] Minimum pass (threshold=${appliedThreshold}): ${matches.length} pairs`
       );
     }
@@ -517,13 +518,13 @@ export async function runMarketMapping(
       if (broadMatches.length > matches.length) {
         matches = broadMatches;
       }
-      console.info(
+      logger.info(
         `[ev/map-markets] Broad pass (threshold=${appliedThreshold}): ${matches.length} pairs`
       );
     }
 
     matches = mergeMatchedPairs(sportsStructureMatches, matches);
-    console.info(
+    logger.info(
       `[ev/map-markets] Combined sports + vector matches: ${matches.length} pairs`
     );
 
@@ -550,7 +551,7 @@ export async function runMarketMapping(
         kalshiMarkets,
         failures
       );
-      console.info(`[ev/map-markets] Persisted ${persistedCount} mappings`);
+      logger.info(`[ev/map-markets] Persisted ${persistedCount} mappings`);
     }
 
     const criticalFailures = failures.filter(

@@ -22,6 +22,7 @@ import {
   type TraderClosedPosition,
   type TraderOpenPosition,
 } from "./traderProfile";
+import { logger } from "./logger";
 import {
   hasDirectPolymarketLink as hasDirectPolymarketLinkFromUrls,
   polymarketUrlFromTrade,
@@ -855,7 +856,7 @@ export function formatSpread(spread: number | null): string {
 
 export async function fetchMarkets(): Promise<MarketSummary[]> {
   const url = `${GAMMA_API_BASE}/markets?limit=100&active=true&closed=false`;
-  console.log("Fetching markets from:", url);
+  logger.debugForPath("/api/markets", "Fetching markets from:", url);
   const res = await polymarketFetch(url, { next: { revalidate: 0 } });
 
   if (!res.ok) {

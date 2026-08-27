@@ -11,6 +11,7 @@ import { fetchKalshiMarketDetail } from "@/lib/kalshiDetail";
 import { fetchKalshiTrades } from "@/lib/kalshiTradesServer";
 import { sleep } from "@/lib/kalshi/http";
 import { fetchWhaleBackfill } from "@/lib/polymarket";
+import { logger } from "@/lib/logger";
 import { MIN_WHALE_USD } from "@/lib/whaleTrades";
 import {
   cacheOrderBookMidBatch,
@@ -330,7 +331,7 @@ export async function runOrderBookIngest(): Promise<OrderBookIngestResult> {
     totalCached: pmCached + kalshiCached,
   };
 
-  console.info(
+  logger.info(
     `[ev-pipeline] ingestOrderBooks cached ${result.totalCached} snapshot(s) ` +
       `(pm ${result.pmCached}/${result.pmRequested}, kalshi ${result.kalshiCached}/${result.kalshiRequested})`
   );

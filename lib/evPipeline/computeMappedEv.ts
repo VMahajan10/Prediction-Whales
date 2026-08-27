@@ -5,6 +5,7 @@ import {
   trueProbabilities,
 } from "@/lib/crossmarket/store/schema";
 import type { MatchedPair, PipelineTradeEv } from "@/lib/evPipeline/types";
+import { logger } from "@/lib/logger";
 import { resolvePTrue } from "@/lib/evPipeline/pTrueEnsembleResolver";
 import type { PTrueResult } from "@/lib/evPipeline/pTrueTypes";
 import {
@@ -438,7 +439,7 @@ async function persistMappingPTrue(
       ? Math.abs(pricingPreview.pmMid - pricingPreview.kalshiMid) * 100
       : 0;
 
-  console.info(
+  logger.info(
     `[ev-pipeline] computePTrue ${tokenId} ↔ ${kalshiTicker}: ensemble_p_true=${pTrue.toFixed(4)} pricing_p_true=${displayPTrue.toFixed(4)} pm_mid=${opts.pmMid?.toFixed(4) ?? "—"} kalshi_mid=${opts.kalshiMid?.toFixed(4) ?? "—"} cross_arb=${crossArbPercent.toFixed(1)}% cached_lookups=${cachedLookups ? 2 : 0} ${opts.logSuffix}`
   );
 
@@ -658,7 +659,7 @@ async function seedBaselineEvForMapping(
     kalshiMid,
   });
 
-  console.info(
+  logger.info(
     `[ev-pipeline] computePTrue baseline fallback ${tokenId} ↔ ${kalshiTicker}: pricing_p_true=${pricingPreview?.pTrue.toFixed(4) ?? "—"} pm=${pmMid?.toFixed(4) ?? "—"} kalshi=${kalshiMid?.toFixed(4) ?? "—"}`
   );
 

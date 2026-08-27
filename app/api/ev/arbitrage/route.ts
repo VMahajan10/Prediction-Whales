@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { publicApiErrorMessage } from "@/lib/apiError";
+import { logger } from "@/lib/logger";
 import { resolveArbitrageDisplay } from "@/lib/arbitrageFinder/displayResolver";
 import {
   buildNeutralArbitrageSnapshot,
@@ -236,7 +237,7 @@ async function resolveBoxSpread(params: {
       }
     : spread!;
 
-  console.log("[api/ev/arbitrage] resolveBoxSpread", {
+  logger.debug("[api/ev/arbitrage] resolveBoxSpread", {
     tokenId,
     kalshiTicker: ticker ?? null,
     hasPmOb,
@@ -320,7 +321,7 @@ function logArbitragePayload(
   label: string,
   payload: Record<string, unknown>
 ): void {
-  console.log(`Arbitrage Endpoint Data Payload (${label}):`, JSON.stringify(payload));
+  logger.debug(`Arbitrage Endpoint Data Payload (${label}):`, JSON.stringify(payload));
 }
 
 function spreadFromDisplaySnapshot(
@@ -382,8 +383,8 @@ export async function GET(request: NextRequest) {
       ? parseFloat(tradePriceRaw)
       : null;
 
-  console.log("Arbitrage API hit. TokenId:", searchParams.get("tokenId"));
-  console.log("Arbitrage API Request for token:", tokenIdParam, "pairKey:", pairKey, {
+  logger.debug("Arbitrage API hit. TokenId:", searchParams.get("tokenId"));
+  logger.debug("Arbitrage API Request for token:", tokenIdParam, "pairKey:", pairKey, {
     slug,
     title,
     kalshiTicker: kalshiTickerParam,

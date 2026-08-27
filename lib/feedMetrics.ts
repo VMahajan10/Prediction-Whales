@@ -6,6 +6,7 @@
  * persisted to Postgres via feedMetricsPersistence (UTC day keys).
  */
 
+import { logger } from "@/lib/logger";
 import type { FeedMetricsVenue } from "@/lib/crossmarket/store/schema";
 import {
   feedMetricsDayKeyUtc,
@@ -75,7 +76,7 @@ function getStore(venue: FeedMetricsVenue): FeedMetricsDay {
 }
 
 export function logFeedMetricsSummary(store: FeedMetricsDay): void {
-  console.log(
+  logger.debug(
     `[FeedMetrics] date=${store.dayKey} venue=${store.venue} tradesDetected=${store.tradesDetected} gatePassedTrades=${store.gatePassedTrades} distinctWhales=${store.distinctWhales.size}`
   );
 }

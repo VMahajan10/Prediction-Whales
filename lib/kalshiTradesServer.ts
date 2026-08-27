@@ -13,6 +13,7 @@ import {
   pipelineEvLookupKey,
 } from "@/lib/evPipeline/types";
 import type { FeedTrade } from "@/lib/feedTradeTypes";
+import { logger } from "@/lib/logger";
 import {
   kalshiFeedTradeToWhale,
   resolveKalshiFeedTradeEvPercent,
@@ -152,7 +153,7 @@ function logKalshiPipelineIngest(
   passedGate: boolean,
   dynamicCompute = false
 ): void {
-  console.log("[Kalshi Pipeline]", {
+  logger.routineDebug("[Kalshi Pipeline]", {
     ticker: trade.ticker,
     stake: trade.usdNotional,
     evStatus: pipeline?.status ?? "missing",
@@ -443,7 +444,7 @@ async function fetchKalshiTradesFromApi(
   if (raws.length === 0) return [];
 
   logKalshiPollIngested(raws.length);
-  console.log(
+  logger.routineDebug(
     `[kalshi/trades] fetched=${raws.length} pages<=${maxPages} limit=${KALSHI_TRADES_PAGE_SIZE}`
   );
 
@@ -478,7 +479,7 @@ async function fetchKalshiTradesFromApi(
     }
   }
 
-  console.log(
+  logger.routineDebug(
     `[kalshi/trades] raw=${raws.length} normalized=${trades.length} stakeCandidates=${shadowCandidates.length}`
   );
 
@@ -561,7 +562,7 @@ async function fetchKalshiTradesFromApi(
   }
 
   if (shadowCandidates.length > 0) {
-    console.log(
+    logger.routineDebug(
       `[kalshi/trades] evQualified=${evQualified} shadowQueued=${shadowQueued}`
     );
   }

@@ -11,6 +11,7 @@ import {
   logKalshiEvGateDrop,
   logKalshiGatePass,
 } from "@/lib/feed/kalshiIngestTrace";
+import { logger } from "@/lib/logger";
 
 /**
  * Transient Kalshi product-feed candidates — stake + trade EV qualified only.
@@ -37,7 +38,7 @@ export async function collectKalshiFeedCandidates(
       logKalshiEvGateDrop(trade, trade.netEvPercent ?? null);
     }
   }
-  console.log(
+  logger.routineDebug(
     `[kalshi/feed] candidates evQualified=${evQualified.length} stakeQualified=${stakeQualified.length} total=${trades.length} shadowFlush=ok`
   );
   return evQualified;

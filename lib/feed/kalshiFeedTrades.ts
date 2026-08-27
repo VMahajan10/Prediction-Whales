@@ -11,6 +11,7 @@ import {
   resolveFeedTradeEvPercent,
   entryPriceEvPercent,
 } from "@/lib/feedTradeEv";
+import { logger } from "@/lib/logger";
 import { KALSHI_TRADER_ALIAS } from "@/lib/trades/whaleAliasConstants";
 import { normalizeFeedPlatform } from "@/lib/liveFeedMerge";
 import { normalizeKalshiTicker } from "@/lib/evPipeline/crossAssetLookup";
@@ -273,7 +274,7 @@ export function logKalshiFeedGateReject(
   trade: Pick<WhaleTrade, "id" | "title" | "ticker">
 ): void {
   const id = context.id ?? trade.id ?? "unknown";
-  console.log(
+  logger.debug(
     `[Kalshi Feed Gate Reject] id=${id} | ticker=${result.ticker ?? "none"} | calculatedEv=${formatEvForLog(result.calculatedEvPercent)} | stake=${formatStakeForLog(result.stakeUsd)} | requiredEv>=${getProductFeedMinEvPercentForLog() ?? "any"}${FEED_ALLOW_MISSING_EV ? " (missing allowed)" : ""} | requiredStake>=${formatStakeForLog(result.requiredStakeFloorUsd)} | pipelineStatus=${result.pipelineStatus ?? "missing"} | reason=${result.reason} (${rejectionReasonLabel(result.reason!)}) | title=${trade.title?.slice(0, 80) ?? ""}`
   );
 }
@@ -329,8 +330,8 @@ export function diagnoseKalshiFeedTradeGate(
     meetsKalshiFeedStakeThreshold(trade) &&
     meetsProductFeedEvThreshold(tradeEvPercent);
 
-  if (process.env.NODE_ENV !== "production" && isKalshiRow(trade)) {
-    console.log("[Kalshi Pipeline]", {
+  if (isKalshiRow(trade)) {
+    logger.debug("[Kalshi Pipeline]", {
       ticker: trade.ticker,
       stake: trade.usdNotional,
       evStatus: pipeline?.status ?? "missing",

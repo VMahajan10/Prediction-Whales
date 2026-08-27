@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logger } from "@/lib/logger";
 import {
   createUnmappedPipelineTradeEv,
   ensureFullyComputedTradeEv,
@@ -118,14 +119,14 @@ function logSamplePayload(responseData: {
   try {
     const sampleKey = Object.keys(responseData.byKey)[0];
     if (sampleKey) {
-      console.log(
+      logger.debug(
         "Final Sent Payload Sample:",
         responseData.byKey[sampleKey]
       );
       return;
     }
     if (responseData.entries[0]) {
-      console.log("Final Sent Payload Sample:", responseData.entries[0]);
+      logger.debug("Final Sent Payload Sample:", responseData.entries[0]);
     }
   } catch {
     // Non-fatal debug logging.
@@ -402,7 +403,7 @@ export async function GET(request: NextRequest) {
     if (enrichedEntry.status === "ok") {
       seedPipelineLocalEvCache(lookupKey, enrichedEntry);
     }
-    console.log("Final Sent Payload Sample:", enrichedEntry);
+    logger.debug("Final Sent Payload Sample:", enrichedEntry);
     return NextResponse.json({ entry: enrichedEntry }, { status: 200 });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

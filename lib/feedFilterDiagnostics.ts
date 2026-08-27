@@ -9,6 +9,7 @@ import {
   type FeedGateRejectReason,
 } from "@/lib/feedGate";
 import { inferCategoryBadge } from "@/lib/marketCategory";
+import { logger } from "@/lib/logger";
 import { normalizeFeedCategory } from "@/lib/x-agent/stakeFloor";
 
 export type FeedFilterRejectReason =
@@ -50,7 +51,7 @@ export function logFeedFilterReject(input: FeedFilterRejectInput): void {
       ? `${input.tradeEvPercent}%`
       : "N/A";
 
-  console.log(
+  logger.debug(
     `[Feed Filter Reject] ID: ${input.id} | Trade EV: ${tradeEv} | Stake: $${input.stakeUsd} | Category: ${category} | Reason: ${input.reason}${input.source ? ` | Source: ${input.source}` : ""}`
   );
 }

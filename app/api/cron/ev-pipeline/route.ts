@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { publicApiErrorMessage } from "@/lib/apiError";
+import { logger } from "@/lib/logger";
 import { authorizeCronRequest } from "@/lib/cronAuth";
 import { runEvPipeline } from "@/lib/evPipeline/pipeline";
 import {
@@ -59,7 +60,7 @@ export async function GET(request: NextRequest) {
     const result = lockResult.value;
     const allOk = Object.values(result.stages).every((s) => s.ok);
 
-    console.log("Pipeline processing complete, sending response...");
+    logger.info("Pipeline processing complete, sending response...");
 
     return NextResponse.json(
       {

@@ -5,6 +5,7 @@ import {
   fetchRecentFeedTrades,
   RECENT_TRADES_LIMIT,
 } from "@/lib/feed/recentTradesServer";
+import { logger } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -40,14 +41,18 @@ export async function GET(request: NextRequest) {
     request.nextUrl.searchParams.get("category")
   );
 
-  console.log("[api/trades/recent] Fetching recent trades...");
+  logger.debugForPath(
+    "/api/trades/recent",
+    "[api/trades/recent] Fetching recent trades..."
+  );
 
   try {
     const { trades, degraded } = await fetchRecentFeedTrades({ category });
     const isEmptyOrDegraded = trades.length === 0 || degraded.length > 0;
     const headers = isEmptyOrDegraded ? NO_STORE_HEADERS : CACHE_HEADERS;
 
-    console.log(
+    logger.debugForPath(
+      "/api/trades/recent",
       `[api/trades/recent] Successfully returned ${trades.length} trades`
     );
 

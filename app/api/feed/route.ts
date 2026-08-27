@@ -17,6 +17,7 @@ import {
   recordFeedTradeHistory,
 } from "@/lib/feed/feedTradeHistory";
 import { fetchWhaleBackfill } from "@/lib/polymarket";
+import { logger } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -83,7 +84,7 @@ export async function GET() {
     );
 
     const timing = timer.breakdown();
-    console.log("[api/feed] timing", timing);
+    logger.debugForPath("/api/feed", "[api/feed] timing", timing);
 
     if (qualified.length > 0) {
       return NextResponse.json({
@@ -96,7 +97,7 @@ export async function GET() {
 
     const fallback = await fetchFallbackFeedTrades<(typeof enriched)[number]>();
     timer.mark("feedHistoryFallback");
-    console.log("[api/feed] timing", timer.breakdown());
+    logger.debugForPath("/api/feed", "[api/feed] timing", timer.breakdown());
 
     if (fallback.length > 0) {
       return NextResponse.json({

@@ -10,6 +10,7 @@ import {
   normalizePipelineEvEntry,
   subscribePipelineEvForTrades,
 } from "@/lib/pipelineEvClient";
+import { logger } from "@/lib/logger";
 
 export function usePipelineEvIndex(trades: FeedTrade[]) {
   const [index, setIndex] = useState<Map<string, PipelineTradeEv>>(new Map());
@@ -73,7 +74,7 @@ export function usePipelineTradeEv(input: {
           data.entry?.key,
           input.tradePrice
         );
-        console.log("[usePipelineTradeEv] hydrated", {
+        logger.debug("[usePipelineTradeEv] hydrated", {
           source: input.source,
           tokenId: input.tokenId,
           kalshiTicker: input.kalshiTicker,
