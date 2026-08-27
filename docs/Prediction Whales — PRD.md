@@ -1,10 +1,10 @@
 
 |                   |                                                                                                                     |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------- |
-| **Product name**  | Prediction Whales (domain: predictionwhales.app — *verify: source doc had "prediectionwhales.app", likely typo*)    |
+| **Product name**  | Prediction Whales (domain: N/A)    |
 | **Status**        | In review                                                                                                           |
-| **Owner**         | Rahul (Product) · Jeremie (UX/UI) · Vabby (Engineering)                                                             |
-| **Last updated**  | 07/29/2026 — v3: merged Rahul's 06/17 PRD with July design/build reality                                            |
+| **Owner**         | Jeremie (Product) · Vabby (Engineering)                                                             |
+| **Last updated**  | 08/26/2026 — v3                                   |
 | **Design source** | [Figma](https://www.figma.com/design/T4Bp4PMCSHzcDGq2aC6C2q/Prediction-Market?node-id=306-209&t=hJFLpDIs9j0QpH5J-1) |
 | **Build**         | VMahajan10/MVP — [staging](https://marketpulse-sand-five.vercel.app/)                                               |
 ## 1. Problem alignment
@@ -162,8 +162,8 @@ Feed → Details → Copy Play (deep link out) · Feed/Details → Whale Profile
 | Area      | Question                                                 | Owner     | Status        |
 | --------- | -------------------------------------------------------- | --------- | ------------- |
 | Marketing | X account warmup                                         | `Jeremie` | `In progress` |
-| Design    | Design-system handoff (tokens/components) delivered?     | `Jeremie` | `Open`        |
-| Product   | Resolved-bets floor decided (OQ-1b)?                     | `Rahul`   | `Open`        |
+| Design    | Design-system handoff (tokens/components) delivered?     | `Jeremie` | `In progress`        |
+| Product   | Resolved-bets floor decided (OQ-1b)?                     | `Jeremie`   | `Open`        |
 | Eng       | Trust layer (identity, gate, translation) live in build? | `Vaibhan` | `Open`        |
 | Eng       | Kalshi identity spike resolved (OQ-2)?                   | `Vaibhan` | `Done`        |
 
@@ -171,7 +171,7 @@ Feed → Details → Copy Play (deep link out) · Feed/Details → Whale Profile
 
 | #    | Question                                                                             | Status                      |
 | ---- | ------------------------------------------------------------------------------------ | --------------------------- |
-| OQ-1 | Minimum resolved-bets floor                                                          | `Open` `Rahul`              |
+| OQ-1 | Minimum resolved-bets floor                                                          | `Open` `Jeremie`              |
 | OQ-2 | Kalshi whale identity: attributable within API/ToS? If not, reduced card vs exclude? | `Resolved` `Vaibhan` — Reduced Card in feed + X agent excluded; see `docs/Kalshi Whale Attribution Audit.md` |
 | OQ-3 | Refresh vs line movement: does ≤15s leave time to act?                               | `Open`                      |
 | OQ-4 | Copy friction: deep link assumes funded platform account. Where does conversion die? | `Open`  <br>measure in beta |
