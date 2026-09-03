@@ -1,19 +1,19 @@
 
 |                   |                                                                                                                     |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------- |
-| **Product name**  | Prediction Whales (domain: N/A)    |
+| **Product name**  | Prediction Whales (domain: predictionwhales.app — *verify: source doc had "prediectionwhales.app", likely typo*)    |
 | **Status**        | In review                                                                                                           |
-| **Owner**         | Jeremie (Product) · Vabby (Engineering)                                                             |
-| **Last updated**  | 08/26/2026 — v3                                   |
+| **Owner**         | Jeremie (UX/UI) · Vabby (Engineering)                                                                               |
+| **Last updated**  | 09/02/2026 — v4                                                                                                     |
 | **Design source** | [Figma](https://www.figma.com/design/T4Bp4PMCSHzcDGq2aC6C2q/Prediction-Market?node-id=306-209&t=hJFLpDIs9j0QpH5J-1) |
 | **Build**         | VMahajan10/MVP — [staging](https://marketpulse-sand-five.vercel.app/)                                               |
 ## 1. Problem alignment
 
 ### 1.1 The problem
 
-Casual and novice bettors (sports + prediction markets) don’t have an easy way to know: 
+Casual and novice bettors (sports + prediction markets) don’t have an easy way to know: 
 - Which smart bets should they place
-- Why those smart bets might be good 
+- Why those smart bets might be good 
 - When profitable “whales” are entering markets and which ones
 ### 1.2 Evidence
 
@@ -30,30 +30,32 @@ Prediction markets went mainstream ($44.8B volume June 2026; monthly volume exce
 ### 1.4 Goals & success metrics
 
 | Goal                                                    | Success metric                                                                                             |
-| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | Help casual bettors understand and act on whale signals | User who opens a play sees why it's good (metrics + easy-to-understand) and taps through to copy then play |
 | Surface entries fast enough to act on                   | Data refresh ≤15s, leaving time to enter before lines shift                                                |
 | Build a credible public audience pre-app                | X follower quality signals market need                                                                     |
 
 ## 2. Solution alignment
 
-### 2.1 Whale eligibility (credibility gate) — UPDATED 07/2026
+### 2.1 Whale eligibility (credibility gate) — UPDATED 09/02/2026
 
 A wallet/trade qualifies for the feed if:
 
 - **Stake ≥ $500** on the play
-- **Average EV ≥ +3%** across the wallet's resolved history
+- **Average EV ≥ +3%** across the wallet's resolved history *(pending: Vaibhan to confirm whether +2.5% or +2% is needed for feed yield — see #3)*
+- **Resolved history ≥ 10 bets AND ≥ $300 total resolved volume** (agreed in #1/#13, 08/2026; both values configurable)
 
 - Avg EV = (payout − entry)/entry per resolved bet, averaged over resolved history. Win rate is a display stat as EV outranks win rate.
+- Missing wallet history fails closed: the trade never renders.
 
 > [!note]
-> The X agent keeps its own posting gate (≥$25K stake)
+> The X agent keeps its own posting gate: stake tiered by category ($10K sports/entertainment, $25K macro/politics), AVG EV ≥ +2.5%. Whether the tiered stake floor also applies in-app is open (#3).
 ### 2.2 Riskiest assumptions
 
 | Assumption                                                            | Test                                                                                           | What we need to see                                                                                                                                                                                                                   |
 | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Casual bettors want whale signals; ~5 metrics give confidence to copy | X account posts (live)                                                                         | Engagement quality and interest in seeing application                                                                                                                                                                                 |
-| Kalshi whale identity: trades are structurally anonymous (CFTC)       | Eng spike: can positions/fills be attributed to a persistent trader identity within API terms? | A documented, repeatable identity method; sustained sub-15s polling within rate limits; no ToS blocker. <br><br>*If not possible: Kalshi plays either show a reduced card (no track record) or are excluded — decision needed (OQ-2)* |
+| Kalshi whale identity: trades are structurally anonymous (CFTC)       | Eng spike: can positions/fills be attributed to a persistent trader identity within API terms? | Not possible — confirmed by eng. **Decided 2026-08-26: Kalshi excluded from all v1 user-facing surfaces (no feed card, no separate module) — OQ-2 resolved.** Shadow logging (`kalshi_shadow_trades`) continues internally only, pending legal confirmation on data retention (OQ-6). <br><br>*Future consideration, not v1 scope: if/when Kalshi resurfaces, treat as a magnitude badge ("Large Trade") on size alone — never a persona/name, since no persistent identity or resolved history can back one (rules out "reduced card" whale-row variants too).* |
 | ≤15s refresh leaves time to act before lines move                     | Instrument detection→display latency vs line movement                                          | Sustained sub-15s without API blocks or meaningful infra cost                                                                                                                                                                         |
 
 ### 2.3 User requirements
@@ -68,7 +70,7 @@ A wallet/trade qualifies for the feed if:
 - Updates ≤15s, no manual refresh; LIVE pill in header
 - **Category tabs**: All / Trending / Sports / Politics / Culture
 - **Card anatomy**: 
-	- Category pill + source pill (Kalshi/Polymarket) + recency 
+	- Category pill + recency *(source pill removed for v1 — feed is Polymarket-only; reinstate if/when Kalshi attribution ships)*
 	- Matchup/question title 
 	- Whale row (avatar, pseudonym, win-rate pill) 
 	- Direction pill ("Backing Miami Marlins" / "Exit by July 31") 
@@ -77,6 +79,8 @@ A wallet/trade qualifies for the feed if:
 - Direction is always anchored to a named side — never raw YES/NO
 - Whales always display as pseudonyms — never raw wallet addresses
 - Only gate-passing whales appear (see 2.1)
+- Feed renders qualified plays from a 24h lookback window, each with a timestamp
+- Gate diagnostics logged daily: trades detected / failed on AVG EV / failed on resolved-bets floor / gate-passed / distinct whales (48–72h baseline before any threshold change)
 #### Whale details
 *As a casual/novice bettor, I want to see the track record behind a play so I can decide whether to trust it.*
 
@@ -111,7 +115,7 @@ A wallet/trade qualifies for the feed if:
 	- Net gain/loss
 	- Invested
 	- ROI
-	- AVG CLV
+	- ~~AVG CLV~~ *(excluded from v1 — OQ-5; v2 candidate)*
 - **Tabs**: 
 	- **Positions** (open)  
 	- **Trades** (history) — sortable, filterable table (Event, Market, Position, Current Value, Stake), paginated
@@ -143,7 +147,7 @@ A wallet/trade qualifies for the feed if:
 | **Entry vs. Now** | Is value left?                                    | *The price the whale got in at vs. right now. Close = likely still value; big move = edge may be gone.*            | Feed + Details                       |
 | **Whale Stake**   | Conviction                                        | *How much the whale put on this bet. Bigger stake, stronger conviction.*                                           | Feed + Details                       |
 | **ROI**           | Bottom-line profitability                         | *For every dollar this whale bet, how much they made or lost.*                                                     | Profile + Watchlist                  |
-| **Avg CLV**       | Entry-timing skill                                | *How consistently this bettor got better prices than where the market ended up.* ⚠️ confirm computability          | Profile (per category)               |
+| **Avg CLV**       | Entry-timing skill                                | *How consistently this bettor got better prices than where the market ended up.* **v2 only.** Definition must be entry vs. last price before the information cutoff (e.g. sports start time), not pre-resolution price (which collapses into ROI). Unavailable where no defensible cutoff exists. Validate on resolved markets before any pipeline is built. | ~~Profile~~ → v2                     |
 
 ### 2.5 Key flows
 
@@ -162,22 +166,29 @@ Feed → Details → Copy Play (deep link out) · Feed/Details → Whale Profile
 | Area      | Question                                                 | Owner     | Status        |
 | --------- | -------------------------------------------------------- | --------- | ------------- |
 | Marketing | X account warmup                                         | `Jeremie` | `In progress` |
-| Design    | Design-system handoff (tokens/components) delivered?     | `Jeremie` | `In progress`        |
-| Product   | Resolved-bets floor decided (OQ-1b)?                     | `Jeremie`   | `Open`        |
+| Design    | Design-system handoff (tokens/components) delivered?     | `Jeremie` | `In progress` |
+| Product   | Resolved-bets floor decided (OQ-1b)?                     | `Jeremie` | `Resolved`    |
+| Eng       | Feed gate retest after floor change (#3)?                | `Vaibhan` | `Open`        |
+| Marketing | X agent: 3–5 eligible trades/day sustained ≥1 week?      | `Vaibhan` | `Open`        |
+| Marketing | X API credits + new X account                            | `Jeremie` | `Open`        |
 | Eng       | Trust layer (identity, gate, translation) live in build? | `Vaibhan` | `Open`        |
-| Eng       | Kalshi identity spike resolved (OQ-2)?                   | `Vaibhan` | `Done`        |
+| Eng       | Kalshi identity spike resolved (OQ-2)?                   | `Vaibhan` | `Resolved`    |
 
 ## 4. Open questions
 
-| #    | Question                                                                             | Status                      |
-| ---- | ------------------------------------------------------------------------------------ | --------------------------- |
-| OQ-1 | Minimum resolved-bets floor                                                          | `Open` `Jeremie`              |
-| OQ-2 | Kalshi whale identity: attributable within API/ToS? If not, reduced card vs exclude? | `Resolved` `Vaibhan` — Reduced Card in feed + X agent excluded; see `docs/Kalshi Whale Attribution Audit.md` |
-| OQ-3 | Refresh vs line movement: does ≤15s leave time to act?                               | `Open`                      |
-| OQ-4 | Copy friction: deep link assumes funded platform account. Where does conversion die? | `Open`  <br>measure in beta |
-| OQ-5 | AVG CLV: computable from Polymarket data? Definition + fallback                      | `Open` `Vaibhan`            |
+| #    | Question                                                                                                                | Status                                                            |
+| ---- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| OQ-1 | Minimum resolved-bets floor<br>Started at ≥500, API captures ≥300                                                        | `Resolved` — ≥10 resolved bets AND ≥$300 total resolved volume (configurable). Retest feed yield (#3). |
+| OQ-1c | Feed AVG EV floor: keep +3%, or +2.5% / +2%?                                                                           | `Open` `Vaibhan`                                                  |
+| OQ-1d | Does the X agent's tiered stake floor ($10K/$25K) also apply in-app?                                                    | `Open` `Vaibhan`                                                  |
+| OQ-2 | Kalshi whale identity: attributable within API/ToS? If not, reduced card vs exclude?                                    | `Resolved` — not attributable; excluded from Feed v1 (2026-08-26) |
+| OQ-3 | Refresh vs line movement: does ≤15s leave time to act?<br>*Currently polling at 60s; decision pending on moving to 15s* | `Open`                                                            |
+| OQ-4 | Copy friction: deep link assumes funded platform account. Where does conversion die?                                    | `Open`  <br>measure in beta                                       |
+| OQ-5 | AVG CLV: computable from Polymarket data? Definition + fallback                                                         | `Resolved for v1` — excluded; Profile ships ROI + Win Rate + AVG EV. v2 investigation open (see 2.4). |
+| OQ-6 | Kalshi shadow-logging (`kalshi_shadow_trades`) data retention: cleared under Kalshi's Developer Agreement?              | `Open` `Vaibhan` — legal confirmation pending                     |
 
 ## 5. Changelog
 
+- **v4 (09/02/2026):** gate updated (resolved ≥10 bets + ≥$300 volume, fail-closed on missing history); feed 24h lookback + diagnostics AC; AVG CLV out of v1 (OQ-5); new OQ-1c/1d; launch checklist rows for retest, agent yield, X credits.
 - **v2 (07/29/2026):** full MVP scope from design decisions (included Tail flow).
 - **v1 (06/12–06/17/2026):** PRD + user requirements docx.
