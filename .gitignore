@@ -48,3 +48,4 @@ ios/App/Pods/
 .env*
 backup.sql
 tmp/
+.cache/

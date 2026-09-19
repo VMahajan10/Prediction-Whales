@@ -6,7 +6,7 @@ import type {
   PolymarketHistoryIdentity,
   PositionLifecycle,
   ResolutionCoverageReport,
-  WalletLedgerAuditReport,
+  WalletLedgerMetrics,
 } from "@/lib/walletLedger/types";
 
 const MERGE_SPLIT_AMBIGUOUS_THRESHOLD = 0.05;
@@ -103,12 +103,17 @@ export interface ValidityInput {
   resolutionCoverage: ResolutionCoverageReport;
   mergeSplit: MergeSplitImpactReport;
   hasHistoryEvents: boolean;
+  historicalBackfillRequired?: boolean;
+  unresolvedChainOrderBlocksCredibility?: boolean;
+  unresolvedChainEvents?: number;
+  unresolvedChainEventsInLifecycle?: number;
+  affectedPositionGroups?: number;
 }
 
 export function assessWalletLedgerValidity(
   input: ValidityInput
 ): Pick<
-  WalletLedgerAuditReport,
+  WalletLedgerMetrics,
   | "metricValidity"
   | "credibilityMetricsValid"
   | "historyValidity"
@@ -133,6 +138,9 @@ export function assessWalletLedgerValidity(
     reasons.push("positions_without_history_events");
   }
   if (!input.hasHistoryEvents) reasons.push("no_history_events");
+  if (input.historicalBackfillRequired) {
+    reasons.push("historical_backfill_required");
+  }
   if (input.activityTruncated) reasons.push("activity_truncated");
   if (input.tradesTruncated) reasons.push("trades_truncated");
 
@@ -160,6 +168,10 @@ export function assessWalletLedgerValidity(
     reasons.push("merge_split_unresolved");
   }
 
+  if (input.unresolvedChainOrderBlocksCredibility) {
+    reasons.push("unresolved_chain_order");
+  }
+
   const observedFilter = (p: PositionLifecycle) =>
     p.completed && p.realizedPnl != null;
   const credibleFilter = (p: PositionLifecycle) =>
@@ -182,17 +194,22 @@ export function assessWalletLedgerValidity(
     input.identity.resolutionMethod === "ambiguous" ||
     input.identity.resolutionMethod === "unresolved" ||
     input.identity.positionsOnlyMismatch ||
-    !input.hasHistoryEvents;
+    !input.hasHistoryEvents ||
+    input.historicalBackfillRequired === true;
   const mergeSplitBlocksCredibility =
     input.mergeSplit.pctAmbiguousOfCompleted >= MERGE_SPLIT_AMBIGUOUS_THRESHOLD;
 
   const gammaBlocksCredibility = heldCompletedMissingGamma > 0;
 
+  const unresolvedChainOrderBlocksCredibility =
+    input.unresolvedChainOrderBlocksCredibility === true;
+
   const credibilityMetricsValid =
     !truncationBlocksCredibility &&
     !identityBlocksCredibility &&
     !gammaBlocksCredibility &&
-    !mergeSplitBlocksCredibility;
+    !mergeSplitBlocksCredibility &&
+    !unresolvedChainOrderBlocksCredibility;
 
   let metricValidity: MetricValidity;
   let historyValidity: HistoryValidity;

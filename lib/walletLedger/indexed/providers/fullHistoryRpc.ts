@@ -1,10 +1,14 @@
 import {
   CONDITIONAL_TOKENS_ADDRESS,
-  EXCHANGE_ADDRESSES,
-  ORDER_FILLED_TOPICS,
+  CTF_EXCHANGE_LEGACY_ADDRESS,
+  CTF_EXCHANGE_V1_ADDRESS,
+  CTF_EXCHANGE_V2_ADDRESS,
+  NEG_RISK_CTF_EXCHANGE_ADDRESS,
+  TOPIC_ORDER_FILLED_NEG_RISK,
+  TOPIC_ORDER_FILLED_V1,
+  TOPIC_PAYOUT_REDEMPTION,
   TOPIC_POSITION_SPLIT,
   TOPIC_POSITIONS_MERGE,
-  TOPIC_PAYOUT_REDEMPTION,
 } from "@/lib/walletLedger/onchain/contracts";
 import { fetchWalletOnChainLogs } from "@/lib/walletLedger/onchain/fetcher";
 import { PolygonRpcClient, walletTopic } from "@/lib/walletLedger/onchain/rpc";
@@ -141,19 +145,32 @@ function extractWalletFromTopics(
   return null;
 }
 
+const EXCHANGE_ORDER_FILLED_TOPICS: Record<string, string> = {
+  [CTF_EXCHANGE_LEGACY_ADDRESS]: TOPIC_ORDER_FILLED_V1,
+  [CTF_EXCHANGE_V1_ADDRESS]: TOPIC_ORDER_FILLED_V1,
+  [NEG_RISK_CTF_EXCHANGE_ADDRESS]: TOPIC_ORDER_FILLED_NEG_RISK,
+  [CTF_EXCHANGE_V2_ADDRESS]: TOPIC_ORDER_FILLED_NEG_RISK,
+};
+
+const WALLET_CTF_EVENT_TOPICS = [
+  TOPIC_POSITION_SPLIT,
+  TOPIC_POSITIONS_MERGE,
+  TOPIC_PAYOUT_REDEMPTION,
+] as const;
+
 export function buildWalletLogQueries(
   wallet: string,
   fromBlock: number,
   toBlock: number
 ): Array<Omit<IndexedLogQuery, "page" | "offset">> {
   const walletTopicPadded = walletTopic(wallet);
-  return [
-    ...EXCHANGE_ADDRESSES.flatMap((address) => [
+  const orderFilledQueries = Object.entries(EXCHANGE_ORDER_FILLED_TOPICS).flatMap(
+    ([address, topic0]) => [
       {
         fromBlock,
         toBlock,
         address,
-        topics: [[...ORDER_FILLED_TOPICS], null, walletTopicPadded] as (
+        topics: [topic0, null, walletTopicPadded] as (
           | string
           | string[]
           | null
@@ -163,33 +180,21 @@ export function buildWalletLogQueries(
         fromBlock,
         toBlock,
         address,
-        topics: [[...ORDER_FILLED_TOPICS], null, null, walletTopicPadded] as (
+        topics: [topic0, null, null, walletTopicPadded] as (
           | string
           | string[]
           | null
         )[],
       },
-    ]),
-    {
-      fromBlock,
-      toBlock,
-      address: CONDITIONAL_TOKENS_ADDRESS,
-      topics: [null, null, walletTopicPadded],
-    },
-    {
-      fromBlock,
-      toBlock,
-      address: CONDITIONAL_TOKENS_ADDRESS,
-      topics: [null, null, null, walletTopicPadded],
-    },
-    {
-      fromBlock,
-      toBlock,
-      address: CONDITIONAL_TOKENS_ADDRESS,
-      topics: [
-        [TOPIC_POSITION_SPLIT, TOPIC_POSITIONS_MERGE, TOPIC_PAYOUT_REDEMPTION],
-        walletTopicPadded,
-      ],
-    },
-  ];
+    ]
+  );
+
+  const ctfQueries = WALLET_CTF_EVENT_TOPICS.map((topic0) => ({
+    fromBlock,
+    toBlock,
+    address: CONDITIONAL_TOKENS_ADDRESS,
+    topics: [topic0, walletTopicPadded] as (string | string[] | null)[],
+  }));
+
+  return [...orderFilledQueries, ...ctfQueries];
 }

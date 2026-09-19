@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import { afterEach, describe, expect, it } from "vitest";
 import { publicApiErrorMessage } from "../lib/apiError";
 
 function withNodeEnv<T>(value: string | undefined, fn: () => T): T {
@@ -19,21 +19,29 @@ function withNodeEnv<T>(value: string | undefined, fn: () => T): T {
   }
 }
 
-{
-  const devMessage = withNodeEnv("development", () =>
-    publicApiErrorMessage(new Error("db connection refused"), "fallback")
-  );
-  assert.equal(devMessage, "db connection refused");
+describe("publicApiErrorMessage", () => {
+  afterEach(() => {
+    delete process.env.NODE_ENV;
+  });
 
-  const prodMessage = withNodeEnv("production", () =>
-    publicApiErrorMessage(new Error("db connection refused"), "fallback")
-  );
-  assert.equal(prodMessage, "fallback");
+  it("returns the error message in development", () => {
+    const devMessage = withNodeEnv("development", () =>
+      publicApiErrorMessage(new Error("db connection refused"), "fallback")
+    );
+    expect(devMessage).toBe("db connection refused");
+  });
 
-  const defaultFallback = withNodeEnv("production", () =>
-    publicApiErrorMessage("raw string leak")
-  );
-  assert.equal(defaultFallback, "An unexpected error occurred");
+  it("returns the fallback in production", () => {
+    const prodMessage = withNodeEnv("production", () =>
+      publicApiErrorMessage(new Error("db connection refused"), "fallback")
+    );
+    expect(prodMessage).toBe("fallback");
+  });
 
-  console.log("✓ apiError.test.ts");
-}
+  it("uses the default fallback for non-error values in production", () => {
+    const defaultFallback = withNodeEnv("production", () =>
+      publicApiErrorMessage("raw string leak")
+    );
+    expect(defaultFallback).toBe("An unexpected error occurred");
+  });
+});

@@ -8,6 +8,8 @@ export interface RpcLog {
   blockHash?: string;
   transactionIndex?: string;
   removed?: boolean;
+  /** Unix seconds when provided by indexed APIs (e.g. Etherscan log timeStamp). */
+  blockTimestamp?: number;
 }
 
 export interface RpcTransactionReceipt {

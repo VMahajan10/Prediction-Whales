@@ -119,6 +119,10 @@ export interface WalletLedgerEvent {
   txHash?: string;
   source: "activity" | "trades" | "polygon";
   blockNumber?: number;
+  /** Block-global log index from chain (authoritative replay order within block). */
+  logIndex?: number;
+  /** Optional tx index within block when logIndex unavailable. */
+  transactionIndex?: number;
   title?: string;
   slug?: string;
   outcome?: string;
@@ -171,6 +175,8 @@ export interface PositionLifecycle {
   wallet: string;
   conditionId: string;
   asset: string;
+  /** Zero-based episode index within (conditionId, asset) after full-exit splits. */
+  lifecycleEpisode: number;
   title: string;
   outcome: string;
   slug: string | null;

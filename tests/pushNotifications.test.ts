@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import { describe, expect, it } from "vitest";
 import {
   buildWhalePushPayload,
   shouldSendHighEvWhalePush,
@@ -21,23 +21,24 @@ const baseTrade: WhaleTrade = {
   netEvPercent: 4.2,
 };
 
-function run(): void {
-  assert.equal(shouldSendHighEvWhalePush(baseTrade), true);
+describe("push notification helpers", () => {
+  it("sends high-EV whale pushes above the threshold", () => {
+    expect(shouldSendHighEvWhalePush(baseTrade)).toBe(true);
+  });
 
-  const payload = buildWhalePushPayload(baseTrade);
-  assert.match(payload.title, /High-EV whale trade/);
-  assert.match(payload.body, /Will BTC hit \$100k\?/);
-  assert.equal(payload.data.path, "/whales/0xabc");
+  it("builds whale push payload with market context", () => {
+    const payload = buildWhalePushPayload(baseTrade);
+    expect(payload.title).toMatch(/High-EV whale trade/);
+    expect(payload.body).toMatch(/Will BTC hit \$100k\?/);
+    expect(payload.data.path).toBe("/whales/0xabc");
+  });
 
-  assert.equal(
-    shouldSendHighEvWhalePush({
-      ...baseTrade,
-      netEvPercent: 1.5,
-    }),
-    false
-  );
-
-  console.log("✓ push notification helpers");
-}
-
-run();
+  it("rejects low-EV whale pushes", () => {
+    expect(
+      shouldSendHighEvWhalePush({
+        ...baseTrade,
+        netEvPercent: 1.5,
+      })
+    ).toBe(false);
+  });
+});

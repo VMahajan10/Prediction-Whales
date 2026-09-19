@@ -2,13 +2,48 @@ import { POLYMARKET_EXCHANGE_INITIAL_BLOCK } from "@/lib/walletLedger/onchain/co
 import { parseBlockNumber, PolygonRpcClient } from "@/lib/walletLedger/onchain/rpc";
 import type { ActivityApiRow, TradeApiRow } from "@/lib/walletLedger/types";
 
+export interface ApiSourceTimestamps {
+  oldestActivityTimestamp: number | null;
+  oldestTradesTimestamp: number | null;
+  /** Reporting-only blended min(activity, trades). Not used for truncation immunity. */
+  apiOldestTimestamp: number | null;
+  apiNewestTimestamp: number | null;
+}
+
+export function extractApiSourceTimestamps(
+  activityRows: ActivityApiRow[],
+  tradeRows: TradeApiRow[]
+): ApiSourceTimestamps {
+  const activityTs = activityRows
+    .map((row) => Number(row.timestamp ?? 0))
+    .filter((ts) => ts > 0);
+  const tradeTs = tradeRows
+    .map((row) => Number(row.timestamp ?? 0))
+    .filter((ts) => ts > 0);
+  const oldestActivityTimestamp =
+    activityTs.length > 0 ? Math.min(...activityTs) : null;
+  const oldestTradesTimestamp =
+    tradeTs.length > 0 ? Math.min(...tradeTs) : null;
+  const blended = [...activityTs, ...tradeTs];
+  return {
+    oldestActivityTimestamp,
+    oldestTradesTimestamp,
+    apiOldestTimestamp: blended.length > 0 ? Math.min(...blended) : null,
+    apiNewestTimestamp: blended.length > 0 ? Math.max(...blended) : null,
+  };
+}
+
 export interface WalletStartBlockResult {
   startBlock: number;
   endBlock: number;
+  oldestActivityTimestamp: number | null;
+  oldestTradesTimestamp: number | null;
+  /** @deprecated Reporting-only. Use oldestActivityTimestamp / oldestTradesTimestamp for immunity. */
   apiOldestTimestamp: number | null;
   apiNewestTimestamp: number | null;
   apiOldestBlock: number | null;
   apiNewestBlock: number | null;
+  verifiedOldestBlock: number | null;
   apiTxHashes: string[];
   completenessNotes: string[];
   onChainHistoryComplete: boolean;
@@ -55,13 +90,10 @@ export async function determineWalletBlockWindow(input: {
   const lookback = input.lookbackBlocks ?? 500_000;
   const notes: string[] = [];
 
-  const timestamps: number[] = [];
-  for (const row of input.activityRows) {
-    if (row.timestamp) timestamps.push(Number(row.timestamp));
-  }
-  for (const row of input.tradeRows) {
-    if (row.timestamp) timestamps.push(Number(row.timestamp));
-  }
+  const sourceTimestamps = extractApiSourceTimestamps(
+    input.activityRows,
+    input.tradeRows
+  );
 
   const txHashes = sampleTxHashes(
     input.activityRows,
@@ -79,10 +111,11 @@ export async function determineWalletBlockWindow(input: {
     }
   }
 
-  const apiOldestTimestamp = timestamps.length ? Math.min(...timestamps) : null;
-  const apiNewestTimestamp = timestamps.length ? Math.max(...timestamps) : null;
+  const apiOldestTimestamp = sourceTimestamps.apiOldestTimestamp;
+  const apiNewestTimestamp = sourceTimestamps.apiNewestTimestamp;
   const apiOldestBlock = blocks.length ? Math.min(...blocks) : null;
   const apiNewestBlock = blocks.length ? Math.max(...blocks) : null;
+  const verifiedOldestBlock = apiOldestBlock;
 
   const head =
     (await rpc.getBlockNumber()) ??
@@ -107,10 +140,13 @@ export async function determineWalletBlockWindow(input: {
   return {
     startBlock,
     endBlock,
+    oldestActivityTimestamp: sourceTimestamps.oldestActivityTimestamp,
+    oldestTradesTimestamp: sourceTimestamps.oldestTradesTimestamp,
     apiOldestTimestamp,
     apiNewestTimestamp,
     apiOldestBlock,
     apiNewestBlock,
+    verifiedOldestBlock,
     apiTxHashes: txHashes,
     completenessNotes: notes,
     onChainHistoryComplete,

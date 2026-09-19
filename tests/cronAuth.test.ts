@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import { describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
 import { authorizeCronRequest, getBearerToken } from "../lib/cronAuth";
 
@@ -8,23 +8,30 @@ function requestWithAuth(header: string | null): NextRequest {
   return new NextRequest("http://localhost/api/cron/ev-pipeline", { headers });
 }
 
-{
-  assert.equal(getBearerToken(requestWithAuth("Bearer secret-token")), "secret-token");
-  assert.equal(getBearerToken(requestWithAuth("bearer abc")), "abc");
-  assert.equal(getBearerToken(requestWithAuth(null)), null);
-  assert.equal(getBearerToken(requestWithAuth("Basic abc")), null);
+describe("cronAuth", () => {
+  it("extracts bearer tokens case-insensitively", () => {
+    expect(getBearerToken(requestWithAuth("Bearer secret-token"))).toBe(
+      "secret-token"
+    );
+    expect(getBearerToken(requestWithAuth("bearer abc"))).toBe("abc");
+    expect(getBearerToken(requestWithAuth(null))).toBeNull();
+    expect(getBearerToken(requestWithAuth("Basic abc"))).toBeNull();
+  });
 
-  assert.equal(authorizeCronRequest(requestWithAuth("Bearer good"), "good"), true);
-  assert.equal(authorizeCronRequest(requestWithAuth("Bearer bad"), "good"), false);
-  assert.equal(authorizeCronRequest(requestWithAuth(null), "good"), false);
-  assert.equal(authorizeCronRequest(requestWithAuth(null), null), true);
-  assert.equal(
-    authorizeCronRequest(
-      new NextRequest("http://localhost/api/cron/ev-pipeline?secret=leaked"),
-      "leaked"
-    ),
-    false
-  );
-
-  console.log("✓ cronAuth.test.ts");
-}
+  it("authorizes cron requests with bearer secret only", () => {
+    expect(authorizeCronRequest(requestWithAuth("Bearer good"), "good")).toBe(
+      true
+    );
+    expect(authorizeCronRequest(requestWithAuth("Bearer bad"), "good")).toBe(
+      false
+    );
+    expect(authorizeCronRequest(requestWithAuth(null), "good")).toBe(false);
+    expect(authorizeCronRequest(requestWithAuth(null), null)).toBe(true);
+    expect(
+      authorizeCronRequest(
+        new NextRequest("http://localhost/api/cron/ev-pipeline?secret=leaked"),
+        "leaked"
+      )
+    ).toBe(false);
+  });
+});

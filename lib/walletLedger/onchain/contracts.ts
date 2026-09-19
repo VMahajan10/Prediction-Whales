@@ -19,6 +19,10 @@ export const CONDITIONAL_TOKENS_ADDRESS =
 export const CTF_EXCHANGE_V1_ADDRESS =
   "0x4bfb41d5b3570defd03c39a9a4d8de6bd8b8982e";
 
+/** Legacy Polymarket CTF Exchange (pre-v1 redeploy; same OrderFilled v1 topic) */
+export const CTF_EXCHANGE_LEGACY_ADDRESS =
+  "0xc5d563a36ae78145c45a50134d48a1215220f80a";
+
 /** Polymarket Neg Risk CTF Exchange */
 export const NEG_RISK_CTF_EXCHANGE_ADDRESS =
   "0xe2222d279d744050d28e00520010520000310f59";
@@ -71,6 +75,7 @@ export const TOPIC_PROXY_WALLET_EXECUTION =
   "0xbbed930dbfb7907ae2d60ddf78345610214f26419a0128df39b6cc3d9e5df9b0";
 
 export const EXCHANGE_ADDRESSES = [
+  CTF_EXCHANGE_LEGACY_ADDRESS,
   CTF_EXCHANGE_V1_ADDRESS,
   NEG_RISK_CTF_EXCHANGE_ADDRESS,
   CTF_EXCHANGE_V2_ADDRESS,

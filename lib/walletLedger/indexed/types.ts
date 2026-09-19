@@ -1,3 +1,4 @@
+import type { CredibilityResult } from "@/lib/walletLedger/indexed/indexedCredibility";
 import type { RpcLog } from "@/lib/walletLedger/onchain/types";
 import type { WalletLedgerEvent } from "@/lib/walletLedger/types";
 
@@ -72,16 +73,25 @@ export interface IndexedLogProvider {
 }
 
 export interface IndexedWalletCoverageReport {
+  /** @deprecated Reporting-only blended min(activity, trades). */
   apiOldestTimestamp: number | null;
   apiNewestTimestamp: number | null;
+  oldestActivityTimestamp: number | null;
+  oldestTradesTimestamp: number | null;
   indexedOldestTimestamp: number | null;
   indexedNewestTimestamp: number | null;
   apiEventCount: number;
   indexedEventCount: number;
+  /** @deprecated Use eventsBeforeActivityBoundary / eventsBeforeTradesBoundary. */
   eventsBeforeApiBoundary: number;
+  eventsBeforeActivityBoundary: number;
+  eventsBeforeTradesBoundary: number;
+  activityTruncationImmune: boolean;
+  tradesTruncationImmune: boolean;
   additionalCompletedPositions: number;
   scanFromBlock: number;
   scanToBlock: number;
+  adaptiveFromBlockReason?: string;
   indexedHistoryComplete: boolean;
   completenessNotes: string[];
 }
@@ -108,9 +118,36 @@ export interface IndexedAuditWalletResult {
   indexedCompletedPositions: number;
   credibilityMetricsValidBefore: boolean;
   credibilityMetricsValidAfter: boolean;
+  /** Canonical API-reconstructed credibility (B). */
+  apiCredibility?: CredibilityResult | null;
+  /** Canonical indexed credibility (C). */
+  indexedCredibility?: CredibilityResult;
   historyCompleteBefore: boolean;
   historyCompleteAfter: boolean;
+  historyCompletenessBreakdown?: Record<string, boolean>;
+  blockTimestampStats?: import("@/lib/walletLedger/indexed/blockTimestampCache").BlockTimestampCacheStats;
+  gammaPrefetchStats?: import("@/lib/walletLedger/gamma").GammaPrefetchStats;
   extendsBeforeApiBoundary: boolean;
+  /** Max of run + persisted pre-API event counts. */
+  eventsBeforeApiBoundaryEffective?: number;
+  sourceTruncationImmunity?: import("@/lib/walletLedger/indexed/sourceTruncationImmunity").SourceTruncationImmunityResult;
+  verifiedTradeTxEvidence?: import("@/lib/walletLedger/indexed/adaptiveStartBlock").VerifiedTradeTxEvidence[];
+  adaptiveFromBlock?: import("@/lib/walletLedger/indexed/adaptiveStartBlock").AdaptiveFromBlockResult;
+  indexedEvents?: import("@/lib/walletLedger/types").WalletLedgerEvent[];
+  /** DB persisted + delta chain events used for credibility reconstruction. */
+  authoritativeIndexedEvents?: import("@/lib/walletLedger/types").WalletLedgerEvent[];
+  authoritativeEventStats?: import("@/lib/walletLedger/indexed/authoritativeEvents").AuthoritativeEventMergeStats;
+  historicalBackfillRequired?: boolean;
+  indexedLifecyclePositions?: import("@/lib/walletLedger/types").PositionLifecycle[];
+  /** Normalized deduplicated API events used for indexed metric computation. */
+  apiEvents?: import("@/lib/walletLedger/types").WalletLedgerEvent[];
+  gammaCacheEntries?: Array<
+    [string, import("@/lib/walletLedger/types").GammaMarketResolution]
+  >;
+  throughBlock?: number;
+  scanFromBlock?: number;
+  debugReport?: IndexedWalletDebugReport;
+  stageTimingsMs?: Record<string, number>;
 }
 
 export interface IndexedFeasibilityEstimate {
@@ -124,6 +161,7 @@ export interface IndexedFeasibilityEstimate {
 export interface IndexedProviderEvaluation {
   providerId: IndexedProviderId;
   probe: IndexedProviderProbeResult;
+  probeAttempts?: number;
   sampleFetch?: {
     requests: number;
     elapsedMs: number;
@@ -135,3 +173,18 @@ export interface IndexedProviderEvaluation {
 export type IndexedLedgerEvent = WalletLedgerEvent & {
   source: WalletLedgerEvent["source"] | "indexed_polygon";
 };
+
+export interface IndexedWalletDebugReport {
+  queryPlan: import("@/lib/walletLedger/indexed/queryPlan").EtherscanQueryPlanReport;
+  scanSubjects: string[];
+  blockWindow: { fromBlock: number; toBlock: number; fullHistory: boolean };
+  funnelBySubject: Record<
+    string,
+    import("@/lib/walletLedger/indexed/funnel").IndexedEventFunnel
+  >;
+  apiTxHashes: string[];
+  indexedTxHashes: string[];
+  overlappingTxHashes: string[];
+  orderFilledTopicLayout: typeof import("@/lib/walletLedger/indexed/queryPlan").ORDER_FILLED_TOPIC_LAYOUT;
+  walletTopicEncoding: string;
+}

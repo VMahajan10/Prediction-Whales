@@ -1,5 +1,28 @@
-import { cacheKey, readIndexedCache, writeIndexedCache } from "@/lib/walletLedger/indexed/cache";
+import {
+  cacheKey,
+  isIndexedLogCacheEnabled,
+  readIndexedCache,
+  writeIndexedCache,
+} from "@/lib/walletLedger/indexed/cache";
+import {
+  buildQueryCheckpointKey,
+  type QueryCheckpointIdentity,
+} from "@/lib/walletLedger/indexed/checkpoint";
+import {
+  describeEtherscanQueryLabel,
+  type EtherscanProgressReporter,
+} from "@/lib/walletLedger/indexed/auditProgress";
+import {
+  EtherscanPhaseMetricsCollector,
+  setActiveEtherscanPhaseMetricsCollector,
+  stashEtherscanPhaseMetricsSummary,
+} from "@/lib/walletLedger/indexed/etherscanPhaseMetrics";
+import { EventLoopDelayMonitor } from "@/lib/walletLedger/indexed/eventLoopMonitor";
 import { buildWalletLogQueries } from "@/lib/walletLedger/indexed/providers/fullHistoryRpc";
+import { appendAll } from "@/lib/walletLedger/indexed/arrayUtils";
+import { isEtherscanQueryMaxRuntimeError } from "@/lib/walletLedger/indexed/etherscanErrors";
+import { auditLog } from "@/lib/walletLedger/indexed/auditProgress";
+import { EtherscanV2LogProvider } from "@/lib/walletLedger/indexed/providers/etherscan";
 import type {
   IndexedFetchStats,
   IndexedLogProvider,
@@ -10,6 +33,8 @@ import { fetchWalletOnChainLogs } from "@/lib/walletLedger/onchain/fetcher";
 import { dedupeLogs } from "@/lib/walletLedger/onchain/rpc";
 import type { ParsedOnChainEvent, RpcLog } from "@/lib/walletLedger/onchain/types";
 
+const POLYGON_CHAIN_ID = "137";
+
 export interface FetchIndexedWalletHistoryInput {
   provider: IndexedLogProvider;
   wallet: string;
@@ -18,6 +43,9 @@ export interface FetchIndexedWalletHistoryInput {
   useCache?: boolean;
   interPageDelayMs?: number;
   onProgress?: (stats: IndexedFetchStats) => void;
+  resumeCheckpoint?: boolean;
+  etherscanProgress?: EtherscanProgressReporter;
+  abortSignal?: AbortSignal;
 }
 
 export interface FetchIndexedWalletHistoryResult {
@@ -25,6 +53,35 @@ export interface FetchIndexedWalletHistoryResult {
   parsed: ParsedOnChainEvent[];
   stats: IndexedFetchStats;
   queriesExecuted: number;
+  queryDiagnostics?: {
+    emptyRequests: number;
+    nonEmptyRequests: number;
+    retryAttempts: number;
+    retryErrors: string[];
+    rangesQueried?: number;
+    rangesSplit?: number;
+    pagesFetched?: number;
+    requestsPerSecond?: number;
+  };
+}
+
+function buildCheckpointIdentity(
+  providerId: string,
+  wallet: string,
+  query: {
+    address: string;
+    fromBlock: number;
+    topics?: (string | string[] | null)[];
+  }
+): QueryCheckpointIdentity {
+  return {
+    providerId,
+    chainId: POLYGON_CHAIN_ID,
+    wallet: wallet.toLowerCase(),
+    contract: query.address.toLowerCase(),
+    stableFromBlock: query.fromBlock,
+    topics: query.topics ?? [],
+  };
 }
 
 export async function fetchIndexedWalletHistory(
@@ -39,7 +96,9 @@ export async function fetchIndexedWalletHistory(
     "wallet_history",
   ]);
 
-  if (input.useCache !== false) {
+  const cacheEnabled =
+    input.useCache !== false && isIndexedLogCacheEnabled(input.provider.id);
+  if (cacheEnabled) {
     const cached = readIndexedCache<FetchIndexedWalletHistoryResult>(key);
     if (cached) return cached;
   }
@@ -85,12 +144,24 @@ export async function fetchIndexedWalletHistory(
       queriesExecuted: buildWalletLogQueries(wallet, input.fromBlock, input.toBlock)
         .length,
     };
-    if (input.useCache !== false) writeIndexedCache(key, output);
+    if (cacheEnabled) writeIndexedCache(key, output);
     return output;
   }
 
   const queries = buildWalletLogQueries(wallet, input.fromBlock, input.toBlock);
+  input.etherscanProgress?.setQueryTotal(queries.length);
+  const phaseMetrics = new EtherscanPhaseMetricsCollector();
+  phaseMetrics.beginWallet(wallet);
+  setActiveEtherscanPhaseMetricsCollector(phaseMetrics);
+  const eventLoopMonitor = new EventLoopDelayMonitor();
+  eventLoopMonitor.start();
   const started = Date.now();
+  const requestsAtStart =
+    input.provider instanceof EtherscanV2LogProvider ? input.provider.requests : 0;
+  const rateLimitHitsAtStart =
+    input.provider instanceof EtherscanV2LogProvider
+      ? input.provider.rateLimitHits
+      : 0;
   const aggregate: IndexedFetchStats = {
     requests: 0,
     pages: 0,
@@ -106,25 +177,94 @@ export async function fetchIndexedWalletHistory(
 
   const allLogs: RpcLog[] = [];
 
-  for (const query of queries) {
-    const { logs, stats } = await input.provider.getLogsPaginated(query, {
+  try {
+  for (let queryIndex = 0; queryIndex < queries.length; queryIndex += 1) {
+    const query = queries[queryIndex]!;
+    const queryLabel = describeEtherscanQueryLabel(query);
+    const paginateOptions: {
+      interPageDelayMs?: number;
+      onProgress?: (stats: IndexedFetchStats) => void;
+      checkpointKey?: string;
+      checkpointIdentity?: QueryCheckpointIdentity;
+      resumeCheckpoint?: boolean;
+      progress?: EtherscanProgressReporter;
+      queryIndex?: number;
+      queryTotal?: number;
+      queryLabel?: string;
+      wallet?: string;
+      abortSignal?: AbortSignal;
+    } = {
       interPageDelayMs: input.interPageDelayMs,
       onProgress: (progress) => {
-        aggregate.requests = progress.requests;
         aggregate.logsReturned = allLogs.length + progress.logsReturned;
-        aggregate.blockWindows += progress.blockWindows;
         aggregate.elapsedMs = Date.now() - started;
-        aggregate.rateLimitHits = progress.rateLimitHits;
-        aggregate.errors = progress.errors;
         input.onProgress?.({ ...aggregate });
+        input.etherscanProgress?.updateCounts({
+          requests:
+            input.provider instanceof EtherscanV2LogProvider
+              ? input.provider.requests - requestsAtStart
+              : aggregate.requests,
+          pages:
+            input.provider instanceof EtherscanV2LogProvider
+              ? input.provider.pagesFetched
+              : aggregate.pages,
+          logs: allLogs.length + progress.logsReturned,
+          splits:
+            input.provider instanceof EtherscanV2LogProvider
+              ? input.provider.rangesSplit
+              : 0,
+          rateLimitHits:
+            input.provider instanceof EtherscanV2LogProvider
+              ? input.provider.rateLimitHits - rateLimitHitsAtStart
+              : aggregate.rateLimitHits,
+        });
       },
-    });
-    allLogs.push(...logs);
-    aggregate.requests = stats.requests;
+      resumeCheckpoint: input.resumeCheckpoint,
+      progress: input.etherscanProgress,
+      queryIndex: queryIndex + 1,
+      queryTotal: queries.length,
+      queryLabel,
+      wallet,
+      abortSignal: input.abortSignal,
+    };
+    if (input.provider.id === "etherscan_v2") {
+      const checkpointIdentity = buildCheckpointIdentity(
+        input.provider.id,
+        wallet,
+        query
+      );
+      paginateOptions.checkpointIdentity = checkpointIdentity;
+      paginateOptions.checkpointKey = buildQueryCheckpointKey(checkpointIdentity);
+    }
+    let logs: RpcLog[];
+    let stats: IndexedFetchStats;
+    try {
+      ({ logs, stats } = await input.provider.getLogsPaginated(query, paginateOptions));
+    } catch (error) {
+      if (isEtherscanQueryMaxRuntimeError(error)) {
+        auditLog(
+          `[etherscan-query-defer] wallet=${wallet} stopping indexed history after query ${queryIndex + 1}/${queries.length}`
+        );
+      }
+      throw error;
+    }
+    appendAll(allLogs, logs);
     aggregate.pages += stats.pages;
     aggregate.blockWindows += stats.blockWindows;
-    aggregate.rateLimitHits = stats.rateLimitHits;
+    aggregate.rateLimitHits += stats.rateLimitHits;
     aggregate.errors = [...new Set([...aggregate.errors, ...stats.errors])];
+  }
+  } finally {
+    eventLoopMonitor.logSnapshot(`wallet=${wallet}`);
+    stashEtherscanPhaseMetricsSummary(phaseMetrics.summarize());
+    setActiveEtherscanPhaseMetricsCollector(null);
+    eventLoopMonitor.stop();
+  }
+
+  if (input.provider instanceof EtherscanV2LogProvider) {
+    aggregate.requests = input.provider.requests - requestsAtStart;
+    aggregate.rateLimitHits =
+      input.provider.rateLimitHits - rateLimitHitsAtStart;
   }
 
   const deduped = dedupeLogs(allLogs);
@@ -132,14 +272,29 @@ export async function fetchIndexedWalletHistory(
   aggregate.uniqueTransactions = new Set(deduped.map((l) => l.transactionHash)).size;
   aggregate.elapsedMs = Date.now() - started;
 
+  const providerDiagnostics =
+    input.provider instanceof EtherscanV2LogProvider
+      ? {
+          emptyRequests: input.provider.emptyRequests,
+          nonEmptyRequests: input.provider.nonEmptyRequests,
+          retryAttempts: input.provider.retryAttempts,
+          retryErrors: [...input.provider.retryErrors],
+          rangesQueried: input.provider.rangesQueried,
+          rangesSplit: input.provider.rangesSplit,
+          pagesFetched: input.provider.pagesFetched,
+          requestsPerSecond: input.provider.rateLimiter.requestsPerSecond,
+        }
+      : undefined;
+
   const output: FetchIndexedWalletHistoryResult = {
     logs: deduped,
     parsed: deduped.map((log) => decodeLog(log)),
     stats: aggregate,
     queriesExecuted: queries.length,
+    queryDiagnostics: providerDiagnostics,
   };
 
-  if (input.useCache !== false) writeIndexedCache(key, output);
+  if (cacheEnabled) writeIndexedCache(key, output);
   return output;
 }
 

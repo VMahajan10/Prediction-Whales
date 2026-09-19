@@ -14,7 +14,11 @@ import {
   normalizeActivityRows,
   normalizeTradeRows,
 } from "@/lib/walletLedger/normalize";
-import { computePositionEconomics } from "@/lib/walletLedger/ledger";
+import {
+  buildPositionLifecycles,
+  computePositionEconomics,
+  splitEventsIntoEpisodes,
+} from "@/lib/walletLedger/ledger";
 import { analyzeMergeSplitImpact } from "@/lib/walletLedger/mergeSplitAnalysis";
 import { computeWalletLedgerMetrics } from "@/lib/walletLedger/metrics";
 import {
@@ -587,6 +591,58 @@ describe("MERGE/SPLIT materiality", () => {
     const impact = analyzeMergeSplitImpact(positions);
     expect(impact.pctAmbiguousOfCompleted).toBeGreaterThan(0.05);
     expect(impact.recommendation).toBe("phase_2c_accounting_required");
+  });
+});
+
+describe("lifecycle episode splitting", () => {
+  it("keeps one completed lifecycle after BUY -> SELL exit -> later BUY re-entry", async () => {
+    const events = [
+      event({ type: "BUY", timestamp: 1, shares: 10, price: 0.5, cashUsd: 5 }),
+      event({ type: "SELL", timestamp: 2, shares: 10, price: 0.6, cashUsd: 6 }),
+      event({ type: "BUY", timestamp: 3, shares: 4, price: 0.5, cashUsd: 2 }),
+    ];
+    expect(splitEventsIntoEpisodes(events)).toHaveLength(2);
+    const { positions } = await buildPositionLifecycles(WALLET, events);
+    const completed = positions.filter((p) => p.completed && p.realizedPnl != null);
+    const open = positions.filter((p) => !p.completed);
+    expect(completed).toHaveLength(1);
+    expect(open).toHaveLength(1);
+    expect(completed[0]?.lifecycleEpisode).toBe(0);
+    expect(open[0]?.lifecycleEpisode).toBe(1);
+
+    const validity = assessWalletLedgerValidity({
+      positions,
+      identity: {
+        wallet: WALLET,
+        resolutionMethod: "proxy_wallet",
+        confidence: "high",
+        positionsOnlyMismatch: false,
+      },
+      activityTruncated: false,
+      tradesTruncated: false,
+      resolutionCoverage: {
+        positionsRequiringResolution: 0,
+        positionsSuccessfullyResolved: 0,
+        positionsUnresolved: 0,
+        resolutionCoveragePct: 1,
+      },
+      mergeSplit: analyzeMergeSplitImpact(positions),
+      hasHistoryEvents: true,
+    });
+    expect(validity.observedWindowMetrics.completedPositionCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it("counts two completed lifecycles after two full exits", async () => {
+    const events = [
+      event({ type: "BUY", timestamp: 1, shares: 10, price: 0.5, cashUsd: 5 }),
+      event({ type: "SELL", timestamp: 2, shares: 10, price: 0.6, cashUsd: 6 }),
+      event({ type: "BUY", timestamp: 3, shares: 8, price: 0.4, cashUsd: 3.2 }),
+      event({ type: "SELL", timestamp: 4, shares: 8, price: 0.55, cashUsd: 4.4 }),
+    ];
+    const { positions } = await buildPositionLifecycles(WALLET, events);
+    const completed = positions.filter((p) => p.completed && p.realizedPnl != null);
+    expect(completed).toHaveLength(2);
+    expect(completed.map((p) => p.lifecycleEpisode).sort()).toEqual([0, 1]);
   });
 });
 

@@ -1,4 +1,5 @@
-import { buildLedgerEventDedupeKey } from "@/lib/walletLedger/normalize";
+import { assignChainEventDedupeKey } from "@/lib/walletLedger/canonicalChainIdentity";
+import { sortLedgerEventsCanonical } from "@/lib/walletLedger/eventOrder";
 import {
   orderFilledInvolvesWallet,
   tokenAmountToNumber,
@@ -60,29 +61,21 @@ export function orderFilledToLedgerEvents(
 
   const type = side;
   const price = shares > 0 ? cashUsd / shares : 0;
-  const ledgerEvent: WalletLedgerEvent = {
+  const ledgerEvent = assignChainEventDedupeKey({
     wallet: w,
     conditionId: "",
     asset,
     timestamp,
     blockNumber: event.blockNumber,
+    logIndex: event.logIndex,
     type,
     shares,
     cashUsd,
     price,
     txHash: event.transactionHash,
     source: "polygon",
-    dedupeKey: buildLedgerEventDedupeKey({
-      txHash: event.transactionHash,
-      asset,
-      timestamp,
-      type,
-      side,
-      shares,
-      price,
-      cashUsd,
-    }),
-  };
+    dedupeKey: "",
+  });
   return [ledgerEvent];
 }
 
@@ -110,71 +103,62 @@ export function parsedEventsToLedgerEvents(
       case "payout_redemption": {
         if (item.event.redeemer !== w) break;
         const cashUsd = tokenAmountToNumber(item.event.payout);
-        events.push({
-          wallet: w,
-          conditionId: item.event.conditionId,
-          asset: "",
-          timestamp,
-          blockNumber: item.event.blockNumber,
-          type: "REDEEM",
-          shares: 0,
-          cashUsd,
-          txHash: item.event.transactionHash,
-          source: "polygon",
-          dedupeKey: buildLedgerEventDedupeKey({
-            txHash: item.event.transactionHash,
+        events.push(
+          assignChainEventDedupeKey({
+            wallet: w,
             conditionId: item.event.conditionId,
+            asset: "",
             timestamp,
+            blockNumber: item.event.blockNumber,
+            logIndex: item.event.logIndex,
             type: "REDEEM",
+            shares: 0,
             cashUsd,
-          }),
-        });
+            txHash: item.event.transactionHash,
+            source: "polygon",
+            dedupeKey: "",
+          })
+        );
         break;
       }
       case "position_split": {
         if (item.event.stakeholder !== w) break;
-        events.push({
-          wallet: w,
-          conditionId: item.event.conditionId,
-          asset: "",
-          timestamp,
-          blockNumber: item.event.blockNumber,
-          type: "SPLIT",
-          shares: tokenAmountToNumber(item.event.amount),
-          cashUsd: 0,
-          txHash: item.event.transactionHash,
-          source: "polygon",
-          dedupeKey: buildLedgerEventDedupeKey({
-            txHash: item.event.transactionHash,
+        events.push(
+          assignChainEventDedupeKey({
+            wallet: w,
             conditionId: item.event.conditionId,
+            asset: "",
             timestamp,
+            blockNumber: item.event.blockNumber,
+            logIndex: item.event.logIndex,
             type: "SPLIT",
             shares: tokenAmountToNumber(item.event.amount),
-          }),
-        });
+            cashUsd: 0,
+            txHash: item.event.transactionHash,
+            source: "polygon",
+            dedupeKey: "",
+          })
+        );
         break;
       }
       case "positions_merge": {
         if (item.event.stakeholder !== w) break;
-        events.push({
-          wallet: w,
-          conditionId: item.event.conditionId,
-          asset: "",
-          timestamp,
-          blockNumber: item.event.blockNumber,
-          type: "MERGE",
-          shares: tokenAmountToNumber(item.event.amount),
-          cashUsd: 0,
-          txHash: item.event.transactionHash,
-          source: "polygon",
-          dedupeKey: buildLedgerEventDedupeKey({
-            txHash: item.event.transactionHash,
+        events.push(
+          assignChainEventDedupeKey({
+            wallet: w,
             conditionId: item.event.conditionId,
+            asset: "",
             timestamp,
+            blockNumber: item.event.blockNumber,
+            logIndex: item.event.logIndex,
             type: "MERGE",
             shares: tokenAmountToNumber(item.event.amount),
-          }),
-        });
+            cashUsd: 0,
+            txHash: item.event.transactionHash,
+            source: "polygon",
+            dedupeKey: "",
+          })
+        );
         break;
       }
       case "erc1155_transfer":
@@ -203,5 +187,5 @@ export function mergeApiAndChainEvents(
       map.set(event.dedupeKey, event);
     }
   }
-  return [...map.values()].sort((a, b) => a.timestamp - b.timestamp);
+  return sortLedgerEventsCanonical([...map.values()]);
 }

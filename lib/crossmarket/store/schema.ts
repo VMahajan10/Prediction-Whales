@@ -12,6 +12,7 @@ import {
   numeric,
   pgEnum,
   pgTable,
+  primaryKey,
   real,
   smallint,
   text,
@@ -767,3 +768,365 @@ export type FeedDailyQualifiedWhale =
   typeof feedDailyQualifiedWhales.$inferSelect;
 export type FeedDailyQualifiedWhaleInsert =
   typeof feedDailyQualifiedWhales.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// Phase 2E wallet history — shadow/indexed metrics (NOT production whale_registry)
+// ---------------------------------------------------------------------------
+
+export const walletLedgerEvents = pgTable(
+  "wallet_ledger_events",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    walletAddress: text("wallet_address").notNull(),
+    chainId: text("chain_id").notNull().default("137"),
+    dedupeKey: text("dedupe_key").notNull(),
+    canonicalIdentity: text("canonical_identity"),
+    txHash: text("tx_hash"),
+    logIndex: text("log_index"),
+    blockNumber: bigint("block_number", { mode: "number" }),
+    blockTimestamp: bigint("block_timestamp", { mode: "number" }),
+    contractAddress: text("contract_address"),
+    eventType: text("event_type").notNull(),
+    marketConditionId: text("market_condition_id"),
+    assetId: text("asset_id"),
+    side: text("side"),
+    shares: doublePrecision("shares"),
+    cashUsd: doublePrecision("cash_usd"),
+    price: doublePrecision("price"),
+    source: text("source").notNull(),
+    ledgerVersion: text("ledger_version").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    unique("wallet_ledger_events_wallet_dedupe_unique").on(
+      table.walletAddress,
+      table.dedupeKey
+    ),
+    index("wallet_ledger_events_wallet_idx").on(table.walletAddress),
+    index("wallet_ledger_events_wallet_block_idx").on(
+      table.walletAddress,
+      table.blockNumber
+    ),
+    index("wallet_ledger_events_wallet_block_id_idx").on(
+      table.walletAddress,
+      table.blockNumber,
+      table.id
+    ),
+    index("wallet_ledger_events_wallet_canonical_idx").on(
+      table.walletAddress,
+      table.canonicalIdentity
+    ),
+    // Partial unique: one canonical chain log per wallet perspective (cross-wallet shared fills allowed).
+    // Applied via migration 0029; Drizzle schema uses uniqueIndex for partial indexes in raw SQL migrations.
+  ]
+);
+
+export const walletPositionLifecycles = pgTable(
+  "wallet_position_lifecycles",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    walletAddress: text("wallet_address").notNull(),
+    conditionId: text("condition_id").notNull(),
+    assetId: text("asset_id").notNull(),
+    metricVersion: text("metric_version").notNull(),
+    lifecycleEpisode: integer("lifecycle_episode").notNull().default(0),
+    completed: boolean("completed").notNull().default(false),
+    completionType: text("completion_type"),
+    capitalAtRisk: doublePrecision("capital_at_risk").notNull().default(0),
+    buyNotional: doublePrecision("buy_notional").notNull().default(0),
+    sellNotional: doublePrecision("sell_notional").notNull().default(0),
+    resolutionPayout: doublePrecision("resolution_payout").notNull().default(0),
+    realizedPnl: doublePrecision("realized_pnl"),
+    realizedRoi: doublePrecision("realized_roi"),
+    profitable: boolean("profitable"),
+    outcomeWin: boolean("outcome_win"),
+    openedAt: bigint("opened_at", { mode: "number" }),
+    completedAt: bigint("completed_at", { mode: "number" }),
+    exclusionReason: text("exclusion_reason"),
+    resolutionSource: text("resolution_source"),
+    resolutionFinal: boolean("resolution_final"),
+    calculatedAt: timestamp("calculated_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    unique("wallet_position_lifecycles_position_version_unique").on(
+      table.walletAddress,
+      table.conditionId,
+      table.assetId,
+      table.metricVersion,
+      table.lifecycleEpisode
+    ),
+    index("wallet_position_lifecycles_wallet_idx").on(table.walletAddress),
+  ]
+);
+
+export const walletHistoricalMetrics = pgTable(
+  "wallet_historical_metrics",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    walletAddress: text("wallet_address").notNull(),
+    metricVersion: text("metric_version").notNull(),
+    completedPositions: integer("completed_positions").notNull().default(0),
+    medianCapitalAtRisk: doublePrecision("median_capital_at_risk"),
+    resolvedVolumeUsd: doublePrecision("resolved_volume_usd"),
+    profitablePositionRate: doublePrecision("profitable_position_rate"),
+    outcomeWinRate: doublePrecision("outcome_win_rate"),
+    realizedRoi: doublePrecision("realized_roi"),
+    credibilityMetricsValid: boolean("credibility_metrics_valid")
+      .notNull()
+      .default(false),
+    credibilityDecision: boolean("credibility_decision").notNull().default(false),
+    historyValidity: text("history_validity").notNull(),
+    historyComplete: boolean("history_complete").notNull().default(false),
+    credibilityReasons: jsonb("credibility_reasons").$type<string[]>().default([]),
+    historyIncompleteReasons: jsonb("history_incomplete_reasons")
+      .$type<string[]>()
+      .default([]),
+    throughBlock: bigint("through_block", { mode: "number" }),
+    calculatedAt: timestamp("calculated_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    unique("wallet_historical_metrics_wallet_version_unique").on(
+      table.walletAddress,
+      table.metricVersion
+    ),
+    index("wallet_historical_metrics_wallet_idx").on(table.walletAddress),
+  ]
+);
+
+export const walletHistoryCoverage = pgTable(
+  "wallet_history_coverage",
+  {
+    walletAddress: text("wallet_address").primaryKey(),
+    chainId: text("chain_id").notNull().default("137"),
+    provider: text("provider").notNull(),
+    fromBlock: bigint("from_block", { mode: "number" }).notNull(),
+    lastIndexedBlock: bigint("last_indexed_block", { mode: "number" }).notNull(),
+    lastReconstructedBlock: bigint("last_reconstructed_block", {
+      mode: "number",
+    }).notNull(),
+    apiOldestTimestamp: bigint("api_oldest_timestamp", { mode: "number" }),
+    indexedOldestTimestamp: bigint("indexed_oldest_timestamp", { mode: "number" }),
+    extendsBeforeApiBoundary: boolean("extends_before_api_boundary")
+      .notNull()
+      .default(false),
+    eventsBeforeApiBoundary: integer("events_before_api_boundary")
+      .notNull()
+      .default(0),
+    eventHistoryComplete: boolean("event_history_complete").notNull().default(false),
+    identityComplete: boolean("identity_complete").notNull().default(false),
+    resolutionComplete: boolean("resolution_complete").notNull().default(false),
+    historyComplete: boolean("history_complete").notNull().default(false),
+    historyValidity: text("history_validity").notNull(),
+    timestampCoveragePct: doublePrecision("timestamp_coverage_pct"),
+    timestampMissingBlocks: integer("timestamp_missing_blocks"),
+    gammaResolutionIncomplete: boolean("gamma_resolution_incomplete")
+      .notNull()
+      .default(false),
+    mergeSplitUnresolved: boolean("merge_split_unresolved")
+      .notNull()
+      .default(false),
+    metricVersion: text("metric_version").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+  }
+);
+
+export const walletShadowBatchStatus = pgTable(
+  "wallet_shadow_batch_status",
+  {
+    batchId: text("batch_id").notNull(),
+    walletAddress: text("wallet_address").notNull(),
+    status: text("status").notNull().default("pending"),
+    cohortReason: text("cohort_reason"),
+    errorMessage: text("error_message"),
+    performance: jsonb("performance").$type<Record<string, unknown>>(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    unique("wallet_shadow_batch_status_batch_wallet_unique").on(
+      table.batchId,
+      table.walletAddress
+    ),
+    index("wallet_shadow_batch_status_batch_idx").on(table.batchId),
+  ]
+);
+
+export const walletShadowResults = pgTable(
+  "wallet_shadow_results",
+  {
+    batchId: text("batch_id").notNull(),
+    walletAddress: text("wallet_address").notNull(),
+    label: text("label"),
+    cohortReason: text("cohort_reason"),
+    executionStatus: text("execution_status").notNull(),
+    historyValidity: text("history_validity").notNull(),
+    historyComplete: boolean("history_complete").notNull().default(false),
+    credibilityMetricsValid: boolean("credibility_metrics_valid")
+      .notNull()
+      .default(false),
+    productionDecision: boolean("production_decision"),
+    productionReasons: jsonb("production_reasons").$type<string[]>().default([]),
+    productionMetricsSnapshot: jsonb("production_metrics_snapshot").$type<
+      Record<string, unknown>
+    >(),
+    apiReconstructedDecision: boolean("api_reconstructed_decision"),
+    apiReasons: jsonb("api_reasons").$type<string[]>().default([]),
+    apiMetricsSnapshot: jsonb("api_metrics_snapshot").$type<
+      Record<string, unknown>
+    >(),
+    indexedDecision: boolean("indexed_decision").notNull().default(false),
+    indexedReasons: jsonb("indexed_reasons").$type<string[]>().default([]),
+    indexedMetricsSnapshot: jsonb("indexed_metrics_snapshot").$type<
+      Record<string, unknown>
+    >(),
+    evidence: jsonb("evidence").$type<Record<string, unknown>>().default({}),
+    comparisonMetadataMissing: boolean("comparison_metadata_missing")
+      .notNull()
+      .default(false),
+    productionObservationSource: text("production_observation_source"),
+    apiObservationSource: text("api_observation_source"),
+    indexedObservationSource: text("indexed_observation_source"),
+    metricVersion: text("metric_version"),
+    queryPlanVersion: text("query_plan_version"),
+    evaluatedAt: timestamp("evaluated_at", { withTimezone: true, mode: "date" }),
+    performance: jsonb("performance").$type<Record<string, unknown>>(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    unique("wallet_shadow_results_batch_wallet_unique").on(
+      table.batchId,
+      table.walletAddress
+    ),
+    index("wallet_shadow_results_batch_idx").on(table.batchId),
+  ]
+);
+
+// Policy A coverage shadow — observational only, not production gates
+export const policyAShadowTradeObservations = pgTable(
+  "policy_a_shadow_trade_observations",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    tradeId: text("trade_id").notNull(),
+    walletAddress: text("wallet_address").notNull(),
+    observedAt: timestamp("observed_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+    tradedAt: timestamp("traded_at", { withTimezone: true, mode: "date" }),
+    source: text("source").notNull().default("polymarket_feed"),
+    stakeUsd: doublePrecision("stake_usd"),
+    tradeEvPercent: doublePrecision("trade_ev_percent"),
+    translationValid: boolean("translation_valid"),
+    productionWalletPass: boolean("production_wallet_pass"),
+    productionHydrationState: text("production_hydration_state"),
+    indexedDataValidityDecision: text("indexed_data_validity_decision"),
+    historicalPerformanceDecision: text("historical_performance_decision"),
+    historicalPerformanceFailureReasons: jsonb("historical_performance_failure_reasons")
+      .$type<string[]>()
+      .default([]),
+    historicalPerformancePolicyVersion: text("historical_performance_policy_version"),
+    feedVisible: boolean("feed_visible").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("policy_a_shadow_observed_at_idx").on(table.observedAt.desc()),
+    index("policy_a_shadow_wallet_idx").on(table.walletAddress),
+    unique("policy_a_shadow_trade_source_unique").on(table.tradeId, table.source),
+  ]
+);
+
+export const policyACoverageDailyMetrics = pgTable(
+  "policy_a_coverage_daily_metrics",
+  {
+    dayKey: text("day_key").notNull(),
+    venue: text("venue").notNull().default("polymarket"),
+    tradesDetected: integer("trades_detected").notNull().default(0),
+    tradeGateQualified: integer("trade_gate_qualified").notNull().default(0),
+    productionWalletQualified: integer("production_wallet_qualified")
+      .notNull()
+      .default(0),
+    policyAPass: integer("policy_a_pass").notNull().default(0),
+    policyAFail: integer("policy_a_fail").notNull().default(0),
+    policyAUnknown: integer("policy_a_unknown").notNull().default(0),
+    feedVisible: integer("feed_visible").notNull().default(0),
+    feedWouldRemainPolicyA: integer("feed_would_remain_policy_a")
+      .notNull()
+      .default(0),
+    feedWouldFailPolicyA: integer("feed_would_fail_policy_a").notNull().default(0),
+    feedUnknownPolicyA: integer("feed_unknown_policy_a").notNull().default(0),
+    distinctProductionWallets: integer("distinct_production_wallets")
+      .notNull()
+      .default(0),
+    distinctPolicyAPassWallets: integer("distinct_policy_a_pass_wallets")
+      .notNull()
+      .default(0),
+    distinctPolicyAFailWallets: integer("distinct_policy_a_fail_wallets")
+      .notNull()
+      .default(0),
+    distinctPolicyAUnknownWallets: integer("distinct_policy_a_unknown_wallets")
+      .notNull()
+      .default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.dayKey, table.venue] }),
+    index("policy_a_coverage_daily_day_idx").on(table.dayKey.desc()),
+  ]
+);
+
+export const policyAProductionWalletHydration = pgTable(
+  "policy_a_production_wallet_hydration",
+  {
+    walletAddress: text("wallet_address").primaryKey(),
+    priorityTier: integer("priority_tier").notNull(),
+    status: text("status").notNull().default("pending"),
+    lastAttemptAt: timestamp("last_attempt_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    lastError: text("last_error"),
+    completedPositions: integer("completed_positions"),
+    historyValidity: text("history_validity"),
+    policyADecision: text("policy_a_decision"),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("policy_a_hydration_status_tier_idx").on(
+      table.status,
+      table.priorityTier
+    ),
+  ]
+);
+
+export type PolicyAShadowTradeObservation =
+  typeof policyAShadowTradeObservations.$inferSelect;
+export type PolicyACoverageDailyMetrics =
+  typeof policyACoverageDailyMetrics.$inferSelect;
+export type PolicyAProductionWalletHydration =
+  typeof policyAProductionWalletHydration.$inferSelect;
+
+export type WalletLedgerEventRow = typeof walletLedgerEvents.$inferSelect;
+export type WalletPositionLifecycleRow = typeof walletPositionLifecycles.$inferSelect;
+export type WalletHistoricalMetricRow = typeof walletHistoricalMetrics.$inferSelect;
+export type WalletHistoryCoverageRow = typeof walletHistoryCoverage.$inferSelect;
+export type WalletShadowBatchStatusRow = typeof walletShadowBatchStatus.$inferSelect;
+export type WalletShadowResultRow = typeof walletShadowResults.$inferSelect;

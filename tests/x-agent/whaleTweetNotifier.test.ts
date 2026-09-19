@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { FeedTrade } from "@/lib/feedTradeTypes";
 import {
   feedTradeToWhaleTrade,
@@ -8,8 +8,6 @@ import {
 } from "@/lib/whaleTweetNotifier";
 import { whaleTweetTestHooks } from "@/lib/sendWhaleTweet";
 import { MIN_WHALE_USD } from "@/lib/whaleTrades";
-
-process.env.BOT_API_SECRET = "test-secret";
 
 const kalshiFeedTrade: FeedTrade = {
   id: "trade-kalshi-1",
@@ -41,39 +39,44 @@ const polymarketWhale = {
   isLive: true,
 };
 
-let tweetCalls = 0;
+describe("whaleTweetNotifier", () => {
+  let tweetCalls = 0;
 
-whaleTweetTestHooks.override = async () => {
-  tweetCalls += 1;
-  return { ok: true, tweetId: "test-tweet" };
-};
+  beforeEach(() => {
+    process.env.BOT_API_SECRET = "test-secret";
+    tweetCalls = 0;
+    whaleTweetTestHooks.override = async () => {
+      tweetCalls += 1;
+      return { ok: true, tweetId: "test-tweet" };
+    };
+  });
 
-function resetTweetCalls(): void {
-  tweetCalls = 0;
-}
+  afterEach(() => {
+    whaleTweetTestHooks.override = undefined;
+  });
 
-console.log("whaleTweetNotifier tests");
+  it("does not tweet Kalshi feed trades", () => {
+    notifyKalshiFeedTradeIfEligible(kalshiFeedTrade);
+    expect(tweetCalls).toBe(0);
+  });
 
-resetTweetCalls();
-notifyKalshiFeedTradeIfEligible(kalshiFeedTrade);
-assert.equal(tweetCalls, 0, "Kalshi feed notifier must not tweet");
+  it("does not tweet Kalshi whale trades", () => {
+    const kalshiWhale = feedTradeToWhaleTrade(kalshiFeedTrade);
+    notifyWhaleTradeIfEligible(kalshiWhale);
+    expect(tweetCalls).toBe(0);
+  });
 
-resetTweetCalls();
-const kalshiWhale = feedTradeToWhaleTrade(kalshiFeedTrade);
-notifyWhaleTradeIfEligible(kalshiWhale);
-assert.equal(tweetCalls, 0, "Kalshi whale trades must not tweet");
+  it("tweets eligible Polymarket whale trades once", () => {
+    notifyWhaleTradeIfEligible(polymarketWhale);
+    expect(tweetCalls).toBe(1);
 
-resetTweetCalls();
-notifyWhaleTradeIfEligible(polymarketWhale);
-assert.equal(tweetCalls, 1, "Polymarket whale trades may tweet once");
+    notifyWhaleTradeIfEligible(polymarketWhale);
+    expect(tweetCalls).toBe(1);
+  });
 
-resetTweetCalls();
-notifyWhaleTradeIfEligible(polymarketWhale);
-assert.equal(tweetCalls, 0, "Polymarket whale tweets dedupe per trade");
-
-assert.equal(
-  whaleTradeDedupKey({ source: "kalshi", id: "t1", transactionHash: "" }),
-  "kalshi:t1"
-);
-
-console.log("✓ all whaleTweetNotifier tests passed");
+  it("builds stable dedupe keys", () => {
+    expect(
+      whaleTradeDedupKey({ source: "kalshi", id: "t1", transactionHash: "" })
+    ).toBe("kalshi:t1");
+  });
+});

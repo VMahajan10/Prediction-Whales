@@ -118,8 +118,8 @@ export function formatPhase2cMarkdownReport(input: {
     const api = r.apiLedgerMetrics;
     const combined = r.combinedLedgerMetrics;
     const materialChange =
-      api?.portfolioRealizedRoi !== combined.portfolioRealizedRoi ||
-      api?.completedPositionCount !== combined.completedPositionCount ||
+      api?.portfolioRealizedRoi !== combined?.portfolioRealizedRoi ||
+      api?.completedPositionCount !== combined?.completedPositionCount ||
       r.coverage.additionalHistoricalEvents > 0;
     lines.push(
       `**Chain history materially changes score:** ${materialChange ? "YES (partial — see coverage)" : "NO"}`,
@@ -127,7 +127,7 @@ export function formatPhase2cMarkdownReport(input: {
     );
     if (r.label === "high_avg_ev_truncated") {
       lines.push(
-        `**Can credibilityMetricsValid become true?** ${combined.credibilityMetricsValid ? "YES (with current scan)" : "NO — requires proven full history + resolved truncation reasons"}`,
+        `**Can credibilityMetricsValid become true?** ${combined?.credibilityMetricsValid ? "YES (with current scan)" : "NO — requires proven full history + resolved truncation reasons"}`,
         ""
       );
     }

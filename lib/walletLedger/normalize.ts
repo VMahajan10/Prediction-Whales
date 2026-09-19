@@ -1,3 +1,4 @@
+import { sortLedgerEventsCanonical } from "@/lib/walletLedger/eventOrder";
 import type {
   ActivityApiRow,
   TradeApiRow,
@@ -212,10 +213,7 @@ export function deduplicateLedgerEvents(
     }
   }
 
-  return [...byKey.values()].sort((a, b) => {
-    if (a.timestamp !== b.timestamp) return a.timestamp - b.timestamp;
-    return a.dedupeKey.localeCompare(b.dedupeKey);
-  });
+  return sortLedgerEventsCanonical([...byKey.values()]);
 }
 
 export function positionKey(event: Pick<WalletLedgerEvent, "conditionId" | "asset">): string {

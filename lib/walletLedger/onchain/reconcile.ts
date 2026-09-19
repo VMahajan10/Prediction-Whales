@@ -60,20 +60,25 @@ export function reconcileApiAndChainTrades(
     chainKeys.set(chainTradeKey(event), event);
   }
 
+  const chainByTx = new Map<string, WalletLedgerEvent[]>();
+  for (const event of chainKeys.values()) {
+    const tx = (event.txHash ?? "").toLowerCase();
+    if (!tx) continue;
+    const list = chainByTx.get(tx) ?? [];
+    list.push(event);
+    chainByTx.set(tx, list);
+  }
+
   const matchedTx = new Set<string>();
   let matched = 0;
-  for (const [key, row] of apiKeys.entries()) {
+  for (const [, row] of apiKeys.entries()) {
     const tx = (row.transactionHash ?? "").toLowerCase();
-    const chainMatch = [...chainKeys.values()].find(
-      (e) =>
-        (e.txHash ?? "").toLowerCase() === tx &&
-        Math.abs((e.shares ?? 0) - Number(row.size ?? 0)) < 0.01
+    const chainMatch = (chainByTx.get(tx) ?? []).find(
+      (e) => Math.abs((e.shares ?? 0) - Number(row.size ?? 0)) < 0.01
     );
     if (chainMatch) {
       matched += 1;
       matchedTx.add(tx);
-    } else if (key) {
-      // key used for iteration
     }
   }
 

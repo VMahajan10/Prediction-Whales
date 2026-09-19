@@ -256,11 +256,34 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
+export interface GammaPrefetchStats {
+  hintsTotal: number;
+  pending: number;
+  cacheHits: number;
+  conditionLookups: number;
+  backfillLookups: number;
+  skippedBackfill: number;
+  resolvedBefore: number;
+  resolvedAfter: number;
+  marketsFoundBefore: number;
+  marketsFoundAfter: number;
+  elapsedMs: number;
+}
+
 export class GammaResolutionCache {
   private readonly cache = new Map<string, GammaMarketResolution>();
+  private frozen = false;
 
   get(conditionId: string): GammaMarketResolution | undefined {
     return this.cache.get(normalizeConditionId(conditionId));
+  }
+
+  setFrozen(value: boolean): void {
+    this.frozen = value;
+  }
+
+  isFrozen(): boolean {
+    return this.frozen;
   }
 
   async resolve(
@@ -271,10 +294,13 @@ export class GammaResolutionCache {
     if (!key) return classifyGammaMarketRow(null, "", "missing");
     const cached = this.cache.get(key);
     if (cached) return cached;
+    if (this.frozen) {
+      return classifyGammaMarketRow(null, conditionId, "missing");
+    }
 
     const resolution = await resolveOneMarket({
       conditionId,
-      slugs: hint?.slugs ?? (hint?.slug ? [hint.slug] : []),
+      slugs: hint?.slugs ?? [],
       assets: hint?.assets ?? [],
     });
     this.cache.set(key, resolution);
@@ -285,17 +311,47 @@ export class GammaResolutionCache {
     this.cache.set(normalizeConditionId(conditionId), resolution);
   }
 
+  seedMany(entries: Iterable<[string, GammaMarketResolution]>): number {
+    let seeded = 0;
+    for (const [conditionId, resolution] of entries) {
+      const key = normalizeConditionId(conditionId);
+      if (!this.cache.has(key)) {
+        this.cache.set(key, resolution);
+        seeded += 1;
+      }
+    }
+    return seeded;
+  }
+
+  exportEntries(): Array<[string, GammaMarketResolution]> {
+    return [...this.cache.entries()];
+  }
+
   async prefetch(
     hints: MarketResolveHint[]
-  ): Promise<{
-    resolvedBefore: number;
-    resolvedAfter: number;
-    marketsFoundBefore: number;
-    marketsFoundAfter: number;
-  }> {
+  ): Promise<GammaPrefetchStats> {
+    const started = Date.now();
+    const hintsTotal = hints.length;
     const pending = hints.filter(
       (h) => h.conditionId.trim() && !this.cache.has(normalizeConditionId(h.conditionId))
     );
+    const cacheHits = hintsTotal - pending.length;
+
+    if (this.frozen || pending.length === 0) {
+      return {
+        hintsTotal,
+        pending: this.frozen ? pending.length : 0,
+        cacheHits,
+        conditionLookups: 0,
+        backfillLookups: 0,
+        skippedBackfill: 0,
+        resolvedBefore: this.countResolved(),
+        resolvedAfter: this.countResolved(),
+        marketsFoundBefore: this.countMarketFound(),
+        marketsFoundAfter: this.countMarketFound(),
+        elapsedMs: Date.now() - started,
+      };
+    }
 
     const conditionOnly = await mapWithConcurrency(
       pending,
@@ -311,23 +367,51 @@ export class GammaResolutionCache {
     const resolvedBefore = this.countResolved();
     const marketsFoundBefore = this.countMarketFound();
 
-    const backfilled = await mapWithConcurrency(
-      pending,
-      GAMMA_FETCH_CONCURRENCY,
-      (hint, idx) => backfillUnresolved(hint, conditionOnly[idx])
-    );
+    const backfillTargets: Array<{ hint: MarketResolveHint; idx: number }> = [];
+    let skippedBackfill = 0;
     for (let i = 0; i < pending.length; i += 1) {
+      const existing = conditionOnly[i];
+      const hint = pending[i];
+      if (existing.resolutionFinal) {
+        skippedBackfill += 1;
+        continue;
+      }
+      if (
+        !existing.marketFound &&
+        hint.slugs.length === 0 &&
+        hint.assets.length === 0
+      ) {
+        skippedBackfill += 1;
+        continue;
+      }
+      backfillTargets.push({ hint, idx: i });
+    }
+
+    const backfilled = await mapWithConcurrency(
+      backfillTargets,
+      GAMMA_FETCH_CONCURRENCY,
+      ({ hint, idx }) => backfillUnresolved(hint, conditionOnly[idx])
+    );
+    for (let i = 0; i < backfillTargets.length; i += 1) {
+      const { idx } = backfillTargets[i];
       this.cache.set(
-        normalizeConditionId(pending[i].conditionId),
+        normalizeConditionId(pending[idx].conditionId),
         backfilled[i]
       );
     }
 
     return {
+      hintsTotal,
+      pending: pending.length,
+      cacheHits,
+      conditionLookups: pending.length,
+      backfillLookups: backfillTargets.length,
+      skippedBackfill,
       resolvedBefore,
       resolvedAfter: this.countResolved(),
       marketsFoundBefore,
       marketsFoundAfter: this.countMarketFound(),
+      elapsedMs: Date.now() - started,
     };
   }
 

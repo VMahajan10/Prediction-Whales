@@ -29,6 +29,7 @@ import { findWhaleByWalletCaseInsensitive } from "@/lib/x-agent/whaleRegistryDb"
 import { resolveWalletHydrationStatus } from "@/lib/x-agent/walletHydrationState";
 import type { WhaleRegistry } from "@/lib/crossmarket/store/schema";
 import { enrichTradesWithWhaleAlias } from "@/lib/trades/getTrades";
+import { schedulePolicyAShadowForTradeGateQualifiedTrades } from "@/lib/walletLedger/indexed/shadow/policyACoverageShadow";
 
 export interface WalletFeedQualification extends WalletFeedQualificationInput {
   qualified: boolean;
@@ -272,9 +273,23 @@ export async function collectPolymarketFeedCandidates<
     });
   }
 
+  const walletQualifications =
+    options?.walletQualifications ??
+    (await qualifyWalletsForFeed(
+      candidates
+        .map((trade) => trade.proxyWallet?.trim().toLowerCase())
+        .filter((wallet): wallet is string => Boolean(wallet))
+    ));
+
+  schedulePolicyAShadowForTradeGateQualifiedTrades(
+    candidates,
+    walletQualifications,
+    { tradesDetected: trades.length }
+  );
+
   const traderQualified = await filterPolymarketTradesByWalletCredibility(
     candidates,
-    options?.walletQualifications
+    walletQualifications
   );
 
   recordFeedMetrics({
@@ -335,8 +350,21 @@ export async function filterQualifiedPolymarketFeedTrades<
     });
   }
 
-  const traderQualified = await filterPolymarketTradesByWalletCredibility(
+  const walletQualifications = await qualifyWalletsForFeed(
     qualified
+      .map((trade) => trade.proxyWallet?.trim().toLowerCase())
+      .filter((wallet): wallet is string => Boolean(wallet))
+  );
+
+  schedulePolicyAShadowForTradeGateQualifiedTrades(
+    qualified,
+    walletQualifications,
+    { tradesDetected: trades.length }
+  );
+
+  const traderQualified = await filterPolymarketTradesByWalletCredibility(
+    qualified,
+    walletQualifications
   );
 
   recordFeedMetrics({

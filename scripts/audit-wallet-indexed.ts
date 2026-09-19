@@ -18,6 +18,7 @@ import {
   estimateIndexedFeasibility,
   runIndexedWalletAudit,
 } from "@/lib/walletLedger/indexed/pipeline";
+import { setAuditProgressEnabled } from "@/lib/walletLedger/indexed/auditProgress";
 import { formatPhase2dMarkdownReport } from "@/lib/walletLedger/indexed/report";
 import type { IndexedProviderId } from "@/lib/walletLedger/indexed/types";
 
@@ -43,10 +44,14 @@ function parseArgs(argv: string[]): {
   providerId?: IndexedProviderId;
   maxBlocksToScan: number;
   fullHistory: boolean;
+  debug: boolean;
+  resumeCheckpoint: boolean;
 } {
   let providerId: IndexedProviderId | undefined;
   let maxBlocksToScan = 500_000;
   let fullHistory = false;
+  let debug = false;
+  let resumeCheckpoint = true;
   const wallets: Array<{ label: string; wallet: string; transactionHash?: string }> =
     [];
 
@@ -58,6 +63,10 @@ function parseArgs(argv: string[]): {
       maxBlocksToScan = Number(argv[++i]);
     } else if (arg === "--full-history") {
       fullHistory = true;
+    } else if (arg === "--debug") {
+      debug = true;
+    } else if (arg === "--no-resume") {
+      resumeCheckpoint = false;
     } else if (arg === "--wallet" && argv[i + 1]) {
       wallets.push({ label: `custom_${wallets.length + 1}`, wallet: argv[++i] });
     }
@@ -68,6 +77,8 @@ function parseArgs(argv: string[]): {
     providerId,
     maxBlocksToScan,
     fullHistory,
+    debug,
+    resumeCheckpoint,
   };
 }
 
@@ -79,7 +90,7 @@ function printSummary(
     `Provider available: ${result.providerProbe.available} (${result.providerProbe.error ?? "ok"})`
   );
   console.log(
-    `Fetch: requests=${result.fetchStats.requests} pages=${result.fetchStats.pages} logs=${result.fetchStats.logsReturned} duration=${(result.fetchStats.elapsedMs / 1000).toFixed(1)}s errors=${result.fetchStats.errors.length}`
+    `Fetch: requests=${result.fetchStats.requests} pages=${result.fetchStats.pages} rateLimitHits=${result.fetchStats.rateLimitHits} logs=${result.fetchStats.logsReturned} duration=${(result.fetchStats.elapsedMs / 1000).toFixed(1)}s errors=${result.fetchStats.errors.length}`
   );
   console.log(
     `Coverage: api=${result.coverage.apiEventCount} indexed=${result.coverage.indexedEventCount} beforeApi=${result.coverage.eventsBeforeApiBoundary} extends=${result.extendsBeforeApiBoundary}`
@@ -90,23 +101,71 @@ function printSummary(
   console.log(
     `Metrics: credible ${result.credibilityMetricsValidBefore} → ${result.credibilityMetricsValidAfter}; historyComplete ${result.historyCompleteBefore} → ${result.historyCompleteAfter}`
   );
+  if (result.historyCompletenessBreakdown) {
+    const b = result.historyCompletenessBreakdown;
+    console.log(
+      `History completeness: event=${b.eventHistoryComplete} resolution=${b.resolutionComplete} identity=${b.identityComplete} truncation=${b.truncationDetected} openPositions=${b.openPositions} gammaIncomplete=${b.gammaResolutionIncomplete} certified=${b.certifiedHistoryComplete}`
+    );
+  }
+  if (result.blockTimestampStats) {
+    const ts = result.blockTimestampStats;
+    console.log(
+      `Block timestamps: unique=${ts.requestedUnique} diskLoaded=${ts.diskEntriesLoaded} hits=${ts.hits} misses=${ts.misses} logSeeded=${ts.logSeededUnique} logicalRpc=${ts.logicalRpcLookups} rpcAttempts=${ts.rpcAttempts} retries=${ts.retries} failures=${ts.failures} persisted=${ts.persistedEntries} elapsed=${(ts.elapsedMs / 1000).toFixed(1)}s`
+    );
+  }
+  if (result.gammaPrefetchStats) {
+    const g = result.gammaPrefetchStats;
+    console.log(
+      `Gamma prefetch: hints=${g.hintsTotal} pending=${g.pending} conditionLookups=${g.conditionLookups} backfill=${g.backfillLookups} skippedBackfill=${g.skippedBackfill} elapsed=${(g.elapsedMs / 1000).toFixed(1)}s`
+    );
+  }
   console.log(
     `Positions: api=${result.apiOnlyPositions}/${result.apiCompletedPositions} completed → indexed=${result.indexedPositions}/${result.indexedCompletedPositions}`
   );
 }
 
 async function main(): Promise<void> {
-  const { wallets, providerId, maxBlocksToScan, fullHistory } = parseArgs(
-    process.argv.slice(2)
-  );
+  const { wallets, providerId, maxBlocksToScan, fullHistory, debug, resumeCheckpoint } =
+    parseArgs(process.argv.slice(2));
+
+  if (debug || fullHistory) {
+    setAuditProgressEnabled(true);
+  }
 
   console.error("[audit:wallet-indexed] evaluating providers...");
   const providerEvaluations = await evaluateIndexedProviders();
   for (const ev of providerEvaluations) {
+    const probeError =
+      ev.probe.error == null
+        ? "none"
+        : ev.probe.error === ""
+          ? "<empty string>"
+          : ev.probe.error;
     console.error(
-      `  ${ev.providerId}: available=${ev.probe.available} latency=${ev.probe.probeLatencyMs}ms error=${ev.probe.error ?? "none"}`
+      `  ${ev.providerId}: available=${ev.probe.available} latency=${ev.probe.probeLatencyMs}ms error=${probeError}`
     );
   }
+
+  const testingEtherscan = !providerId || providerId === "etherscan_v2";
+  if (testingEtherscan) {
+    const etherscan = providerEvaluations.find(
+      (ev) => ev.providerId === "etherscan_v2"
+    );
+    if (!etherscan?.probe.available) {
+      const reason =
+        etherscan?.probe.error == null || etherscan.probe.error === ""
+          ? "etherscan_v2_unavailable_empty_error (run npm run check:indexed-provider)"
+          : etherscan.probe.error;
+      console.error(
+        `[audit:wallet-indexed] FAIL FAST: Etherscan V2 unavailable; not falling back to full_history_rpc. reason=${reason}`
+      );
+      process.exit(1);
+    }
+  }
+
+  const effectiveProviderId: IndexedProviderId | undefined = testingEtherscan
+    ? "etherscan_v2"
+    : providerId;
 
   const results = [];
   for (const spec of wallets) {
@@ -115,9 +174,12 @@ async function main(): Promise<void> {
     );
     const result = await runIndexedWalletAudit({
       ...spec,
-      providerId,
+      providerId: effectiveProviderId,
+      providerEvaluations,
       maxBlocksToScan,
       fullHistory,
+      debug,
+      resumeCheckpoint,
     });
     results.push(result);
     printSummary(result);

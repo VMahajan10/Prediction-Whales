@@ -22,6 +22,11 @@ export interface ComputeWalletLedgerMetricsInput {
   gammaCoverage: GammaCoverageReport;
   mergeSplit: MergeSplitImpactReport;
   hasHistoryEvents: boolean;
+  historicalBackfillRequired?: boolean;
+  unresolvedChainOrderBlocksCredibility?: boolean;
+  unresolvedChainEvents?: number;
+  unresolvedChainEventsInLifecycle?: number;
+  affectedPositionGroups?: number;
 }
 
 function bundleToTopLevel(bundle: CredibilityMetricBundle): Pick<
@@ -67,6 +72,12 @@ export function computeWalletLedgerMetrics(
     resolutionCoverage,
     mergeSplit: input.mergeSplit,
     hasHistoryEvents: input.hasHistoryEvents,
+    historicalBackfillRequired: input.historicalBackfillRequired,
+    unresolvedChainOrderBlocksCredibility:
+      input.unresolvedChainOrderBlocksCredibility,
+    unresolvedChainEvents: input.unresolvedChainEvents,
+    unresolvedChainEventsInLifecycle: input.unresolvedChainEventsInLifecycle,
+    affectedPositionGroups: input.affectedPositionGroups,
   });
 
   const openPositionCount = input.positions.filter((p) => !p.completed).length;

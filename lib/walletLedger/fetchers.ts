@@ -1,5 +1,13 @@
-import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
+import { FetchTimeoutError, fetchTextWithTimeout } from "@/lib/fetchWithTimeout";
 import { mergeOutboundHeaders } from "@/lib/outboundHttp";
+import {
+  auditLog,
+  isAuditProgressEnabled,
+} from "@/lib/walletLedger/indexed/auditProgress";
+import {
+  isCodeDefectError,
+  recordWalletFailure,
+} from "@/lib/walletLedger/indexed/shadow/infraClassification";
 import {
   ACTIVITY_API_MAX_ROWS,
   DATA_API_PAGE_SIZE,
@@ -15,35 +23,48 @@ import type {
 } from "@/lib/walletLedger/types";
 
 const JSON_HEADERS = mergeOutboundHeaders({ Accept: "application/json" });
+export const DATA_API_REQUEST_TIMEOUT_MS = 20_000;
+const DATA_API_MAX_PAGE_ATTEMPTS = 3;
 
 async function fetchDataApiPage<T>(
   path: string,
   wallet: string,
   limit: number,
   offset: number
-): Promise<{ rows: T[]; error?: string }> {
+): Promise<{ rows: T[]; error?: string; timedOut?: boolean }> {
   const url = `${POLYMARKET_DATA_API_BASE}${path}?user=${encodeURIComponent(wallet)}&limit=${limit}&offset=${offset}`;
-  try {
-    const res = await fetchWithTimeout(url, { headers: JSON_HEADERS });
-    const text = await res.text();
-    if (!res.ok) {
-      let message = `HTTP ${res.status}`;
-      try {
-        const parsed = JSON.parse(text) as { error?: string };
-        if (parsed.error) message = parsed.error;
-      } catch {
-        // ignore
+  let lastError: string | undefined;
+  for (let attempt = 0; attempt < DATA_API_MAX_PAGE_ATTEMPTS; attempt += 1) {
+    try {
+      const { response: res, text } = await fetchTextWithTimeout(url, {
+        headers: JSON_HEADERS,
+        timeoutMs: DATA_API_REQUEST_TIMEOUT_MS,
+      });
+      if (!res.ok) {
+        let message = `HTTP ${res.status}`;
+        try {
+          const parsed = JSON.parse(text) as { error?: string };
+          if (parsed.error) message = parsed.error;
+        } catch {
+          // ignore
+        }
+        lastError = message;
+        if ((res.status === 429 || res.status >= 500) && attempt < DATA_API_MAX_PAGE_ATTEMPTS - 1) {
+          continue;
+        }
+        return { rows: [], error: message };
       }
-      return { rows: [], error: message };
+      const data = JSON.parse(text) as unknown;
+      return { rows: Array.isArray(data) ? (data as T[]) : [] };
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      const timedOut = error instanceof FetchTimeoutError;
+      if (attempt >= DATA_API_MAX_PAGE_ATTEMPTS - 1) {
+        return { rows: [], error: lastError, timedOut };
+      }
     }
-    const data = JSON.parse(text) as unknown;
-    return { rows: Array.isArray(data) ? (data as T[]) : [] };
-  } catch (error) {
-    return {
-      rows: [],
-      error: error instanceof Error ? error.message : String(error),
-    };
   }
+  return { rows: [], error: lastError ?? "data_api_page_failed" };
 }
 
 export interface PaginateOptions {
@@ -78,14 +99,22 @@ export async function paginateDataApi<T>(
   let error: string | undefined;
 
   for (let offset = 0; offset <= maxOffset && rows.length < maxRows; offset += pageSize) {
+    const pageStarted = Date.now();
     const page = await fetchDataApiPage<T>(path, wallet, pageSize, offset);
     pagesFetched += 1;
     maxOffsetReached = offset;
+    if (isAuditProgressEnabled()) {
+      auditLog(
+        `[audit-stage] data_api_page path=${path} offset=${offset} rows=${page.rows.length} elapsedMs=${Date.now() - pageStarted}`
+      );
+    }
 
     if (page.error) {
       error = page.error;
+      if (page.timedOut || page.rows.length === 0) {
+        truncated = true;
+      }
       if (page.rows.length === 0) {
-        truncated = rows.length > 0 || offset > 0;
         break;
       }
     }
@@ -143,13 +172,44 @@ export async function fetchTradeHistory(
 export async function fetchPositionsSnapshot(
   wallet: string
 ): Promise<PositionApiRow[]> {
+  const started = Date.now();
+  if (isAuditProgressEnabled()) {
+    auditLog(
+      `[audit-stage] start positions_fetch wallet=${wallet.slice(0, 10)}…`
+    );
+  }
   const url = `${POLYMARKET_DATA_API_BASE}/positions?user=${encodeURIComponent(wallet)}`;
   try {
-    const res = await fetchWithTimeout(url, { headers: JSON_HEADERS });
-    if (!res.ok) return [];
-    const data = (await res.json()) as unknown;
-    return Array.isArray(data) ? (data as PositionApiRow[]) : [];
-  } catch {
+    const { response: res, text } = await fetchTextWithTimeout(url, {
+      headers: JSON_HEADERS,
+      timeoutMs: DATA_API_REQUEST_TIMEOUT_MS,
+    });
+    if (!res.ok) {
+      if (isAuditProgressEnabled()) {
+        auditLog(
+          `[audit-stage] end positions_fetch elapsedMs=${Date.now() - started} rows=0 http=${res.status}`
+        );
+      }
+      return [];
+    }
+    const data = JSON.parse(text) as unknown;
+    const rows = Array.isArray(data) ? (data as PositionApiRow[]) : [];
+    if (isAuditProgressEnabled()) {
+      auditLog(
+        `[audit-stage] end positions_fetch elapsedMs=${Date.now() - started} rows=${rows.length}`
+      );
+    }
+    return rows;
+  } catch (error) {
+    recordWalletFailure(wallet, "positions_fetch", error);
+    if (isAuditProgressEnabled()) {
+      auditLog(
+        `[audit-stage] end positions_fetch elapsedMs=${Date.now() - started} error=${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+    if (isCodeDefectError(error)) {
+      throw error;
+    }
     return [];
   }
 }
