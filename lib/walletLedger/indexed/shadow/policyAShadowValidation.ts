@@ -7,7 +7,12 @@ import { gte, sql } from "drizzle-orm";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getDb } from "@/lib/crossmarket/store/db";
-import { feedTrades, xPostLog, type FeedTrade } from "@/lib/crossmarket/store/schema";
+import {
+  feedTrades,
+  policyAShadowTradeObservations,
+  xPostLog,
+  type FeedTrade,
+} from "@/lib/crossmarket/store/schema";
 import { resolveStrictPolymarketTranslationFromPayload } from "@/lib/feed/persistedFeedTranslation";
 import {
   meetsProductFeedEvThreshold,
@@ -33,12 +38,16 @@ export const POLICY_A_SHADOW_ENGINEERING_FROZEN = true;
 export type ProductionGateDecision = "PASS" | "FAIL" | "UNKNOWN";
 export type ShadowUnknownReportReason =
   | "unresolved_chain_order"
+  | "identity_related"
   | "insufficient_completed_positions"
   | "incomplete_indexed_history"
   | "no_indexed_history"
   | "hydration_pending"
-  | "identity_related"
+  | "hydration_failed"
   | "other";
+
+/** Policy A completed-positions floor — reporting reference only. */
+export const POLICY_A_COMPLETED_POSITIONS_FLOOR = 10;
 
 export type ShadowFinalRecommendation =
   | "READY_FOR_ENFORCEMENT_IMPACT_REVIEW"
@@ -71,7 +80,7 @@ export interface ShadowPeriodState {
 
 export interface PriorityRepairEntry {
   wallet: string;
-  policyAUnknownReason: ProductionWalletUnknownReason | null;
+  policyAUnknownReason: ShadowUnknownReportReason;
   feedVisibleTradeCount: number;
   tradeGateQualifiedTradeCount: number;
   passesProductionWalletGate: boolean;
@@ -99,6 +108,28 @@ export interface ForwardPerformanceBucket {
   tradesBelowEvFloor: number;
   badBetRateProxy: number | null;
   note: string;
+}
+
+export interface ForwardPerformanceDiagnostics {
+  observationStart: string;
+  shadowObservationRowsSinceStart: number;
+  feedVisibleTradesSinceStart: number;
+  expectedQualifyingPass: number;
+  expectedQualifyingFail: number;
+  actualQualifyingPass: number;
+  actualQualifyingFail: number;
+  exclusions: {
+    beforeObservationStart: number;
+    missingTimestamp: number;
+    walletNotInFrozenBaseline: number;
+    frozenPolicyAUnknown: number;
+    frozenPolicyAOther: number;
+    duplicateTradeIdsCollapsed: number;
+  };
+  dataSources: {
+    shadowObservations: number;
+    feedTrades: number;
+  };
 }
 
 export interface DailyShadowReport {
@@ -152,6 +183,13 @@ export interface DailyShadowReport {
     pass: ForwardPerformanceBucket;
     fail: ForwardPerformanceBucket;
     contaminationGuard: string;
+    diagnostics: ForwardPerformanceDiagnostics;
+  };
+  liveShadowWrites?: {
+    latestObservationAt: string | null;
+    observationsSinceShadowStart: number;
+    distinctWalletsSinceShadowStart: number;
+    distinctTradesSinceShadowStart: number;
   };
   recommendation: ShadowFinalRecommendation;
   materiallyAffectedExamples: Array<{
@@ -197,31 +235,117 @@ export function classifyProductionGate(input: {
   return input.passesProductionWalletGate ? "PASS" : "FAIL";
 }
 
+function hasIdentityMetricSignals(metricReasons: string[]): boolean {
+  return metricReasons.some(
+    (reason) =>
+      reason.startsWith("identity_") ||
+      reason === "positions_without_history_events"
+  );
+}
+
+function isTrustworthyLowSampleTerminalUnknown(
+  member: ProductionWalletCohortMember
+): boolean {
+  return (
+    member.hasValidDurableCoverage &&
+    member.historyValidity === "partial-but-metrics-safe" &&
+    (member.completedPositions ?? 0) < POLICY_A_COMPLETED_POSITIONS_FLOOR
+  );
+}
+
+/**
+ * Shadow-report UNKNOWN reason with explicit terminal-trust precedence.
+ * Reporting only — does not alter Policy A eligibility or hydration.
+ *
+ * Precedence:
+ * 1. unresolved_chain_order
+ * 2. identity_related
+ * 3. insufficient_completed_positions
+ * 4. incomplete_indexed_history
+ * 5. no_indexed_history
+ * 6. hydration_pending
+ * 7. hydration_failed
+ * 8. other
+ */
+export function classifyShadowUnknownReportReason(
+  member: ProductionWalletCohortMember,
+  metricReasons: string[] = []
+): ShadowUnknownReportReason {
+  const raw = member.policyAUnknownReason;
+
+  if (
+    raw === "unresolved_chain_order" ||
+    metricReasons.includes("unresolved_chain_order")
+  ) {
+    return "unresolved_chain_order";
+  }
+
+  if (raw === "invalid_indexed_history" || hasIdentityMetricSignals(metricReasons)) {
+    return "identity_related";
+  }
+
+  if (
+    raw === "insufficient_completed_positions" ||
+    isTrustworthyLowSampleTerminalUnknown(member)
+  ) {
+    return "insufficient_completed_positions";
+  }
+
+  if (raw === "incomplete_indexed_history") {
+    return "incomplete_indexed_history";
+  }
+
+  if (
+    raw === "no_indexed_history" ||
+    (raw === "missing_metrics" && !member.hasIndexedMetrics)
+  ) {
+    return "no_indexed_history";
+  }
+  if (!member.hasIndexedMetrics && !member.hasIndexedCoverage) {
+    return "no_indexed_history";
+  }
+
+  if (raw === "hydration_pending" || member.productionHydrationState === "pending") {
+    return "hydration_pending";
+  }
+
+  if (raw === "hydration_failed" || member.productionHydrationState === "failed") {
+    return "hydration_failed";
+  }
+
+  return "other";
+}
+
+/** @deprecated Prefer classifyShadowUnknownReportReason with full member context. */
 export function mapUnknownReasonToReportCategory(
   reason: ProductionWalletUnknownReason | null,
   metricReasons: string[] = []
 ): ShadowUnknownReportReason {
-  if (!reason) return "other";
-  if (reason === "unresolved_chain_order") return "unresolved_chain_order";
-  if (reason === "insufficient_completed_positions") {
-    return "insufficient_completed_positions";
-  }
-  if (reason === "incomplete_indexed_history") return "incomplete_indexed_history";
-  if (reason === "no_indexed_history") return "no_indexed_history";
-  if (reason === "hydration_pending") return "hydration_pending";
-  if (
-    reason === "hydration_failed" ||
-    reason === "invalid_indexed_history" ||
-    metricReasons.some((r) => r.startsWith("identity_"))
-  ) {
-    return "identity_related";
-  }
-  if (reason === "missing_metrics") {
-    return metricReasons.some((r) => r.startsWith("identity_"))
-      ? "identity_related"
-      : "other";
-  }
-  return "other";
+  return classifyShadowUnknownReportReason(
+    {
+      wallet: "",
+      priorityTier: 4,
+      inFeedTrades: false,
+      feedVisibleTradeCount: 0,
+      inXPostLog: false,
+      xPostLogTradeCount: 0,
+      passesProductionWalletGate: false,
+      tradeGateQualifiedTradeCount: 0,
+      productionHydrationState: "unknown",
+      hasIndexedCoverage: false,
+      hasIndexedMetrics: false,
+      indexedDataValidity: false,
+      policyADecision: "UNKNOWN",
+      policyAUnknownReason: reason,
+      completedPositions: null,
+      realizedRoi: null,
+      profitablePositionRate: null,
+      historyValidity: null,
+      historyComplete: null,
+      hasValidDurableCoverage: false,
+    },
+    metricReasons
+  );
 }
 
 export function buildUnknownReasonBreakdown(
@@ -230,17 +354,18 @@ export function buildUnknownReasonBreakdown(
 ): Record<ShadowUnknownReportReason, number> {
   const breakdown: Record<ShadowUnknownReportReason, number> = {
     unresolved_chain_order: 0,
+    identity_related: 0,
     insufficient_completed_positions: 0,
     incomplete_indexed_history: 0,
     no_indexed_history: 0,
     hydration_pending: 0,
-    identity_related: 0,
+    hydration_failed: 0,
     other: 0,
   };
   for (const member of members) {
     if (member.policyADecision !== "UNKNOWN") continue;
-    const category = mapUnknownReasonToReportCategory(
-      member.policyAUnknownReason,
+    const category = classifyShadowUnknownReportReason(
+      member,
       metricReasonsByWallet[member.wallet] ?? []
     );
     breakdown[category] += 1;
@@ -250,7 +375,8 @@ export function buildUnknownReasonBreakdown(
 
 export function buildPriorityRepairQueue(
   members: ProductionWalletCohortMember[],
-  promotedAt: string
+  promotedAt: string,
+  metricReasonsByWallet: Record<string, string[]> = {}
 ): PriorityRepairEntry[] {
   const queue: PriorityRepairEntry[] = [];
   for (const member of members) {
@@ -262,7 +388,10 @@ export function buildPriorityRepairQueue(
     if (!feedVisible && !materiallyActive) continue;
     queue.push({
       wallet: member.wallet,
-      policyAUnknownReason: member.policyAUnknownReason,
+      policyAUnknownReason: classifyShadowUnknownReportReason(
+        member,
+        metricReasonsByWallet[member.wallet] ?? []
+      ),
       feedVisibleTradeCount: member.feedVisibleTradeCount,
       tradeGateQualifiedTradeCount: member.tradeGateQualifiedTradeCount,
       passesProductionWalletGate: member.passesProductionWalletGate,
@@ -280,8 +409,27 @@ export function buildPriorityRepairQueue(
   );
 }
 
+export function buildWalletFeedVisibleStakeMap(
+  feedRows: FeedTrade[],
+  qualifications: Awaited<ReturnType<typeof qualifyWalletsForFeed>>
+): Map<string, number> {
+  const stakeByWallet = new Map<string, number>();
+  for (const row of feedRows) {
+    const wallet = row.proxyWallet?.trim().toLowerCase();
+    if (!wallet) continue;
+    const { currentFeedVisible, stakeUsd } = evaluateFeedTradeVisibility(
+      row,
+      qualifications
+    );
+    if (!currentFeedVisible) continue;
+    stakeByWallet.set(wallet, (stakeByWallet.get(wallet) ?? 0) + stakeUsd);
+  }
+  return stakeByWallet;
+}
+
 export function buildProductionGateConfusionMatrix(
-  members: ProductionWalletCohortMember[]
+  members: ProductionWalletCohortMember[],
+  walletFeedVisibleStakeUsd: Map<string, number> = new Map()
 ): ConfusionMatrixCell[] {
   const cells = new Map<string, ConfusionMatrixCell>();
   for (const member of members) {
@@ -302,6 +450,7 @@ export function buildProductionGateConfusionMatrix(
     existing.walletCount += 1;
     existing.feedVisibleTradeCount += member.feedVisibleTradeCount;
     existing.tradeGateQualifiedTradeCount += member.tradeGateQualifiedTradeCount;
+    existing.totalStakeUsd += walletFeedVisibleStakeUsd.get(member.wallet) ?? 0;
     cells.set(key, existing);
   }
   return [...cells.values()].sort(
@@ -413,14 +562,18 @@ function evaluateFeedTradeVisibility(
   return { passesTradeGates, currentFeedVisible, stakeUsd };
 }
 
+interface ForwardPerformanceTrade {
+  tradeId: string;
+  wallet: string;
+  stakeUsd: number;
+  tradeEvPercent: number | null;
+  tradedAt: Date;
+  source: "shadow_observation" | "feed_trade";
+}
+
 function buildForwardPerformanceBucket(
   classification: "PASS" | "FAIL",
-  trades: Array<{
-    wallet: string;
-    stakeUsd: number;
-    tradeEvPercent: number | null;
-    tradedAt: Date;
-  }>,
+  trades: ForwardPerformanceTrade[],
   frozenClassifications: ShadowPeriodState["walletClassifications"],
   observationStart: string
 ): ForwardPerformanceBucket {
@@ -446,7 +599,191 @@ function buildForwardPerformanceBucket(
     badBetRateProxy:
       evValues.length > 0 ? pct(belowEv, evValues.length) : null,
     note:
-      "Forward trades only (post shadow start). badBetRateProxy = share with trade EV below +3% floor; realized outcomes not yet wired.",
+      "Post-shadow-start trade-gate-qualified trades for frozen PASS/FAIL wallets. Uses shadow observations when available; no realized outcomes required.",
+  };
+}
+
+async function loadForwardPerformanceTrades(input: {
+  observationStart: string;
+  feedRows: FeedTrade[];
+  qualifications: Awaited<ReturnType<typeof qualifyWalletsForFeed>>;
+}): Promise<ForwardPerformanceTrade[]> {
+  const startMs = new Date(input.observationStart).getTime();
+  const byTradeId = new Map<string, ForwardPerformanceTrade>();
+
+  const db = getDb();
+  const observationRows = await db
+    .select()
+    .from(policyAShadowTradeObservations)
+    .where(
+      gte(
+        policyAShadowTradeObservations.observedAt,
+        new Date(input.observationStart)
+      )
+    );
+
+  for (const row of observationRows) {
+    const wallet = row.walletAddress.toLowerCase();
+    const tradedAt = row.tradedAt ?? row.observedAt;
+    if (!tradedAt) continue;
+    const tradeKey = `${row.source}:${row.tradeId}`;
+    byTradeId.set(tradeKey, {
+      tradeId: row.tradeId,
+      wallet,
+      stakeUsd: row.stakeUsd ?? 0,
+      tradeEvPercent: row.tradeEvPercent,
+      tradedAt,
+      source: "shadow_observation",
+    });
+  }
+
+  for (const row of input.feedRows) {
+    const wallet = row.proxyWallet?.trim().toLowerCase();
+    if (!wallet) continue;
+    const { passesTradeGates } = evaluateFeedTradeVisibility(
+      row,
+      input.qualifications
+    );
+    if (!passesTradeGates) continue;
+    if (row.tradedAt.getTime() < startMs) continue;
+    const tradeKey = `feed_trade:${row.tradeId}`;
+    if (byTradeId.has(tradeKey)) continue;
+    byTradeId.set(tradeKey, {
+      tradeId: row.tradeId,
+      wallet,
+      stakeUsd: row.stakeAmount,
+      tradeEvPercent: row.averageEv,
+      tradedAt: row.tradedAt,
+      source: "feed_trade",
+    });
+  }
+
+  return [...byTradeId.values()];
+}
+
+export function analyzeForwardPerformanceExclusions(input: {
+  observationStart: string;
+  trades: ForwardPerformanceTrade[];
+  frozenClassifications: ShadowPeriodState["walletClassifications"];
+}): ForwardPerformanceDiagnostics {
+  const startMs = new Date(input.observationStart).getTime();
+  const exclusions = {
+    beforeObservationStart: 0,
+    missingTimestamp: 0,
+    walletNotInFrozenBaseline: 0,
+    frozenPolicyAUnknown: 0,
+    frozenPolicyAOther: 0,
+    duplicateTradeIdsCollapsed: 0,
+  };
+
+  let expectedQualifyingPass = 0;
+  let expectedQualifyingFail = 0;
+  let actualQualifyingPass = 0;
+  let actualQualifyingFail = 0;
+
+  const shadowRows = input.trades.filter(
+    (t) => t.source === "shadow_observation"
+  ).length;
+  const feedRows = input.trades.filter((t) => t.source === "feed_trade").length;
+
+  for (const trade of input.trades) {
+    if (!trade.tradedAt) {
+      exclusions.missingTimestamp += 1;
+      continue;
+    }
+    if (trade.tradedAt.getTime() < startMs) {
+      exclusions.beforeObservationStart += 1;
+      continue;
+    }
+    const baseline = input.frozenClassifications[trade.wallet];
+    if (!baseline) {
+      exclusions.walletNotInFrozenBaseline += 1;
+      continue;
+    }
+    if (baseline.policyA === "UNKNOWN") {
+      exclusions.frozenPolicyAUnknown += 1;
+      continue;
+    }
+    if (baseline.policyA !== "PASS" && baseline.policyA !== "FAIL") {
+      exclusions.frozenPolicyAOther += 1;
+      continue;
+    }
+    if (baseline.policyA === "PASS") {
+      expectedQualifyingPass += 1;
+      actualQualifyingPass += 1;
+    } else {
+      expectedQualifyingFail += 1;
+      actualQualifyingFail += 1;
+    }
+  }
+
+  const feedVisibleSinceStart = input.trades.filter(
+    (t) => t.tradedAt.getTime() >= startMs
+  ).length;
+
+  return {
+    observationStart: input.observationStart,
+    shadowObservationRowsSinceStart: shadowRows,
+    feedVisibleTradesSinceStart: feedVisibleSinceStart,
+    expectedQualifyingPass,
+    expectedQualifyingFail,
+    actualQualifyingPass,
+    actualQualifyingFail,
+    exclusions,
+    dataSources: {
+      shadowObservations: shadowRows,
+      feedTrades: feedRows,
+    },
+  };
+}
+
+export async function diagnoseForwardPerformance(): Promise<ForwardPerformanceDiagnostics> {
+  const shadowState = loadShadowPeriodState();
+  const observationStart =
+    shadowState?.startedAt ?? new Date().toISOString();
+  const lookbackDays = 30;
+  const since = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000);
+  const db = getDb();
+  const feedRows = await db
+    .select()
+    .from(feedTrades)
+    .where(gte(feedTrades.tradedAt, since));
+  const wallets = feedRows
+    .map((r) => r.proxyWallet?.toLowerCase() ?? "")
+    .filter(Boolean);
+  const qualifications = await qualifyWalletsForFeed([...new Set(wallets)]);
+  const trades = await loadForwardPerformanceTrades({
+    observationStart,
+    feedRows,
+    qualifications,
+  });
+  return analyzeForwardPerformanceExclusions({
+    observationStart,
+    trades,
+    frozenClassifications: shadowState?.walletClassifications ?? {},
+  });
+}
+
+async function loadLiveShadowWriteStats(
+  observationStart: string
+): Promise<DailyShadowReport["liveShadowWrites"]> {
+  const db = getDb();
+  const since = new Date(observationStart);
+  const [stats] = await db
+    .select({
+      count: sql<number>`count(*)::int`,
+      distinctWallets: sql<number>`count(distinct ${policyAShadowTradeObservations.walletAddress})::int`,
+      distinctTrades: sql<number>`count(distinct ${policyAShadowTradeObservations.tradeId})::int`,
+      latestAt: sql<string | null>`max(${policyAShadowTradeObservations.observedAt})`,
+    })
+    .from(policyAShadowTradeObservations)
+    .where(gte(policyAShadowTradeObservations.observedAt, since));
+
+  return {
+    latestObservationAt: stats?.latestAt ?? null,
+    observationsSinceShadowStart: stats?.count ?? 0,
+    distinctWalletsSinceShadowStart: stats?.distinctWallets ?? 0,
+    distinctTradesSinceShadowStart: stats?.distinctTrades ?? 0,
   };
 }
 
@@ -553,12 +890,10 @@ export async function buildDailyShadowReport(input?: {
   let stakeAffected = 0;
   let stakeRetained = 0;
 
-  const forwardTradeRows: Array<{
-    wallet: string;
-    stakeUsd: number;
-    tradeEvPercent: number | null;
-    tradedAt: Date;
-  }> = [];
+  const walletFeedVisibleStakeUsd = buildWalletFeedVisibleStakeMap(
+    feedRows,
+    qualifications
+  );
 
   for (const row of feedRows) {
     const wallet = row.proxyWallet?.trim().toLowerCase();
@@ -569,12 +904,6 @@ export async function buildDailyShadowReport(input?: {
     if (!currentFeedVisible) continue;
     tradesCurrentlyVisible += 1;
     const policyA = policyAByWallet.get(wallet) ?? "UNKNOWN";
-    forwardTradeRows.push({
-      wallet,
-      stakeUsd,
-      tradeEvPercent: row.averageEv,
-      tradedAt: row.tradedAt,
-    });
     if (policyA === "PASS") {
       tradesRetained += 1;
       stakeRetained += stakeUsd;
@@ -609,7 +938,23 @@ export async function buildDailyShadowReport(input?: {
   const xCandidates = [...xAgentByTrade.values()];
   const xPassed = xCandidates.filter((r) => r.gatePassed);
 
-  const priorityRepairQueue = buildPriorityRepairQueue(members, generatedAt);
+  const forwardPerformanceTrades = await loadForwardPerformanceTrades({
+    observationStart: startedAt,
+    feedRows,
+    qualifications,
+  });
+  const forwardPerformanceDiagnostics = analyzeForwardPerformanceExclusions({
+    observationStart: startedAt,
+    trades: forwardPerformanceTrades,
+    frozenClassifications: shadowState.walletClassifications,
+  });
+  const liveShadowWrites = await loadLiveShadowWriteStats(startedAt);
+
+  const priorityRepairQueue = buildPriorityRepairQueue(
+    members,
+    generatedAt,
+    metricReasonsByWallet
+  );
   mkdirSync(SHADOW_CACHE_DIR, { recursive: true });
   writeFileSync(
     priorityRepairPath(),
@@ -697,24 +1042,29 @@ export async function buildDailyShadowReport(input?: {
       hypotheticalUnknown: xPassed.filter((r) => r.policyA === "UNKNOWN").length,
     },
     unknownReasons: buildUnknownReasonBreakdown(members, metricReasonsByWallet),
-    productionGateConfusion: buildProductionGateConfusionMatrix(members),
+    productionGateConfusion: buildProductionGateConfusionMatrix(
+      members,
+      walletFeedVisibleStakeUsd
+    ),
     priorityRepairQueue,
+    liveShadowWrites,
     forwardPerformance: {
       observationStart: startedAt,
       pass: buildForwardPerformanceBucket(
         "PASS",
-        forwardTradeRows,
+        forwardPerformanceTrades,
         shadowState.walletClassifications,
         startedAt
       ),
       fail: buildForwardPerformanceBucket(
         "FAIL",
-        forwardTradeRows,
+        forwardPerformanceTrades,
         shadowState.walletClassifications,
         startedAt
       ),
       contaminationGuard:
-        "Uses frozen wallet classifications from shadow period start; forward trades only.",
+        "Uses frozen wallet classifications from shadow period start; post-start trade-gate-qualified trades only.",
+      diagnostics: forwardPerformanceDiagnostics,
     },
     recommendation: deriveShadowRecommendation({
       daysObserved: daysElapsed + 1,

@@ -4,6 +4,7 @@ import {
   buildProductionGateConfusionMatrix,
   buildUnknownReasonBreakdown,
   classifyProductionGate,
+  classifyShadowUnknownReportReason,
   deriveShadowRecommendation,
   mapUnknownReasonToReportCategory,
 } from "@/lib/walletLedger/indexed/shadow/policyAShadowValidation";
@@ -61,6 +62,82 @@ describe("policyAShadowValidation", () => {
     ).toBe("identity_related");
   });
 
+  it("maps d91e-style identity repair path to identity_related", () => {
+    const d91e = member({
+      wallet: "0xd91e80cf2e7be2e162c6513ced06f1dd0da35296",
+      policyADecision: "UNKNOWN",
+      policyAUnknownReason: "incomplete_indexed_history",
+      feedVisibleTradeCount: 30,
+      tradeGateQualifiedTradeCount: 87,
+      passesProductionWalletGate: true,
+      priorityTier: 1,
+      hasIndexedCoverage: true,
+      hasIndexedMetrics: true,
+      indexedDataValidity: false,
+      historyValidity: "partial-and-metrics-unsafe",
+      historyComplete: false,
+      completedPositions: 227,
+      hasValidDurableCoverage: false,
+      productionHydrationState: "complete",
+    });
+    const metricReasons = [
+      "identity_unresolved",
+      "identity_low_confidence",
+      "positions_without_history_events",
+      "gamma_resolution_incomplete",
+    ];
+
+    expect(classifyShadowUnknownReportReason(d91e, metricReasons)).toBe(
+      "identity_related"
+    );
+    expect(
+      buildUnknownReasonBreakdown([d91e], { [d91e.wallet]: metricReasons })
+        .identity_related
+    ).toBe(1);
+    expect(
+      buildPriorityRepairQueue([d91e], "2026-09-19T00:00:00.000Z", {
+        [d91e.wallet]: metricReasons,
+      })[0]?.policyAUnknownReason
+    ).toBe("identity_related");
+  });
+
+  it("maps fe787-style trustworthy low sample to insufficient_completed_positions", () => {
+    const fe787 = member({
+      wallet: "0xfe787d2da716d60e8acff57fb87eb13cd4d10319",
+      policyADecision: "UNKNOWN",
+      policyAUnknownReason: "incomplete_indexed_history",
+      feedVisibleTradeCount: 5,
+      tradeGateQualifiedTradeCount: 6,
+      passesProductionWalletGate: true,
+      priorityTier: 1,
+      hasIndexedCoverage: true,
+      hasIndexedMetrics: true,
+      indexedDataValidity: true,
+      historyValidity: "partial-but-metrics-safe",
+      historyComplete: false,
+      completedPositions: 3,
+      hasValidDurableCoverage: true,
+      productionHydrationState: "complete",
+    });
+    const metricReasons = [
+      "gamma_resolution_incomplete",
+      "merge_split_unresolved",
+    ];
+
+    expect(classifyShadowUnknownReportReason(fe787, metricReasons)).toBe(
+      "insufficient_completed_positions"
+    );
+    expect(
+      buildUnknownReasonBreakdown([fe787], { [fe787.wallet]: metricReasons })
+        .insufficient_completed_positions
+    ).toBe(1);
+    expect(
+      buildPriorityRepairQueue([fe787], "2026-09-19T00:00:00.000Z", {
+        [fe787.wallet]: metricReasons,
+      })[0]?.policyAUnknownReason
+    ).toBe("insufficient_completed_positions");
+  });
+
   it("builds priority repair queue for feed-visible UNKNOWN only", () => {
     const queue = buildPriorityRepairQueue(
       [
@@ -87,22 +164,31 @@ describe("policyAShadowValidation", () => {
   });
 
   it("builds production gate confusion matrix cells", () => {
-    const matrix = buildProductionGateConfusionMatrix([
-      member({
-        wallet: "0xa",
-        passesProductionWalletGate: true,
-        policyADecision: "PASS",
-        feedVisibleTradeCount: 3,
-      }),
-      member({
-        wallet: "0xb",
-        passesProductionWalletGate: true,
-        policyADecision: "FAIL",
-        feedVisibleTradeCount: 1,
-      }),
+    const stake = new Map([
+      ["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 1500],
+      ["0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", 800],
     ]);
+    const matrix = buildProductionGateConfusionMatrix(
+      [
+        member({
+          wallet: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          passesProductionWalletGate: true,
+          policyADecision: "PASS",
+          feedVisibleTradeCount: 3,
+        }),
+        member({
+          wallet: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          passesProductionWalletGate: true,
+          policyADecision: "FAIL",
+          feedVisibleTradeCount: 1,
+        }),
+      ],
+      stake
+    );
     expect(matrix).toHaveLength(2);
     expect(matrix.find((c) => c.policyA === "PASS")?.walletCount).toBe(1);
+    expect(matrix.find((c) => c.policyA === "PASS")?.totalStakeUsd).toBe(1500);
+    expect(matrix.find((c) => c.policyA === "FAIL")?.totalStakeUsd).toBe(800);
   });
 
   it("aggregates unknown reason breakdown", () => {
