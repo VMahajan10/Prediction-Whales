@@ -224,15 +224,14 @@ export async function resolvePolymarketHistoryIdentity(
         `transaction_hash_resolved:${resolved.wallet}:${resolved.source ?? "unknown"}`
       );
       const source =
-        resolved.source === "onchain"
+        resolved.source === "onchain-economic"
           ? "onchain"
           : resolved.source?.startsWith("data-api")
             ? "data_api"
-            : "onchain";
-      await remember(
-        resolved.wallet,
-        source === "onchain" ? "onchain" : "data_api"
-      );
+            : undefined;
+      if (source) {
+        await remember(resolved.wallet, source);
+      }
     } else {
       evidence.notes.push("transaction_hash_resolution_failed");
     }
