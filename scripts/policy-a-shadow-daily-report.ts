@@ -31,7 +31,12 @@ async function main(): Promise<void> {
     shadowSummary: {
       engineeringFrozen: POLICY_A_SHADOW_ENGINEERING_FROZEN,
       observationDays: POLICY_A_SHADOW_PERIOD_DAYS,
+      attributionResolverVersion: summary.attributionResolverVersion,
+      currentEpochStartedAt: summary.currentEpochStartedAt,
       trajectory: summary.trajectory,
+      currentEpochTrajectory: summary.currentEpochTrajectory,
+      supersededEpochs: summary.supersededEpochs,
+      supersededObservation: summary.supersededObservation,
       policyVersion: summary.policyVersion,
       metricVersion: summary.metricVersion,
     },

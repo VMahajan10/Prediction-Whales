@@ -34,6 +34,8 @@ import type { TradePayload } from "@/lib/x-agent/gateTypes";
 
 export const POLICY_A_SHADOW_PERIOD_DAYS = 14;
 export const POLICY_A_SHADOW_ENGINEERING_FROZEN = true;
+/** Feed trader attribution resolver generation (shadow comparability). */
+export const POLICY_A_ATTRIBUTION_RESOLVER_VERSION = "economic-order-filled-v1";
 
 export type ProductionGateDecision = "PASS" | "FAIL" | "UNKNOWN";
 export type ShadowUnknownReportReason =
@@ -60,6 +62,15 @@ export interface ShadowPeriodState {
   engineeringFrozen: true;
   observationDays: number;
   batch3Complete: true;
+  /** When set, shadow feed-impact metrics are comparable only within this resolver generation. */
+  attributionResolverVersion?: string;
+  supersededObservation?: {
+    startedAt: string;
+    endedAt: string;
+    reason: string;
+    comparability: "pre-resolver-fix-non-comparable";
+    priorAttributionResolverVersion?: string | null;
+  };
   baselineCohort: {
     total: number;
     pass: number;
@@ -142,6 +153,9 @@ export interface DailyShadowReport {
     daysElapsed: number;
     daysRemaining: number;
     observationComplete: boolean;
+    attributionResolverVersion: string | null;
+    feedImpactComparable: boolean;
+    supersededObservation?: ShadowPeriodState["supersededObservation"];
   };
   cohort: {
     totalWallets: number;
@@ -373,18 +387,76 @@ export function buildUnknownReasonBreakdown(
   return breakdown;
 }
 
+export interface PriorityRepairAttributionEpochScope {
+  /** Current resolver-attribution epoch start (shadow period startedAt). */
+  attributionEpochStartAt: string;
+  feedRows: FeedTrade[];
+  qualifications: Awaited<ReturnType<typeof qualifyWalletsForFeed>>;
+}
+
+/** Trade counts limited to feed rows at/after the attribution epoch boundary. */
+export function buildWalletAttributionEpochTradeCounts(
+  scope: PriorityRepairAttributionEpochScope
+): Map<
+  string,
+  { feedVisibleTradeCount: number; tradeGateQualifiedTradeCount: number }
+> {
+  const startMs = new Date(scope.attributionEpochStartAt).getTime();
+  const counts = new Map<
+    string,
+    { feedVisibleTradeCount: number; tradeGateQualifiedTradeCount: number }
+  >();
+
+  for (const row of scope.feedRows) {
+    if (row.tradedAt.getTime() < startMs) continue;
+    const wallet = row.proxyWallet?.trim().toLowerCase();
+    if (!wallet) continue;
+    const { passesTradeGates, currentFeedVisible } = evaluateFeedTradeVisibility(
+      row,
+      scope.qualifications
+    );
+    const entry = counts.get(wallet) ?? {
+      feedVisibleTradeCount: 0,
+      tradeGateQualifiedTradeCount: 0,
+    };
+    if (passesTradeGates) {
+      entry.tradeGateQualifiedTradeCount += 1;
+    }
+    if (currentFeedVisible) {
+      entry.feedVisibleTradeCount += 1;
+    }
+    counts.set(wallet, entry);
+  }
+
+  return counts;
+}
+
 export function buildPriorityRepairQueue(
   members: ProductionWalletCohortMember[],
   promotedAt: string,
-  metricReasonsByWallet: Record<string, string[]> = {}
+  metricReasonsByWallet: Record<string, string[]> = {},
+  attributionEpochScope?: PriorityRepairAttributionEpochScope
 ): PriorityRepairEntry[] {
+  const epochCounts = attributionEpochScope
+    ? buildWalletAttributionEpochTradeCounts(attributionEpochScope)
+    : null;
+
   const queue: PriorityRepairEntry[] = [];
   for (const member of members) {
     if (!isValidWalletAddress(member.wallet)) continue;
     if (member.policyADecision !== "UNKNOWN") continue;
-    const feedVisible = member.feedVisibleTradeCount > 0;
+
+    const scoped = epochCounts?.get(member.wallet);
+    const feedVisibleTradeCount = epochCounts
+      ? (scoped?.feedVisibleTradeCount ?? 0)
+      : member.feedVisibleTradeCount;
+    const tradeGateQualifiedTradeCount = epochCounts
+      ? (scoped?.tradeGateQualifiedTradeCount ?? 0)
+      : member.tradeGateQualifiedTradeCount;
+
+    const feedVisible = feedVisibleTradeCount > 0;
     const materiallyActive =
-      member.tradeGateQualifiedTradeCount >= 3 && member.priorityTier <= 3;
+      tradeGateQualifiedTradeCount >= 3 && member.priorityTier <= 3;
     if (!feedVisible && !materiallyActive) continue;
     queue.push({
       wallet: member.wallet,
@@ -392,8 +464,8 @@ export function buildPriorityRepairQueue(
         member,
         metricReasonsByWallet[member.wallet] ?? []
       ),
-      feedVisibleTradeCount: member.feedVisibleTradeCount,
-      tradeGateQualifiedTradeCount: member.tradeGateQualifiedTradeCount,
+      feedVisibleTradeCount,
+      tradeGateQualifiedTradeCount,
       passesProductionWalletGate: member.passesProductionWalletGate,
       priorityTier: member.priorityTier,
       promotedAt,
@@ -489,6 +561,7 @@ export function initializeShadowPeriodState(
     engineeringFrozen: true,
     observationDays: POLICY_A_SHADOW_PERIOD_DAYS,
     batch3Complete: true,
+    attributionResolverVersion: POLICY_A_ATTRIBUTION_RESOLVER_VERSION,
     baselineCohort: {
       total: coverage.totalWallets,
       pass: coverage.policyAPass,
@@ -516,6 +589,28 @@ export function initializeShadowPeriodState(
   mkdirSync(SHADOW_CACHE_DIR, { recursive: true });
   writeFileSync(shadowStatePath(), JSON.stringify(state, null, 2));
   return state;
+}
+
+/**
+ * Archive the current shadow window (pre-resolver-fix) and start a fresh epoch.
+ * Does not modify feed_trades — run d91-resolver-replay plan separately.
+ */
+export function beginPostResolverFixShadowEpoch(
+  members: ProductionWalletCohortMember[]
+): ShadowPeriodState {
+  const prior = loadShadowPeriodState();
+  const next = initializeShadowPeriodState(members);
+  if (prior) {
+    next.supersededObservation = {
+      startedAt: prior.startedAt,
+      endedAt: new Date().toISOString(),
+      reason: "wallet_attribution_resolver_economic_order_filled_v1",
+      comparability: "pre-resolver-fix-non-comparable",
+      priorAttributionResolverVersion: prior.attributionResolverVersion ?? null,
+    };
+    writeFileSync(shadowStatePath(), JSON.stringify(next, null, 2));
+  }
+  return next;
 }
 
 async function loadMetricReasonsByWallet(
@@ -953,7 +1048,14 @@ export async function buildDailyShadowReport(input?: {
   const priorityRepairQueue = buildPriorityRepairQueue(
     members,
     generatedAt,
-    metricReasonsByWallet
+    metricReasonsByWallet,
+    shadowState.attributionResolverVersion
+      ? {
+          attributionEpochStartAt: startedAt,
+          feedRows,
+          qualifications,
+        }
+      : undefined
   );
   mkdirSync(SHADOW_CACHE_DIR, { recursive: true });
   writeFileSync(
@@ -962,7 +1064,7 @@ export async function buildDailyShadowReport(input?: {
       {
         updatedAt: generatedAt,
         engineeringNote:
-          "Only feed-visible or materially trade-active UNKNOWN wallets. Does not auto-trigger Batch 4.",
+          "Only feed-visible or materially trade-active UNKNOWN wallets in the current attribution-resolver epoch. Does not auto-trigger Batch 4.",
         queue: priorityRepairQueue,
       },
       null,
@@ -999,6 +1101,12 @@ export async function buildDailyShadowReport(input?: {
       daysElapsed,
       daysRemaining,
       observationComplete,
+      attributionResolverVersion:
+        shadowState.attributionResolverVersion ?? null,
+      feedImpactComparable:
+        shadowState.attributionResolverVersion ===
+        POLICY_A_ATTRIBUTION_RESOLVER_VERSION,
+      supersededObservation: shadowState.supersededObservation,
     },
     cohort: {
       totalWallets: coverage.totalWallets,
@@ -1108,20 +1216,131 @@ export async function buildDailyShadowReport(input?: {
   return report;
 }
 
+export type ShadowTrajectoryPoint = {
+  dayKey: string;
+  generatedAt: string;
+  evaluablePct: number;
+  validDurableCoveragePct: number;
+  feedVolumeReductionPct: number | null;
+  recommendation: ShadowFinalRecommendation;
+  shadowPeriodStartedAt: string;
+  attributionResolverVersion: string | null;
+};
+
+export type SupersededShadowEpochSummary = {
+  shadowPeriodStartedAt: string;
+  shadowPeriodEndedAt: string | null;
+  attributionResolverVersion: string | null;
+  comparability: "pre-resolver-fix-non-comparable" | "superseded-epoch";
+  trajectory: ShadowTrajectoryPoint[];
+};
+
+export function shadowTrajectoryPointFromReport(
+  report: DailyShadowReport
+): ShadowTrajectoryPoint {
+  return {
+    dayKey: report.dayKey,
+    generatedAt: report.generatedAt,
+    evaluablePct: report.cohort.evaluablePct,
+    validDurableCoveragePct: report.cohort.validDurableCoveragePct,
+    feedVolumeReductionPct: report.tradeImpact.feedVolumeReductionPct,
+    recommendation: report.recommendation,
+    shadowPeriodStartedAt: report.shadowPeriod.startedAt,
+    attributionResolverVersion:
+      report.shadowPeriod.attributionResolverVersion ?? null,
+  };
+}
+
+export function isCurrentAttributionEpochReport(
+  report: DailyShadowReport,
+  shadowState: ShadowPeriodState | null
+): boolean {
+  if (!shadowState) return true;
+  if (report.shadowPeriod.startedAt !== shadowState.startedAt) return false;
+  if (
+    shadowState.attributionResolverVersion &&
+    report.shadowPeriod.attributionResolverVersion !==
+      shadowState.attributionResolverVersion
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export function splitShadowTrajectoryByAttributionEpoch(
+  reports: DailyShadowReport[],
+  shadowState: ShadowPeriodState | null
+): {
+  currentEpochTrajectory: ShadowTrajectoryPoint[];
+  supersededEpochs: SupersededShadowEpochSummary[];
+  /** Primary comparable trajectory (current attribution epoch only). */
+  trajectory: ShadowTrajectoryPoint[];
+} {
+  const currentEpochTrajectory = reports
+    .filter((r) => isCurrentAttributionEpochReport(r, shadowState))
+    .map(shadowTrajectoryPointFromReport);
+
+  const supersededByStartedAt = new Map<string, ShadowTrajectoryPoint[]>();
+  for (const report of reports) {
+    if (isCurrentAttributionEpochReport(report, shadowState)) continue;
+    const point = shadowTrajectoryPointFromReport(report);
+    const key = point.shadowPeriodStartedAt;
+    const list = supersededByStartedAt.get(key) ?? [];
+    list.push(point);
+    supersededByStartedAt.set(key, list);
+  }
+
+  const supersededEpochs: SupersededShadowEpochSummary[] = [
+    ...supersededByStartedAt.entries(),
+  ]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([shadowPeriodStartedAt, trajectory]) => {
+      const sorted = [...trajectory].sort((a, b) =>
+        a.dayKey.localeCompare(b.dayKey)
+      );
+      const last = sorted.at(-1);
+      const fromState =
+        shadowState?.supersededObservation?.startedAt === shadowPeriodStartedAt
+          ? shadowState.supersededObservation
+          : null;
+      const comparability =
+        fromState?.comparability === "pre-resolver-fix-non-comparable"
+          ? "pre-resolver-fix-non-comparable"
+          : "superseded-epoch";
+      return {
+        shadowPeriodStartedAt,
+        shadowPeriodEndedAt:
+          fromState?.endedAt ?? last?.generatedAt ?? null,
+        attributionResolverVersion:
+          fromState?.priorAttributionResolverVersion ??
+          sorted[0]?.attributionResolverVersion ??
+          null,
+        comparability,
+        trajectory: sorted,
+      };
+    });
+
+  return {
+    currentEpochTrajectory,
+    supersededEpochs,
+    trajectory: currentEpochTrajectory,
+  };
+}
+
 export async function buildShadowPeriodSummary(): Promise<{
   policyVersion: string;
   metricVersion: string;
   engineeringFrozen: boolean;
   dailyReports: string[];
   latestReport: DailyShadowReport | null;
-  trajectory: Array<{
-    dayKey: string;
-    evaluablePct: number;
-    validDurableCoveragePct: number;
-    feedVolumeReductionPct: number | null;
-    recommendation: ShadowFinalRecommendation;
-  }>;
+  attributionResolverVersion: string | null;
+  currentEpochStartedAt: string | null;
+  trajectory: ShadowTrajectoryPoint[];
+  currentEpochTrajectory: ShadowTrajectoryPoint[];
+  supersededEpochs: SupersededShadowEpochSummary[];
+  supersededObservation: ShadowPeriodState["supersededObservation"] | null;
 }> {
+  const shadowState = loadShadowPeriodState();
   const reportsDir = join(SHADOW_CACHE_DIR, "daily-reports");
   if (!existsSync(reportsDir)) {
     return {
@@ -1130,37 +1349,39 @@ export async function buildShadowPeriodSummary(): Promise<{
       engineeringFrozen: POLICY_A_SHADOW_ENGINEERING_FROZEN,
       dailyReports: [],
       latestReport: null,
+      attributionResolverVersion: shadowState?.attributionResolverVersion ?? null,
+      currentEpochStartedAt: shadowState?.startedAt ?? null,
       trajectory: [],
+      currentEpochTrajectory: [],
+      supersededEpochs: [],
+      supersededObservation: shadowState?.supersededObservation ?? null,
     };
   }
   const { readdirSync } = await import("node:fs");
-  const dailyReports = readdirSync(reportsDir)
+  const dailyReportFiles = readdirSync(reportsDir)
     .filter((f) => f.endsWith(".json"))
     .sort();
-  const trajectory = dailyReports.map((file) => {
-    const report = JSON.parse(
-      readFileSync(join(reportsDir, file), "utf8")
-    ) as DailyShadowReport;
-    return {
-      dayKey: report.dayKey,
-      evaluablePct: report.cohort.evaluablePct,
-      validDurableCoveragePct: report.cohort.validDurableCoveragePct,
-      feedVolumeReductionPct: report.tradeImpact.feedVolumeReductionPct,
-      recommendation: report.recommendation,
-    };
-  });
+  const parsedReports = dailyReportFiles.map(
+    (file) =>
+      JSON.parse(readFileSync(join(reportsDir, file), "utf8")) as DailyShadowReport
+  );
+  const split = splitShadowTrajectoryByAttributionEpoch(
+    parsedReports,
+    shadowState
+  );
   const latestReport =
-    dailyReports.length > 0
-      ? (JSON.parse(
-          readFileSync(join(reportsDir, dailyReports.at(-1)!), "utf8")
-        ) as DailyShadowReport)
-      : null;
+    parsedReports.length > 0 ? parsedReports.at(-1)! : null;
   return {
     policyVersion: HISTORICAL_PERFORMANCE_POLICY_VERSION,
     metricVersion: WALLET_METRIC_VERSION,
     engineeringFrozen: POLICY_A_SHADOW_ENGINEERING_FROZEN,
-    dailyReports,
+    dailyReports: dailyReportFiles,
     latestReport,
-    trajectory,
+    attributionResolverVersion: shadowState?.attributionResolverVersion ?? null,
+    currentEpochStartedAt: shadowState?.startedAt ?? null,
+    trajectory: split.trajectory,
+    currentEpochTrajectory: split.currentEpochTrajectory,
+    supersededEpochs: split.supersededEpochs,
+    supersededObservation: shadowState?.supersededObservation ?? null,
   };
 }
