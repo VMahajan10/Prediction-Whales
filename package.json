@@ -68,6 +68,8 @@
     "policy-a:coverage-hydrate:active": "tsx --tsconfig tsconfig.json scripts/run-policy-a-coverage-hydration.ts --active-feed-wallets-only --max-wallets=2",
     "policy-a:coverage-daily": "tsx --tsconfig tsconfig.json scripts/policy-a-coverage-daily-report.ts",
     "policy-a:shadow-daily": "tsx --tsconfig tsconfig.json scripts/policy-a-shadow-daily-report.ts",
+    "product-feed:eligible-daily": "tsx --tsconfig tsconfig.json scripts/product-feed-eligible-daily-report.ts",
+    "product-feed:option1-acceptance": "tsx --tsconfig tsconfig.json scripts/product-feed-option1-acceptance.ts",
     "policy-a:production-impact": "tsx --tsconfig tsconfig.json scripts/policy-a-production-impact-preview.ts",
     "policy-a:determinism-gate": "tsx --tsconfig tsconfig.json scripts/policy-a-determinism-gate.ts",
     "policy-a:identity-collapse-audit": "tsx --tsconfig tsconfig.json scripts/audit-4f29-identity-collapse.ts",

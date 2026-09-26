@@ -4,9 +4,20 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/x-agent/whaleRegistryDb", () => ({
   findWhaleByWalletCaseInsensitive: vi.fn(),
 }));
+vi.mock("@/lib/feed/productFeedHistoricalVolume", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("@/lib/feed/productFeedHistoricalVolume")
+    >();
+  return {
+    ...actual,
+    fetchProductFeedHistoricalVolumeByWallet: vi.fn(),
+  };
+});
 
 import { filterPolymarketTradesByWalletCredibility } from "@/lib/feedQualificationServer";
 import { findWhaleByWalletCaseInsensitive } from "@/lib/x-agent/whaleRegistryDb";
+import { fetchProductFeedHistoricalVolumeByWallet } from "@/lib/feed/productFeedHistoricalVolume";
 
 const qualifiedWhale = {
   resolvedBetsCount: 10,
@@ -14,7 +25,26 @@ const qualifiedWhale = {
   avgEv: 0.03,
   winRate: 0.55,
   pseudonym: "qualified-whale",
+  hydrationStatus: "complete",
+  hydratedAt: new Date(),
 };
+
+function mockTrustedHistoricalVolume() {
+  vi.mocked(fetchProductFeedHistoricalVolumeByWallet).mockImplementation(
+    async (wallets) => {
+      const map = new Map();
+      for (const wallet of wallets) {
+        map.set(wallet, {
+          status: "trusted",
+          resolvedVolumeUSD: 500,
+          historicalVolumeGateReason: null,
+          historicalResolvedVolumeTrusted: true,
+        });
+      }
+      return map;
+    }
+  );
+}
 
 type RecentLikeTrade = {
   id: string;
@@ -24,9 +54,11 @@ type RecentLikeTrade = {
 describe("recent/backfill Polymarket wallet gate", () => {
   beforeEach(() => {
     vi.mocked(findWhaleByWalletCaseInsensitive).mockReset();
+    vi.mocked(fetchProductFeedHistoricalVolumeByWallet).mockReset();
+    mockTrustedHistoricalVolume();
   });
 
-  it("excludes trade-qualified rows when wallet AVG EV fails", async () => {
+  it("includes trade-qualified rows when wallet AVG EV is low but Option 1 passes", async () => {
     vi.mocked(findWhaleByWalletCaseInsensitive).mockResolvedValue({
       ...qualifiedWhale,
       avgEv: 0.02,
@@ -38,7 +70,7 @@ describe("recent/backfill Polymarket wallet gate", () => {
 
     const filtered = await filterPolymarketTradesByWalletCredibility(trades);
 
-    expect(filtered).toHaveLength(0);
+    expect(filtered).toHaveLength(1);
   });
 
   it("excludes trade-qualified rows when resolved-bet requirement fails", async () => {

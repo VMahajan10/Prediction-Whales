@@ -1,6 +1,7 @@
 import "server-only";
 
 import { mapWithConcurrency } from "@/lib/clvPriceHistory";
+import { fetchProductFeedHistoricalVolumeByWallet } from "@/lib/feed/productFeedHistoricalVolume";
 import { evaluateLiveFeedTradeGate } from "@/lib/feedGate";
 import { resolveFeedFilterCategoryLabel } from "@/lib/feedFilterDiagnostics";
 import type { ResolvedWhaleIdentity } from "@/lib/whaleIdentityResolver";
@@ -10,12 +11,14 @@ import {
   meetsProductFeedStakeThreshold,
   meetsFeedTradeEvThreshold,
   resolvePolymarketTradeNotionalUsd,
-  resolveTraderResolvedVolumeUsd,
+  resolveProductFeedWalletBlockReason,
+  type ProductFeedWalletBlockReason,
   type WalletFeedQualificationInput,
 } from "@/lib/feedQualification";
 import {
   resolveFeedTradeEvPercents,
 } from "@/lib/feedTradeEvServer";
+import { schedulePersistProductFeedTradeEligibility } from "@/lib/feed/persistProductFeedTradeEligibility";
 import { recordFeedMetrics } from "@/lib/feedMetrics";
 import {
   translateWhaleTradeMarket,
@@ -30,10 +33,25 @@ import { resolveWalletHydrationStatus } from "@/lib/x-agent/walletHydrationState
 import type { WhaleRegistry } from "@/lib/crossmarket/store/schema";
 import { enrichTradesWithWhaleAlias } from "@/lib/trades/getTrades";
 import { schedulePolicyAShadowForTradeGateQualifiedTrades } from "@/lib/walletLedger/indexed/shadow/policyACoverageShadow";
+import {
+  historicalVolumeObservabilityFields,
+  type ProductFeedHistoricalVolumeResolution,
+} from "@/lib/feed/productFeedHistoricalVolume";
 
 export interface WalletFeedQualification extends WalletFeedQualificationInput {
   qualified: boolean;
+  /** Authoritative indexed volume used for qualification (never count×avgStake). */
   resolvedVolumeUSD: number | null;
+  /** Same as {@link resolvedVolumeUSD} — explicit diagnostic name. */
+  historicalVolumeUsd: number | null;
+  /** Whether {@link historicalVolumeUsd} is trusted for the product feed gate. */
+  historicalVolumeTrusted: boolean;
+  /** Volume-specific block reason; null when volume requirement passes. */
+  historicalVolumeReason:
+    | import("@/lib/feedQualification").ProductFeedHistoricalVolumeGateReason
+    | null;
+  /** Overall wallet gate block reason; null when {@link qualified}. */
+  productFeedWalletBlockReason: ProductFeedWalletBlockReason | null;
   identity: ResolvedWhaleIdentity;
   hydrationState: "pending" | "complete" | "failed";
 }
@@ -41,13 +59,12 @@ export interface WalletFeedQualification extends WalletFeedQualificationInput {
 /** Registry lookups are one DB round trip each — cap parallel wallet queries. */
 const WALLET_QUALIFICATION_CONCURRENCY = 8;
 
-function registryStats(whale: WhaleRegistry | null): WhaleRegistryStats | null {
+function registryStats(
+  whale: WhaleRegistry | null,
+  resolvedVolumeUSD: number | null = null
+): WhaleRegistryStats | null {
   if (!whale) return null;
   const avgStakeNotional = whale.avgStakeNotional;
-  const resolvedVolumeUSD = resolveTraderResolvedVolumeUsd({
-    resolvedBetsCount: whale.resolvedBetsCount,
-    avgStakeNotional,
-  });
   return {
     winRate: whale.winRate,
     resolvedBetsCount: whale.resolvedBetsCount,
@@ -60,26 +77,41 @@ function registryStats(whale: WhaleRegistry | null): WhaleRegistryStats | null {
 export function resolveRegistryWhaleIdentity(
   walletAddress: string,
   whale: WhaleRegistry | null,
-  pseudonymOverride?: string | null
+  pseudonymOverride?: string | null,
+  resolvedVolumeUSD: number | null = null
 ): ResolvedWhaleIdentity {
   return resolveWhaleIdentity(
     walletAddress,
     pseudonymOverride ?? whale?.pseudonym ?? null,
-    registryStats(whale)
+    registryStats(whale, resolvedVolumeUSD)
   );
 }
 
-export async function qualifyWalletForFeed(
-  walletAddress: string
-): Promise<WalletFeedQualification> {
-  const whale = await findWhaleByWalletCaseInsensitive(walletAddress);
+function buildWalletFeedQualification(
+  walletAddress: string,
+  whale: WhaleRegistry | null,
+  historicalVolume: ProductFeedHistoricalVolumeResolution
+): WalletFeedQualification {
+  const volumeFields = historicalVolumeObservabilityFields(historicalVolume);
+  const authoritativeVolumeForIdentity =
+    historicalVolume.historicalResolvedVolumeTrusted
+      ? historicalVolume.resolvedVolumeUSD
+      : null;
+
   const identity = resolveRegistryWhaleIdentity(
     walletAddress,
     whale,
-    whale?.pseudonym ?? null
+    whale?.pseudonym ?? null,
+    authoritativeVolumeForIdentity
   );
 
   if (!whale) {
+    const blockReason = resolveProductFeedWalletBlockReason({
+      walletInRegistry: false,
+      hydrationState: "pending",
+      historicalVolumeGateReason: "historical_volume_unavailable",
+      historicalResolvedVolumeTrusted: false,
+    });
     return {
       qualified: false,
       hydrationState: "pending",
@@ -87,6 +119,10 @@ export async function qualifyWalletForFeed(
       resolvedBetsCount: null,
       avgStakeNotional: null,
       resolvedVolumeUSD: null,
+      historicalResolvedVolumeTrusted: false,
+      historicalVolumeGateReason: "historical_volume_unavailable",
+      ...volumeFields,
+      productFeedWalletBlockReason: blockReason,
       identity,
     };
   }
@@ -94,6 +130,13 @@ export async function qualifyWalletForFeed(
   const hydrationState = resolveWalletHydrationStatus(whale);
 
   if (hydrationState !== "complete") {
+    const blockReason = resolveProductFeedWalletBlockReason({
+      walletInRegistry: true,
+      hydrationState,
+      resolvedBetsCount: whale.resolvedBetsCount,
+      historicalVolumeGateReason: "historical_volume_unavailable",
+      historicalResolvedVolumeTrusted: false,
+    });
     return {
       qualified: false,
       hydrationState,
@@ -101,27 +144,67 @@ export async function qualifyWalletForFeed(
       resolvedBetsCount: null,
       avgStakeNotional: null,
       resolvedVolumeUSD: null,
+      historicalResolvedVolumeTrusted: false,
+      historicalVolumeGateReason: "historical_volume_unavailable",
+      ...volumeFields,
+      productFeedWalletBlockReason: blockReason,
       identity,
     };
   }
 
-  const stats = {
+  const stats: WalletFeedQualificationInput = {
     avgEv: whale.avgEv,
     resolvedBetsCount: whale.resolvedBetsCount,
     avgStakeNotional: whale.avgStakeNotional,
     hydrationState,
+    resolvedVolumeUSD: historicalVolume.resolvedVolumeUSD,
+    historicalResolvedVolumeTrusted:
+      historicalVolume.historicalResolvedVolumeTrusted,
+    historicalVolumeGateReason: historicalVolume.historicalVolumeGateReason,
   };
-  const resolvedVolumeUSD = resolveTraderResolvedVolumeUsd(stats);
+
+  const qualified = isQualifiedWalletForProductFeed(stats);
+  const productFeedWalletBlockReason = qualified
+    ? null
+    : resolveProductFeedWalletBlockReason({
+        walletInRegistry: true,
+        hydrationState,
+        ...stats,
+      });
 
   return {
-    qualified: isQualifiedWalletForProductFeed(stats),
+    qualified,
     hydrationState,
     avgEv: whale.avgEv,
     resolvedBetsCount: whale.resolvedBetsCount,
     avgStakeNotional: whale.avgStakeNotional,
-    resolvedVolumeUSD,
+    resolvedVolumeUSD: historicalVolume.resolvedVolumeUSD,
+    historicalResolvedVolumeTrusted:
+      historicalVolume.historicalResolvedVolumeTrusted,
+    historicalVolumeGateReason: historicalVolume.historicalVolumeGateReason,
+    ...volumeFields,
+    productFeedWalletBlockReason,
     identity,
   };
+}
+
+export async function qualifyWalletForFeed(
+  walletAddress: string
+): Promise<WalletFeedQualification> {
+  const wallet = walletAddress.trim().toLowerCase();
+  const [whale, volumeByWallet] = await Promise.all([
+    findWhaleByWalletCaseInsensitive(wallet),
+    fetchProductFeedHistoricalVolumeByWallet([wallet]),
+  ]);
+  const historicalVolume =
+    volumeByWallet.get(wallet) ?? {
+      status: "unavailable",
+      resolvedVolumeUSD: null,
+      historicalVolumeGateReason: "historical_volume_unavailable",
+      historicalResolvedVolumeTrusted: false,
+    };
+
+  return buildWalletFeedQualification(wallet, whale, historicalVolume);
 }
 
 export async function qualifyWalletsForFeed(
@@ -135,10 +218,30 @@ export async function qualifyWalletsForFeed(
     )
   );
 
+  if (unique.length === 0) {
+    return {};
+  }
+
+  const volumeByWallet =
+    await fetchProductFeedHistoricalVolumeByWallet(unique);
+
   const entries = await mapWithConcurrency(
     unique,
     WALLET_QUALIFICATION_CONCURRENCY,
-    async (wallet) => [wallet, await qualifyWalletForFeed(wallet)] as const
+    async (wallet) => {
+      const whale = await findWhaleByWalletCaseInsensitive(wallet);
+      const historicalVolume =
+        volumeByWallet.get(wallet) ?? {
+          status: "unavailable",
+          resolvedVolumeUSD: null,
+          historicalVolumeGateReason: "historical_volume_unavailable",
+          historicalResolvedVolumeTrusted: false,
+        };
+      return [
+        wallet,
+        buildWalletFeedQualification(wallet, whale, historicalVolume),
+      ] as const;
+    }
   );
 
   return Object.fromEntries(entries);
@@ -287,6 +390,12 @@ export async function collectPolymarketFeedCandidates<
     { tradesDetected: trades.length }
   );
 
+  schedulePersistProductFeedTradeEligibility({
+    trades,
+    tradeEvPercents,
+    walletQualifications,
+  });
+
   const traderQualified = await filterPolymarketTradesByWalletCredibility(
     candidates,
     walletQualifications
@@ -361,6 +470,12 @@ export async function filterQualifiedPolymarketFeedTrades<
     walletQualifications,
     { tradesDetected: trades.length }
   );
+
+  schedulePersistProductFeedTradeEligibility({
+    trades,
+    tradeEvPercents,
+    walletQualifications,
+  });
 
   const traderQualified = await filterPolymarketTradesByWalletCredibility(
     qualified,

@@ -709,6 +709,54 @@ export type FeedTrade = typeof feedTrades.$inferSelect;
 export type FeedTradeInsert = typeof feedTrades.$inferInsert;
 
 // ---------------------------------------------------------------------------
+// feed_trade_eligibility — at-trade-time Product Feed Option 1 decisions
+// ---------------------------------------------------------------------------
+
+export const feedTradeEligibility = pgTable(
+  "feed_trade_eligibility",
+  {
+    tradeId: text("trade_id").notNull(),
+    productFeedGateVersion: text("product_feed_gate_version").notNull(),
+    evaluatedAt: timestamp("evaluated_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+    tradedAt: timestamp("traded_at", { withTimezone: true, mode: "date" }).notNull(),
+    walletAddress: text("wallet_address"),
+    attributionResolverVersion: text("attribution_resolver_version").notNull(),
+    tradeStakePass: boolean("trade_stake_pass").notNull(),
+    tradeEvPass: boolean("trade_ev_pass").notNull(),
+    walletGatePass: boolean("wallet_gate_pass").notNull(),
+    finalEligible: boolean("final_eligible").notNull(),
+    blockReason: text("block_reason"),
+    stakeUsd: doublePrecision("stake_usd").notNull(),
+    tradeEvPct: doublePrecision("trade_ev_pct"),
+    historicalVolumeUsd: doublePrecision("historical_volume_usd"),
+    historicalVolumeReason: text("historical_volume_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tradeId, table.productFeedGateVersion],
+      name: "feed_trade_eligibility_pkey",
+    }),
+    index("feed_trade_eligibility_traded_at_idx").on(table.tradedAt.desc()),
+    index("feed_trade_eligibility_gate_eligible_idx").on(
+      table.productFeedGateVersion,
+      table.finalEligible,
+      table.tradedAt.desc()
+    ),
+  ]
+);
+
+export type FeedTradeEligibility = typeof feedTradeEligibility.$inferSelect;
+export type FeedTradeEligibilityInsert = typeof feedTradeEligibility.$inferInsert;
+
+// ---------------------------------------------------------------------------
 // feed_daily_metrics — durable daily feed trust-layer counters by venue
 // ---------------------------------------------------------------------------
 

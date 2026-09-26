@@ -136,18 +136,32 @@ export function resolveTraderResolvedVolumeUsd(
   return 0;
 }
 
-/** Product feed trader gate — resolved bets, resolved volume, and wallet historical AVG EV. */
+/**
+ * Main product feed trader gate (Option 1): resolved bet count + trustworthy
+ * indexed historical resolved volume. Wallet historical avg EV is not part of
+ * this gate (X-agent / legacy paths may still use {@link meetsWalletAvgEvThreshold}).
+ */
 export function isQualifiedTraderForProductFeed(
-  stats: ProductFeedTraderStats
+  stats: ProductFeedTraderStats & {
+    historicalResolvedVolumeTrusted?: boolean;
+  }
 ): boolean {
   const resolvedBetCount =
     stats.resolvedBetCount ?? stats.resolvedBetsCount ?? null;
-  const volumeUsd = resolveTraderResolvedVolumeUsd(stats);
-  return (
-    meetsProductFeedResolvedBetsThreshold(resolvedBetCount) &&
-    meetsProductFeedResolvedVolumeThreshold(volumeUsd) &&
-    meetsWalletAvgEvThreshold(stats.avgEv)
-  );
+  if (!meetsProductFeedResolvedBetsThreshold(resolvedBetCount)) {
+    return false;
+  }
+
+  if (!stats.historicalResolvedVolumeTrusted) {
+    return false;
+  }
+
+  const volumeUsd = stats.resolvedVolumeUSD;
+  if (volumeUsd == null || !Number.isFinite(volumeUsd)) {
+    return false;
+  }
+
+  return meetsProductFeedResolvedVolumeThreshold(volumeUsd);
 }
 
 /**
@@ -405,13 +419,30 @@ export function isQualifiedFeedTrade(trade: FeedQualificationTrade): boolean {
   return isQualifiedCredentialedFeedTrade(trade);
 }
 
+export type ProductFeedHistoricalVolumeGateReason =
+  | "historical_volume_unavailable"
+  | "historical_volume_below_minimum";
+
+/** Non-volume wallet prerequisites for the main product feed (Option 1). */
+export type ProductFeedWalletReadinessBlockReason =
+  | "wallet_not_in_registry"
+  | "hydration_incomplete"
+  | "insufficient_resolved_bets_count";
+
+export type ProductFeedWalletBlockReason =
+  | ProductFeedWalletReadinessBlockReason
+  | ProductFeedHistoricalVolumeGateReason;
+
 export interface WalletFeedQualificationInput {
   avgEv?: number | null;
   resolvedBetCount?: number | null;
   /** @deprecated Use resolvedBetCount */
   resolvedBetsCount?: number | null;
   avgStakeNotional?: number | null;
+  /** Authoritative indexed CAR sum when {@link historicalResolvedVolumeTrusted}. */
   resolvedVolumeUSD?: number | null;
+  historicalResolvedVolumeTrusted?: boolean;
+  historicalVolumeGateReason?: ProductFeedHistoricalVolumeGateReason | null;
   /** Wallet history hydration lifecycle — credibility gates apply only when complete. */
   hydrationState?: "pending" | "complete" | "failed" | null;
 }
@@ -427,9 +458,49 @@ export function isQualifiedWalletForFeed(
   );
 }
 
-/** Product feed wallet gate — resolved bets, resolved volume, and wallet AVG EV. */
+/** Product feed wallet gate — resolved bets + trustworthy indexed resolved volume. */
 export function isQualifiedWalletForProductFeed(
   input: WalletFeedQualificationInput
 ): boolean {
   return isQualifiedTraderForProductFeed(input);
+}
+
+/** Deterministic product-feed wallet block reason (volume + registry prerequisites). */
+export function resolveProductFeedWalletBlockReason(
+  input: WalletFeedQualificationInput & {
+    walletInRegistry?: boolean;
+  }
+): ProductFeedWalletBlockReason | null {
+  if (input.walletInRegistry === false) {
+    return "wallet_not_in_registry";
+  }
+
+  if (input.hydrationState != null && input.hydrationState !== "complete") {
+    return "hydration_incomplete";
+  }
+
+  const resolvedBetCount =
+    input.resolvedBetCount ?? input.resolvedBetsCount ?? null;
+  if (!meetsProductFeedResolvedBetsThreshold(resolvedBetCount)) {
+    return "insufficient_resolved_bets_count";
+  }
+
+  if (input.historicalVolumeGateReason) {
+    return input.historicalVolumeGateReason;
+  }
+
+  if (!input.historicalResolvedVolumeTrusted) {
+    return "historical_volume_unavailable";
+  }
+
+  const volumeUsd = input.resolvedVolumeUSD;
+  if (volumeUsd == null || !Number.isFinite(volumeUsd)) {
+    return "historical_volume_unavailable";
+  }
+
+  if (!meetsProductFeedResolvedVolumeThreshold(volumeUsd)) {
+    return "historical_volume_below_minimum";
+  }
+
+  return null;
 }

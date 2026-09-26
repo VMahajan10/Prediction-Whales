@@ -15,6 +15,7 @@ import {
   type FeedTradeHistoryInput,
 } from "@/lib/feed/feedTradeHistoryCore";
 import { revalidatePersistedPolymarketFeedPayload } from "@/lib/feed/persistedFeedTranslation";
+import { schedulePersistProductFeedTradeEligibilityFromFeedHistory } from "@/lib/feed/persistProductFeedTradeEligibility";
 import { qualifyWalletsForFeed, type WalletFeedQualification } from "@/lib/feedQualificationServer";
 
 export {
@@ -27,7 +28,10 @@ export {
 async function filterRecordableByTraderCredibility(
   trades: FeedTradeHistoryInput[],
   existingQualifications?: Record<string, WalletFeedQualification>
-): Promise<FeedTradeHistoryInput[]> {
+): Promise<{
+  trades: FeedTradeHistoryInput[];
+  qualifications: Record<string, WalletFeedQualification>;
+}> {
   const wallets = trades
     .map((trade) => trade.proxyWallet?.trim().toLowerCase())
     .filter((wallet): wallet is string => Boolean(wallet));
@@ -36,11 +40,13 @@ async function filterRecordableByTraderCredibility(
     existingQualifications ??
     (wallets.length > 0 ? await qualifyWalletsForFeed(wallets) : {});
 
-  return trades.filter((trade) => {
+  const credible = trades.filter((trade) => {
     const wallet = trade.proxyWallet?.trim().toLowerCase();
     const qualification = wallet ? qualifications[wallet] : undefined;
     return passesPolymarketFeedTraderGate(wallet, qualification);
   });
+
+  return { trades: credible, qualifications };
 }
 
 /** Best-effort — the feed response must never fail because history write failed. */
@@ -54,11 +60,17 @@ export async function recordFeedTradeHistory(
   const recordable = trades.filter(isRecordableFeedTrade);
   if (recordable.length === 0) return;
 
-  const credible = await filterRecordableByTraderCredibility(
-    recordable,
-    options?.walletQualifications
-  );
+  const { trades: credible, qualifications } =
+    await filterRecordableByTraderCredibility(
+      recordable,
+      options?.walletQualifications
+    );
   if (credible.length === 0) return;
+
+  schedulePersistProductFeedTradeEligibilityFromFeedHistory(
+    credible,
+    qualifications
+  );
 
   const { categorizeMarket } = await import("@/lib/categorizer");
 

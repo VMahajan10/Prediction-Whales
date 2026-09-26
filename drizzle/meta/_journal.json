@@ -204,6 +204,13 @@
       "when": 1785474000000,
       "tag": "0029_wallet_ledger_events_wallet_canonical_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1785475000000,
+      "tag": "0030_feed_trade_eligibility",
+      "breakpoints": true
     }
   ]
 }

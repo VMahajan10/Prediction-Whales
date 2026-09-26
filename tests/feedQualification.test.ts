@@ -259,11 +259,13 @@ describe("feedQualification", () => {
     ).toBe(true);
   });
 
-  it("enforces product feed trader credibility (10+ resolved bets, $300+ volume, +3% wallet AVG EV)", () => {
+  it("enforces product feed trader credibility (10+ resolved bets, trustworthy $300+ volume)", () => {
     const credibleTrader = {
       resolvedBetsCount: 10,
       avgStakeNotional: 30,
       avgEv: 0.03,
+      resolvedVolumeUSD: 500,
+      historicalResolvedVolumeTrusted: true,
     };
 
     expect(meetsProductFeedResolvedBetsThreshold(MIN_PRODUCT_FEED_RESOLVED_BETS)).toBe(
@@ -304,7 +306,8 @@ describe("feedQualification", () => {
     expect(
       isQualifiedTraderForProductFeed({
         ...credibleTrader,
-        avgStakeNotional: 20,
+        resolvedVolumeUSD: 200,
+        historicalResolvedVolumeTrusted: true,
       })
     ).toBe(false);
 
@@ -313,21 +316,24 @@ describe("feedQualification", () => {
         ...credibleTrader,
         avgEv: 0.02,
       })
-    ).toBe(false);
+    ).toBe(true);
 
     expect(
       isQualifiedTraderForProductFeed({
         ...credibleTrader,
-        avgEv: 0.03,
+        historicalResolvedVolumeTrusted: false,
+        resolvedVolumeUSD: 500,
       })
-    ).toBe(true);
+    ).toBe(false);
 
     expect(
       isQualifiedWalletForProductFeed({
         ...credibleTrader,
         avgEv: null,
+        historicalResolvedVolumeTrusted: true,
+        resolvedVolumeUSD: 500,
       })
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("rejects Polymarket feed rows when wallet metrics are missing or uncomputed", () => {
@@ -350,10 +356,12 @@ describe("feedQualification", () => {
 
     expect(
       passesPolymarketTraderCredibilityForFeed({
+        hydrationState: "complete",
         avgEv: null,
         resolvedBetsCount: 10,
         avgStakeNotional: 30,
         resolvedVolumeUSD: 300,
+        historicalResolvedVolumeTrusted: false,
       })
     ).toBe(false);
 
@@ -386,29 +394,35 @@ describe("feedQualification", () => {
 
     expect(
       passesPolymarketTraderCredibilityForFeed({
+        hydrationState: "complete",
         avgEv: 0.02,
         resolvedBetsCount: 10,
         avgStakeNotional: 30,
         resolvedVolumeUSD: 300,
+        historicalResolvedVolumeTrusted: true,
       })
-    ).toBe(false);
+    ).toBe(true);
 
     expect(
       passesPolymarketTraderCredibilityForFeed({
+        hydrationState: "complete",
         avgEv: 0.03,
         resolvedBetsCount: 10,
         avgStakeNotional: 30,
         resolvedVolumeUSD: 300,
+        historicalResolvedVolumeTrusted: true,
       })
     ).toBe(true);
   });
 
   it("uses the same wallet gate policy for live feed and recent/backfill helpers", () => {
     const qualifiedStats = {
+      hydrationState: "complete" as const,
       avgEv: 0.03,
       resolvedBetsCount: 10,
       avgStakeNotional: 30,
       resolvedVolumeUSD: 300,
+      historicalResolvedVolumeTrusted: true,
     };
 
     expect(passesPolymarketTraderCredibilityForFeed(qualifiedStats)).toBe(true);
@@ -417,8 +431,8 @@ describe("feedQualification", () => {
     ).toBe(true);
 
     const lowWalletEv = { ...qualifiedStats, avgEv: 0.02 };
-    expect(passesPolymarketTraderCredibilityForFeed(lowWalletEv)).toBe(false);
-    expect(passesPolymarketFeedTraderGate("0xabc", lowWalletEv)).toBe(false);
+    expect(passesPolymarketTraderCredibilityForFeed(lowWalletEv)).toBe(true);
+    expect(passesPolymarketFeedTraderGate("0xabc", lowWalletEv)).toBe(true);
   });
 
   it("rejects wallet-less Polymarket trades even when trade gates pass", () => {

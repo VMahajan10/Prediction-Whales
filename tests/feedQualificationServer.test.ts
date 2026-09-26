@@ -11,15 +11,30 @@ vi.mock("@/lib/x-agent/getWhaleAlias", () => ({
 vi.mock("@/lib/x-agent/whaleRegistryDb", () => ({
   findWhaleByWalletCaseInsensitive: vi.fn(),
 }));
+vi.mock("@/lib/feed/persistProductFeedTradeEligibility", () => ({
+  schedulePersistProductFeedTradeEligibility: vi.fn(),
+}));
+vi.mock("@/lib/feed/productFeedHistoricalVolume", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("@/lib/feed/productFeedHistoricalVolume")
+    >();
+  return {
+    ...actual,
+    fetchProductFeedHistoricalVolumeByWallet: vi.fn(),
+  };
+});
 
 import {
   collectPolymarketFeedCandidates,
   filterQualifiedPolymarketFeedTrades,
+  qualifyWalletsForFeed,
 } from "@/lib/feedQualificationServer";
 import {
   resolveFeedTradeEvPercents,
 } from "@/lib/feedTradeEvServer";
 import { findWhaleByWalletCaseInsensitive } from "@/lib/x-agent/whaleRegistryDb";
+import { fetchProductFeedHistoricalVolumeByWallet } from "@/lib/feed/productFeedHistoricalVolume";
 
 const qualifiedWhale = {
   resolvedBetsCount: 10,
@@ -27,7 +42,26 @@ const qualifiedWhale = {
   avgEv: 0.05,
   winRate: 0.55,
   pseudonym: "qualified-whale",
+  hydrationStatus: "complete",
+  hydratedAt: new Date(),
 };
+
+function mockTrustedHistoricalVolume(volumeUsd = 500) {
+  vi.mocked(fetchProductFeedHistoricalVolumeByWallet).mockImplementation(
+    async (wallets) => {
+      const map = new Map();
+      for (const wallet of wallets) {
+        map.set(wallet, {
+          status: "trusted",
+          resolvedVolumeUSD: volumeUsd,
+          historicalVolumeGateReason: null,
+          historicalResolvedVolumeTrusted: true,
+        });
+      }
+      return map;
+    }
+  );
+}
 
 const baseTrade = {
   id: "t1",
@@ -44,9 +78,11 @@ describe("filterQualifiedPolymarketFeedTrades", () => {
   beforeEach(() => {
     vi.mocked(resolveFeedTradeEvPercents).mockReset();
     vi.mocked(findWhaleByWalletCaseInsensitive).mockReset();
+    vi.mocked(fetchProductFeedHistoricalVolumeByWallet).mockReset();
     vi.mocked(findWhaleByWalletCaseInsensitive).mockResolvedValue(
       qualifiedWhale as never
     );
+    mockTrustedHistoricalVolume();
   });
 
   it("attaches netEvPercent and averageEv for client hydration on page load", async () => {
@@ -80,7 +116,7 @@ describe("filterQualifiedPolymarketFeedTrades", () => {
 
     expect(trades).toHaveLength(0);
   });
-  it("drops trades from traders below product-feed wallet AVG EV", async () => {
+  it("does not drop trades solely for wallet AVG EV below product feed (Option 1)", async () => {
     vi.mocked(resolveFeedTradeEvPercents).mockResolvedValue(
       new Map([[baseTrade.id, 4.2]])
     );
@@ -91,7 +127,7 @@ describe("filterQualifiedPolymarketFeedTrades", () => {
 
     const trades = await filterQualifiedPolymarketFeedTrades([baseTrade]);
 
-    expect(trades).toHaveLength(0);
+    expect(trades).toHaveLength(1);
   });
 
   it("drops trades from traders below product-feed credibility", async () => {
@@ -120,7 +156,7 @@ describe("filterQualifiedPolymarketFeedTrades", () => {
     expect(trades).toHaveLength(0);
   });
 
-  it("drops trades from registry rows with schema zero defaults before hydration", async () => {
+  it("admits trades when avgStakeNotional is zero but indexed volume is trustworthy", async () => {
     vi.mocked(resolveFeedTradeEvPercents).mockResolvedValue(
       new Map([[baseTrade.id, 4.2]])
     );
@@ -129,6 +165,30 @@ describe("filterQualifiedPolymarketFeedTrades", () => {
       resolvedBetsCount: 50,
       avgStakeNotional: 0,
     } as never);
+    mockTrustedHistoricalVolume(500);
+
+    const trades = await filterQualifiedPolymarketFeedTrades([baseTrade]);
+
+    expect(trades).toHaveLength(1);
+  });
+
+  it("drops trades when indexed historical volume is unavailable", async () => {
+    vi.mocked(resolveFeedTradeEvPercents).mockResolvedValue(
+      new Map([[baseTrade.id, 4.2]])
+    );
+    vi.mocked(fetchProductFeedHistoricalVolumeByWallet).mockResolvedValue(
+      new Map([
+        [
+          "0xabc",
+          {
+            status: "unavailable",
+            resolvedVolumeUSD: null,
+            historicalVolumeGateReason: "historical_volume_unavailable",
+            historicalResolvedVolumeTrusted: false,
+          },
+        ],
+      ])
+    );
 
     const trades = await filterQualifiedPolymarketFeedTrades([baseTrade]);
 
@@ -163,9 +223,11 @@ describe("collectPolymarketFeedCandidates", () => {
   beforeEach(() => {
     vi.mocked(resolveFeedTradeEvPercents).mockReset();
     vi.mocked(findWhaleByWalletCaseInsensitive).mockReset();
+    vi.mocked(fetchProductFeedHistoricalVolumeByWallet).mockReset();
     vi.mocked(findWhaleByWalletCaseInsensitive).mockResolvedValue(
       qualifiedWhale as never
     );
+    mockTrustedHistoricalVolume();
   });
 
   it("drops trades when pipeline cannot resolve trade EV", async () => {
@@ -220,10 +282,12 @@ describe("collectPolymarketFeedCandidates", () => {
     const walletQualifications = {
       "0xabc": {
         qualified: true,
+        hydrationState: "complete",
         avgEv: 0.05,
         resolvedBetsCount: 10,
         avgStakeNotional: 50,
         resolvedVolumeUSD: 500,
+        historicalResolvedVolumeTrusted: true,
         identity: {
           pseudonym: "qualified-whale",
           initials: "QW",
@@ -241,5 +305,35 @@ describe("collectPolymarketFeedCandidates", () => {
 
     expect(candidates).toHaveLength(1);
     expect(findWhaleByWalletCaseInsensitive).not.toHaveBeenCalled();
+  });
+});
+
+describe("qualifyWalletsForFeed batch historical volume", () => {
+  beforeEach(() => {
+    vi.mocked(findWhaleByWalletCaseInsensitive).mockReset();
+    vi.mocked(fetchProductFeedHistoricalVolumeByWallet).mockReset();
+    mockTrustedHistoricalVolume();
+    vi.mocked(findWhaleByWalletCaseInsensitive).mockResolvedValue(
+      qualifiedWhale as never
+    );
+  });
+
+  it("fetches authoritative volume exactly once for many wallets and duplicate addresses", async () => {
+    const wallets = [
+      "0xabc",
+      "0xabc",
+      "0xdef",
+      "0xdef",
+      "0xdef",
+      "0XABC",
+    ];
+
+    await qualifyWalletsForFeed(wallets);
+
+    expect(fetchProductFeedHistoricalVolumeByWallet).toHaveBeenCalledTimes(1);
+    const [batchArg] = vi.mocked(fetchProductFeedHistoricalVolumeByWallet).mock
+      .calls[0]!;
+    expect(batchArg.sort()).toEqual(["0xabc", "0xdef"]);
+    expect(findWhaleByWalletCaseInsensitive).toHaveBeenCalledTimes(2);
   });
 });
