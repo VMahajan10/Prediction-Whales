@@ -48,6 +48,111 @@ function parseUtcDayKey(dayKey: string): Date {
   return new Date(`${dayKey}T12:00:00.000Z`);
 }
 
+function utcDayStart(dayKey: string): Date {
+  return new Date(`${dayKey}T00:00:00.000Z`);
+}
+
+function addUtcCalendarDays(dayKey: string, days: number): string {
+  const start = utcDayStart(dayKey);
+  return feedMetricsDayKeyUtc(
+    new Date(start.getTime() + days * 24 * 60 * 60 * 1000)
+  );
+}
+
+/**
+ * First UTC calendar day with complete instrumentation coverage.
+ * The epoch day is partial when tracking begins after that day's 00:00 UTC.
+ */
+export function resolveFirstFullObservedDayKey(
+  trackingEpochStartedAt: Date
+): string {
+  const epochDayKey = tradeDayKeyUtc(trackingEpochStartedAt);
+  const dayStart = utcDayStart(epochDayKey);
+  if (trackingEpochStartedAt.getTime() <= dayStart.getTime()) {
+    return epochDayKey;
+  }
+  return addUtcCalendarDays(epochDayKey, 1);
+}
+
+/** Fully observed UTC days from firstFullObservedDay up to (not including) todayKey. */
+export function listFullyObservedUtcDayKeysBeforeToday(input: {
+  firstFullObservedDayKey: string;
+  todayKey: string;
+}): string[] {
+  const keys: string[] = [];
+  const todayStart = utcDayStart(input.todayKey).getTime();
+  let cursor = utcDayStart(input.firstFullObservedDayKey);
+  while (cursor.getTime() < todayStart) {
+    keys.push(feedMetricsDayKeyUtc(cursor));
+    cursor = new Date(cursor.getTime() + 24 * 60 * 60 * 1000);
+  }
+  return keys;
+}
+
+export function selectLastFullyObservedDaysForStability(
+  fullyObservedDayKeys: string[],
+  count = PRODUCT_FEED_DONE_CONSECUTIVE_FULL_DAYS
+): string[] {
+  if (fullyObservedDayKeys.length <= count) {
+    return fullyObservedDayKeys;
+  }
+  return fullyObservedDayKeys.slice(-count);
+}
+
+export type ProductFeedObservationWindow = {
+  trackingEpochStartedAt: string | null;
+  firstFullObservedDay: string | null;
+  fullDaysObserved: number;
+  fullDaysRequired: number;
+  fullyObservedDayKeys: string[];
+  last7FullDayKeys: string[];
+  observationStatus: "NO_TRACKING_DATA" | "INSUFFICIENT_FULL_DAYS" | "READY";
+};
+
+export function buildProductFeedObservationWindow(input: {
+  trackingEpochStartedAt: Date | null;
+  todayKey: string;
+}): ProductFeedObservationWindow {
+  const fullDaysRequired = PRODUCT_FEED_DONE_CONSECUTIVE_FULL_DAYS;
+  if (input.trackingEpochStartedAt == null) {
+    return {
+      trackingEpochStartedAt: null,
+      firstFullObservedDay: null,
+      fullDaysObserved: 0,
+      fullDaysRequired,
+      fullyObservedDayKeys: [],
+      last7FullDayKeys: [],
+      observationStatus: "NO_TRACKING_DATA",
+    };
+  }
+
+  const firstFullObservedDay = resolveFirstFullObservedDayKey(
+    input.trackingEpochStartedAt
+  );
+  const fullyObservedDayKeys = listFullyObservedUtcDayKeysBeforeToday({
+    firstFullObservedDayKey: firstFullObservedDay,
+    todayKey: input.todayKey,
+  });
+  const fullDaysObserved = fullyObservedDayKeys.length;
+  const last7FullDayKeys = selectLastFullyObservedDaysForStability(
+    fullyObservedDayKeys
+  );
+  const observationStatus =
+    fullDaysObserved < fullDaysRequired
+      ? "INSUFFICIENT_FULL_DAYS"
+      : "READY";
+
+  return {
+    trackingEpochStartedAt: input.trackingEpochStartedAt.toISOString(),
+    firstFullObservedDay,
+    fullDaysObserved,
+    fullDaysRequired,
+    fullyObservedDayKeys,
+    last7FullDayKeys,
+    observationStatus,
+  };
+}
+
 export type ProductFeedDayRollup = {
   dayKey: string;
   /** Distinct trades evaluated (at-trade-time decisions). */
@@ -154,6 +259,7 @@ export function aggregateProductFeedEligibilityByUtcDay(
 export function buildProductFeedSevenDaySummary(input: {
   last7FullDays: ProductFeedDayRollup[];
   consecutiveTargetDaysRequired?: number;
+  observationStatus?: ProductFeedObservationWindow["observationStatus"];
 }): {
   fullDaysObserved: number;
   totalEligibleTrades: number;
@@ -163,10 +269,14 @@ export function buildProductFeedSevenDaySummary(input: {
   daysWithinTargetRange: number;
   consecutiveDaysWithinTargetRange: number;
   doneCriteriaMet: boolean;
+  observationStatus: ProductFeedObservationWindow["observationStatus"];
 } {
   const days = input.last7FullDays;
   const required =
     input.consecutiveTargetDaysRequired ?? PRODUCT_FEED_DONE_CONSECUTIVE_FULL_DAYS;
+  const observationStatus =
+    input.observationStatus ??
+    (days.length < required ? "INSUFFICIENT_FULL_DAYS" : "READY");
   const eligibleCounts = days.map((d) => d.finalEligibleTrades);
   const total = eligibleCounts.reduce((s, n) => s + n, 0);
   const within = days.filter((d) => d.withinTargetRange).length;
@@ -182,7 +292,10 @@ export function buildProductFeedSevenDaySummary(input: {
     }
   }
 
-  const doneCriteriaMet = longestStreak >= required;
+  const doneCriteriaMet =
+    observationStatus === "READY" &&
+    days.length >= required &&
+    longestStreak >= required;
 
   return {
     fullDaysObserved: days.length,
@@ -195,6 +308,7 @@ export function buildProductFeedSevenDaySummary(input: {
     daysWithinTargetRange: within,
     consecutiveDaysWithinTargetRange: longestStreak,
     doneCriteriaMet,
+    observationStatus,
   };
 }
 
@@ -207,8 +321,12 @@ export function formatProductFeedSevenDayStabilityBlock(input: {
     lines.push(`${day.dayKey}: ${day.finalEligibleTrades} eligible`);
   }
   const s = input.sevenDaySummary;
+  if (input.last7FullDays.length === 0) {
+    lines.push("(no fully observed days in tracking epoch yet)");
+  }
   lines.push(
     "",
+    `Observation status: ${s.observationStatus}`,
     `Average: ${s.avgEligibleTradesPerDay.toFixed(1)}/day`,
     `Min: ${s.minEligibleTradesPerDay}`,
     `Max: ${s.maxEligibleTradesPerDay}`,

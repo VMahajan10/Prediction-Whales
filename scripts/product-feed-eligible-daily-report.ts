@@ -9,9 +9,9 @@ import "../tests/preload-env";
 import pg from "pg";
 import {
   aggregateProductFeedEligibilityByUtcDay,
+  buildProductFeedObservationWindow,
   buildProductFeedSevenDaySummary,
   formatProductFeedSevenDayStabilityBlock,
-  listFullUtcDayKeysEndingBefore,
   PRODUCT_FEED_ELIGIBLE_DAY_BOUNDARY,
   PRODUCT_FEED_GATE_VERSION,
   type PersistedProductFeedEligibilityDecision,
@@ -32,6 +32,21 @@ async function feedTradeEligibilityTableExists(
     `
   );
   return result.rows[0]?.exists === true;
+}
+
+async function loadTrackingEpochStartedAt(
+  client: pg.PoolClient
+): Promise<Date | null> {
+  const result = await client.query<{ min_evaluated_at: Date | null }>(
+    `
+    SELECT MIN(evaluated_at) AS min_evaluated_at
+    FROM feed_trade_eligibility
+    WHERE product_feed_gate_version = $1
+    `,
+    [PRODUCT_FEED_GATE_VERSION]
+  );
+  const value = result.rows[0]?.min_evaluated_at;
+  return value ?? null;
 }
 
 async function loadAtTradeTimeDecisions(
@@ -85,10 +100,6 @@ async function main(): Promise<void> {
   }
 
   const todayKey = feedMetricsDayKeyUtc();
-  const last7Keys = listFullUtcDayKeysEndingBefore(todayKey, 7);
-  const since = new Date(`${last7Keys[0]}T00:00:00.000Z`);
-  const until = new Date(`${todayKey}T23:59:59.999Z`);
-
   const pool = new pg.Pool({ connectionString: url });
   const client = await pool.connect();
 
@@ -97,27 +108,57 @@ async function main(): Promise<void> {
     let decisions: PersistedProductFeedEligibilityDecision[] = [];
     let atTradeTimeDataStatus: "available" | "table_missing" | "empty" =
       "table_missing";
+    let trackingEpochStartedAt: Date | null = null;
 
     if (tableReady) {
-      decisions = await loadAtTradeTimeDecisions(client, since, until);
+      trackingEpochStartedAt = await loadTrackingEpochStartedAt(client);
       atTradeTimeDataStatus =
-        decisions.length > 0 ? "available" : "empty";
+        trackingEpochStartedAt != null ? "available" : "empty";
     }
 
-    const allDayKeys = [...last7Keys, todayKey];
+    const observationWindow = buildProductFeedObservationWindow({
+      trackingEpochStartedAt,
+      todayKey,
+    });
+
+    const rollupDayKeys = [...observationWindow.last7FullDayKeys, todayKey];
+    const since =
+      trackingEpochStartedAt ??
+      new Date(`${todayKey}T00:00:00.000Z`);
+    const until = new Date(`${todayKey}T23:59:59.999Z`);
+
+    if (tableReady && trackingEpochStartedAt != null) {
+      decisions = await loadAtTradeTimeDecisions(client, since, until);
+    }
+
     const rollups = aggregateProductFeedEligibilityByUtcDay(
       decisions,
-      allDayKeys
+      rollupDayKeys
     );
     const rollupByDay = new Map(rollups.map((r) => [r.dayKey, r]));
 
-    const last7FullDays = last7Keys.map(
-      (key) => rollupByDay.get(key)!
+    const emptyRollup = (dayKey: string) => ({
+      dayKey,
+      tradeCandidates: 0,
+      stakeEvQualified: 0,
+      tradeLevelPassTrades: 0,
+      finalEligibleTrades: 0,
+      uniqueEligibleWallets: 0,
+      eligibleStakeUsd: 0,
+      rejectedByWalletGate: 0,
+      walletGateRejectedTrades: 0,
+      rejectionBreakdown: {},
+      withinTargetRange: false,
+    });
+
+    const last7FullDays = observationWindow.last7FullDayKeys.map(
+      (key) => rollupByDay.get(key) ?? emptyRollup(key)
     );
-    const todayRollup = rollupByDay.get(todayKey)!;
+    const todayRollup = rollupByDay.get(todayKey) ?? emptyRollup(todayKey);
 
     const sevenDaySummary = buildProductFeedSevenDaySummary({
       last7FullDays,
+      observationStatus: observationWindow.observationStatus,
     });
 
     const report = {
@@ -126,18 +167,27 @@ async function main(): Promise<void> {
       atTradeTimeDataStatus,
       dayBoundary: PRODUCT_FEED_ELIGIBLE_DAY_BOUNDARY,
       productFeedGateVersion: PRODUCT_FEED_GATE_VERSION,
+      trackingEpochStartedAt: observationWindow.trackingEpochStartedAt,
+      firstFullObservedDay: observationWindow.firstFullObservedDay,
+      fullDaysObserved: observationWindow.fullDaysObserved,
+      fullDaysRequired: observationWindow.fullDaysRequired,
+      observationStatus: observationWindow.observationStatus,
       interpretation: {
         eligibleTrades:
           "COUNT DISTINCT trade_id where final_eligible = true, grouped by UTC calendar day of traded_at.",
+        fullyObservedDay:
+          "UTC calendar day that begins at or after trackingEpochStartedAt's first full day (epoch partial day excluded).",
         partialCurrentUtcDay:
           "Included in today funnel only; excluded from 7-day done criterion.",
+        preInstrumentationDays:
+          "Never included as zero-eligible observed days before trackingEpochStartedAt.",
         replayFallback:
           "Not used for DONE_CRITERIA_MET when sourceOfTruth is at-trade-time.",
         unavailable:
           atTradeTimeDataStatus === "table_missing"
             ? "feed_trade_eligibility table not present — apply migration 0030 before tracking."
             : atTradeTimeDataStatus === "empty"
-              ? "No persisted decisions in range — deploy instrumentation and wait for production evaluations."
+              ? "No persisted decisions for gate version — deploy instrumentation and wait for production evaluations."
               : null,
       },
       today: {
