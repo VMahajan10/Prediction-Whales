@@ -53,8 +53,11 @@ import {
 import { isVerboseXAgentLoggingEnabled } from "@/lib/x-agent/verboseLogging";
 import { logStderr, logStdout } from "@/lib/utils";
 import { selectPostTemplate } from "@/lib/x-agent/templateEngine";
+import { refreshTemplateCopyCache } from "@/lib/templates/templateCopyStore";
 import {
+  fetchLastSentenceOrderIndex,
   fetchLastTemplateFamily,
+  fetchLastVariantId,
   hasActiveWhaleMarketQueueItem,
   hasExistingTradeIdInQueue,
 } from "@/lib/templates/queueHelpers";
@@ -63,7 +66,10 @@ import {
   fetchLastEvGloss,
   persistLastEvGloss,
 } from "@/lib/x-agent/evGlossStore";
-import { formatWhaleDisplayLabel } from "@/lib/x-agent/whaleDisplay";
+import {
+  formatWhaleDisplayLabel,
+  isUnlabelledWhalePseudonym,
+} from "@/lib/x-agent/whaleDisplay";
 import { getWhaleAlias } from "@/lib/x-agent/getWhaleAlias";
 import {
   ANONYMOUS_WALLET_ADDRESS,
@@ -434,6 +440,14 @@ export async function processWhaleTradeForXAgent(
       pipelinePmMid != null ? priceToCents(pipelinePmMid) : payload.nowCents,
   };
 
+  if (anonymousTrade) {
+    logEnqueueSkip(
+      trade,
+      "[Skip: Template] Anonymous wallet — no draft (Templates.md)"
+    );
+    return;
+  }
+
   const whaleRegistry = await ensureWhaleInRegistry(walletAddress, {
     avgStakeNotional: trade.usdNotional,
     avgEv: whaleForGates?.avgEv,
@@ -445,10 +459,17 @@ export async function processWhaleTradeForXAgent(
     return;
   }
 
-  const whaleLabel = anonymousTrade
-    ? formatWhaleDisplayLabel(walletAddress)
-    : (await getWhaleAlias(walletAddress)) ??
-      formatWhaleDisplayLabel(walletAddress);
+  const whaleLabel =
+    (await getWhaleAlias(walletAddress)) ??
+    formatWhaleDisplayLabel(walletAddress, whaleRegistry.whale.pseudonym);
+
+  if (isUnlabelledWhalePseudonym(walletAddress, whaleLabel)) {
+    logEnqueueSkip(
+      trade,
+      "[Skip: Template] Unidentified whale — no draft (Templates.md)"
+    );
+    return;
+  }
 
   let marketContext: string | null = null;
   try {
@@ -466,9 +487,13 @@ export async function processWhaleTradeForXAgent(
   }
 
   let lastTemplateFamily: string | undefined;
+  let lastVariantId: string | null = null;
+  let lastSentenceOrderIndex: number | null = null;
   let lastEvGloss: string | null = null;
   try {
     lastTemplateFamily = await fetchLastTemplateFamily(prisma);
+    lastVariantId = await fetchLastVariantId(prisma);
+    lastSentenceOrderIndex = await fetchLastSentenceOrderIndex(prisma);
     lastEvGloss = await fetchLastEvGloss(prisma);
   } catch (error) {
     console.warn("[x-agent/enqueue] failed to load template rotation state", {
@@ -478,6 +503,7 @@ export async function processWhaleTradeForXAgent(
 
   let templateSelection: ReturnType<typeof selectPostTemplate>;
   try {
+    await refreshTemplateCopyCache();
     templateSelection = selectPostTemplate(
       {
         whale: whaleLabel,
@@ -495,7 +521,12 @@ export async function processWhaleTradeForXAgent(
         category: translation.marketPlain,
         context: marketContext ?? undefined,
       },
-      { lastTemplateFamily, lastEvGloss }
+      {
+        lastTemplateFamily,
+        lastVariantId,
+        lastSentenceOrderIndex,
+        lastEvGloss,
+      }
     );
   } catch (error) {
     logEnqueueSkip(
@@ -512,6 +543,7 @@ export async function processWhaleTradeForXAgent(
     templateFamily: family,
     variantId: baseVariantId,
     evGloss,
+    sentenceOrderIndex,
   } = templateSelection;
   const variantId = unverifiedWhale
     ? applyUnverifiedWhaleQueueTag(baseVariantId)
@@ -532,6 +564,7 @@ export async function processWhaleTradeForXAgent(
     stakeNotional: pricedPayload.stakeNotional,
     status: "PENDING_REVIEW" as const,
     reviewToken: randomUUID(),
+    sentenceOrderIndex,
   };
 
   let queued: Awaited<ReturnType<typeof prisma.xPostQueue.create>>;

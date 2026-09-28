@@ -189,3 +189,18 @@ export async function ensureWhaleInRegistry(
   if (!whale) return null;
   return { whale, created: true };
 }
+
+/** Bump whale_registry.posted_count_30d when a live post is PUBLISHED (V6 eligibility). */
+export async function incrementWhalePostedCount30d(
+  walletAddress: string
+): Promise<void> {
+  if (!isPrismaEnabled()) return;
+  const prisma = getPrisma();
+  if (!prisma) return;
+
+  const address = normalizeWalletAddress(walletAddress);
+  await prisma.whaleRegistry.update({
+    where: { walletAddress: address },
+    data: { postedCount30d: { increment: 1 } },
+  });
+}

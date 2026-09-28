@@ -49,6 +49,28 @@ export async function fetchLastTemplateFamily(
   return row?.templateFamily ?? undefined;
 }
 
+export async function fetchLastVariantId(
+  prisma: PrismaClient
+): Promise<string | null> {
+  const row = await prisma.xPostQueue.findFirst({
+    orderBy: xPostQueuePrismaOrder,
+    select: { variantId: true },
+    where: { variantId: { not: null } },
+  });
+  return row?.variantId ?? null;
+}
+
+export async function fetchLastSentenceOrderIndex(
+  prisma: PrismaClient
+): Promise<number | null> {
+  const row = await prisma.xPostQueue.findFirst({
+    orderBy: xPostQueuePrismaOrder,
+    select: { sentenceOrderIndex: true },
+    where: { sentenceOrderIndex: { not: null } },
+  });
+  return row?.sentenceOrderIndex ?? null;
+}
+
 /** True when any x_post_queue row already exists for this trade id. */
 export async function hasExistingTradeIdInQueue(
   prisma: PrismaClient,

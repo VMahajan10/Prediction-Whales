@@ -36,6 +36,8 @@ import {
 import { getPrisma, disconnectPrisma } from "../lib/prisma";
 import { ensureXPostQueueSchemaOnce } from "../lib/x-agent/ensureXPostQueueSchema";
 import { runCronPublisher } from "../lib/x-agent/cronPublisher";
+import { scanResolutionReceipts } from "../lib/x-agent/resolutionReceiptPipeline";
+import { refreshTemplateCopyCache } from "../lib/templates/templateCopyStore";
 import {
   isXPublisherSchedulerActive,
   resolveXPublisherIntervalMs,
@@ -220,6 +222,20 @@ async function runScheduledXPublisherTick(): Promise<void> {
   } finally {
     scheduledPublisherRunning = false;
   }
+
+  try {
+    const receiptScan = await scanResolutionReceipts();
+    if (receiptScan.enqueued > 0 || receiptScan.errors.length > 0) {
+      console.log(
+        `[${formatTimestamp()}] [Shadow Cron] [V8 Receipt] scanned=${receiptScan.scanned} enqueued=${receiptScan.enqueued} skipped=${receiptScan.skipped}${receiptScan.errors.length ? ` errors=${receiptScan.errors.join(";")}` : ""}`
+      );
+    }
+  } catch (error) {
+    console.error(
+      `[${formatTimestamp()}] [Shadow Cron] [V8 Receipt] scan failed:`,
+      error
+    );
+  }
 }
 
 function startScheduledPublisherTicker(): void {
@@ -344,6 +360,18 @@ async function main(): Promise<void> {
   loadEnvFiles();
   logReviewEmailEnvAtStartup();
   bootstrapCloudWorker();
+
+  try {
+    await refreshTemplateCopyCache();
+    console.log(
+      `[${formatTimestamp()}] [Shadow Cron] X-agent template pool loaded from database (or bundled fallback)`
+    );
+  } catch (error) {
+    console.warn(
+      `[${formatTimestamp()}] [Shadow Cron] Template pool refresh failed — bundled defaults active`,
+      error instanceof Error ? error.message : error
+    );
+  }
 
   const prisma = getPrisma();
   if (prisma) {

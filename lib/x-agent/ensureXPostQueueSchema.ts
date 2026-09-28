@@ -16,6 +16,9 @@ const X_POST_QUEUE_SCHEMA_PATCHES = [
   `ALTER TABLE "x_post_queue" ADD COLUMN IF NOT EXISTS "public_telegram_message_id" text`,
   `ALTER TABLE "x_post_queue" ADD COLUMN IF NOT EXISTS "publish_retry_count" integer NOT NULL DEFAULT 0`,
   `ALTER TABLE "x_post_queue" ADD COLUMN IF NOT EXISTS "last_publish_error" text`,
+  `ALTER TABLE "x_post_queue" ADD COLUMN IF NOT EXISTS "sentence_order_index" integer`,
+  `ALTER TABLE "x_post_queue" ADD COLUMN IF NOT EXISTS "receipt_for_queue_id" text`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "x_post_queue_receipt_for_queue_id_unique" ON "x_post_queue" ("receipt_for_queue_id")`,
 ] as const;
 
 let drizzleSchemaEnsurePromise: Promise<void> | null = null;

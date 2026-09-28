@@ -29,12 +29,39 @@ export function formatBoundAvgEv(
   return `${formatAvgEvPercent(avgEvDecimal)} AVG EV — ${gloss}`;
 }
 
-/** EV gloss phrasing for "they …" / "as they …" (plural verb forms). */
+/**
+ * Phrase after "they …" / "as they …" / "historically they …".
+ * Must be grammatical (verb or "are …" adjective phrase).
+ */
+const EV_GLOSS_THEY: Record<EvGloss, string> = {
+  "profitable on average": "are profitable on average",
+  "wins at the right price": "win at the right price",
+  "gets in at better prices than the market":
+    "get in at better prices than the market",
+  "paid for disagreeing with the crowd":
+    "get paid for disagreeing with the crowd",
+  "makes money per bet, not just wins often":
+    "make money per bet, not just win often",
+};
+
+/** Phrase after "still …" (progressive / participial). */
+const EV_GLOSS_PROGRESSIVE: Record<EvGloss, string> = {
+  "profitable on average": "profitable on average",
+  "wins at the right price": "winning at the right price",
+  "gets in at better prices than the market":
+    "getting in at better prices than the market",
+  "paid for disagreeing with the crowd":
+    "getting paid for disagreeing with the crowd",
+  "makes money per bet, not just wins often":
+    "making money per bet, not just winning often",
+};
+
 export function evGlossForThey(gloss: EvGloss): string {
-  return gloss
-    .replace(/^gets\b/, "get")
-    .replace(/^wins\b/, "win")
-    .replace(/^makes\b/, "make");
+  return EV_GLOSS_THEY[gloss];
+}
+
+export function progressiveEvGloss(gloss: EvGloss): string {
+  return EV_GLOSS_PROGRESSIVE[gloss];
 }
 
 export interface SelectEvGlossParams {

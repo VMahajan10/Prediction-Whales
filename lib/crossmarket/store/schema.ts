@@ -516,6 +516,28 @@ export const whaleRegistry = pgTable("whale_registry", {
     .notNull(),
 });
 
+/** Runtime-editable V1–V8 template variant pool (copy team; no app deploy). */
+export const xAgentTemplateVariants = pgTable(
+  "x_agent_template_variants",
+  {
+    family: text("family").notNull(),
+    variantId: text("variant_id").notNull(),
+    sentences: jsonb("sentences").$type<string[]>().notNull(),
+    requiredPlaceholders: jsonb("required_placeholders")
+      .$type<string[]>()
+      .notNull(),
+    credibilityMode: text("credibility_mode"),
+    isActive: boolean("is_active").notNull().default(true),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.family, table.variantId] }),
+    index("x_agent_template_variants_family_idx").on(table.family),
+  ],
+);
+
 /** Human-in-the-loop queue for whale trade X posts awaiting review/dispatch. */
 export const xPostQueue = pgTable(
   "x_post_queue",
@@ -563,6 +585,10 @@ export const xPostQueue = pgTable(
     publishRetryCount: integer("publish_retry_count").notNull().default(0),
     /** Last X/Telegram publish error (truncated). */
     lastPublishError: text("last_publish_error"),
+    /** Sentence-order rotation index used when rendering copy. */
+    sentenceOrderIndex: integer("sentence_order_index"),
+    /** V8 receipt — source published x_post_queue row id. */
+    receiptForQueueId: text("receipt_for_queue_id"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .defaultNow()
       .notNull(),
@@ -580,6 +606,9 @@ export const xPostQueue = pgTable(
     index("x_post_queue_wallet_created_idx").on(
       table.walletAddress,
       table.createdAt.desc(),
+    ),
+    unique("x_post_queue_receipt_for_queue_id_unique").on(
+      table.receiptForQueueId,
     ),
   ],
 );

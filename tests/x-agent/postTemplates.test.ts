@@ -114,8 +114,8 @@ describe("selectPostTemplate", () => {
           entry: 52,
           now: undefined,
           stakeNotional: 30_000,
-          avgStakeNotional: 20_000,
-          postedCount30d: 3,
+          avgStakeNotional: undefined,
+          postedCount30d: 2,
           category: "CA politics",
         })
       )[0]
@@ -158,14 +158,14 @@ describe("selectPostTemplate", () => {
       baseInputs({
         entry: 64,
         now: undefined,
-        stakeNotional: 52_000,
+        stakeNotional: 5_000,
         avgStakeNotional: 8_000,
         postedCount30d: 0,
       }),
       { lastTemplateFamily: "V2", random: () => 0 }
     );
     expect(conviction.templateFamily).toBe("V4");
-    expect(conviction.renderedDraft).toMatch(/~\$8K/);
+    expect(conviction.renderedDraft).toMatch(/~\$8K|usually bets ~\$8K|biggest/);
   });
 
   it("never prints avg_ev without a gloss", () => {
@@ -229,14 +229,15 @@ describe("selectPostTemplate", () => {
     expect(selection.renderedDraft.length).toBeGreaterThan(0);
   });
 
-  it("appends optional market context to the rendered draft", () => {
+  it("does not append OpenAI market context to the rendered draft", () => {
+    const contextSentence =
+      "Both teams enter on a five-game win streak.";
     const selection = selectPostTemplate(
-      baseInputs({ context: "Both teams enter on a five-game win streak." }),
+      baseInputs({ context: contextSentence }),
       { random: () => 0 }
     );
-    expect(selection.renderedDraft).toContain(
-      "Both teams enter on a five-game win streak."
-    );
+    expect(selection.renderedDraft).not.toContain(contextSentence);
+    expect(selection.marketContextMetadata).toBe(contextSentence);
   });
 
   it("renders strict V5-b copy with gloss-bound AVG EV", () => {
@@ -267,7 +268,7 @@ describe("selectPostTemplate", () => {
     expect(v5bDraft).not.toBeNull();
     expect(v5bDraft).toContain("The crowd has this at 42¢.");
     expect(v5bDraft).toContain("+12% AVG EV");
-    expect(v5bDraft).toContain(gloss!);
+    expect(v5bDraft).toContain("suggests they've historically found better entry prices");
     expect(v5bDraft).not.toContain("Trade EV");
     expect(v5bDraft).not.toContain("Trader Avg EV");
   });

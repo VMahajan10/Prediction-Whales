@@ -201,6 +201,8 @@ model XPostQueue {
   dispatchedAt   DateTime? @map("dispatched_at")
   publishRetryCount Int    @default(0) @map("publish_retry_count")
   lastPublishError  String? @map("last_publish_error")
+  sentenceOrderIndex Int?    @map("sentence_order_index")
+  receiptForQueueId String? @unique @map("receipt_for_queue_id")
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @updatedAt @map("updated_at")
 

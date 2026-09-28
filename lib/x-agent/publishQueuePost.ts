@@ -10,6 +10,7 @@ import {
   recordPublishFailure,
 } from "@/lib/x-agent/publishRetry";
 import { updateQueueById } from "@/lib/x-agent/reviewDb";
+import { incrementWhalePostedCount30d } from "@/lib/x-agent/whaleRegistryDb";
 import { sendPublicTelegramPost } from "@/lib/services/publicTelegramService";
 
 const LOG_PREFIX = "[publishScheduledQueueItem]";
@@ -203,6 +204,15 @@ export async function publishScheduledQueueItem(
     publishRetryCount: 0,
     lastPublishError: null,
   });
+
+  if (item.templateFamily !== "V8") {
+    await incrementWhalePostedCount30d(item.walletAddress).catch((error) => {
+      console.warn("[publishScheduledQueueItem] postedCount30d increment failed", {
+        wallet: item.walletAddress,
+        error: error instanceof Error ? error.message : error,
+      });
+    });
+  }
 
   return {
     ok: true,
