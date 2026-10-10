@@ -47,6 +47,14 @@ interface TxLog {
   data: string;
 }
 
+/** Polygon receipt logs with RPC failover (skips nodes that return empty/null). */
+export async function fetchPolygonTransactionReceiptLogs(
+  hash: string
+): Promise<TxLog[] | null> {
+  const receipt = await fetchTransactionReceipt(hash);
+  return receipt?.logs ?? null;
+}
+
 async function fetchTransactionReceipt(
   hash: string
 ): Promise<{ logs: TxLog[] } | null> {

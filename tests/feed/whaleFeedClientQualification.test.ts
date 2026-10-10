@@ -15,6 +15,8 @@ function qualifiedWalletQualification(
 ): WalletQualification {
   return {
     qualified: true,
+    hydrationState: "complete",
+    historicalResolvedVolumeTrusted: true,
     avgEv: 0.03,
     resolvedBetsCount: 10,
     avgStakeNotional: 30,
@@ -89,9 +91,15 @@ describe("whaleFeedClientQualification", () => {
     ).toBe(true);
   });
 
-  it("hides Polymarket trades when wallet AVG EV is below +3%", () => {
+  it("hides Polymarket trades when wallet historical volume is not trusted", () => {
     const quals = new Map([
-      [WALLET, qualifiedWalletQualification({ avgEv: 0.02, qualified: false })],
+      [
+        WALLET,
+        qualifiedWalletQualification({
+          historicalResolvedVolumeTrusted: false,
+          qualified: false,
+        }),
+      ],
     ]);
     expect(
       passesPolymarketClientFeedVisibilityGate(
@@ -125,7 +133,13 @@ describe("whaleFeedClientQualification", () => {
   it("hides stale buffer Polymarket rows that fail wallet credibility", () => {
     const trade = polymarketTrade();
     const failedQuals = new Map([
-      [WALLET, qualifiedWalletQualification({ avgEv: 0.01, qualified: false })],
+      [
+        WALLET,
+        qualifiedWalletQualification({
+          historicalResolvedVolumeTrusted: false,
+          qualified: false,
+        }),
+      ],
     ]);
     expect(isVisibleInClientFeed(trade, failedQuals, emptyPipeline)).toBe(
       false
@@ -186,7 +200,13 @@ describe("recent/backfill admission policy", () => {
   it("rejects backfill-style Polymarket rows when wallet gate fails", () => {
     const trade = polymarketTrade({ isLive: false });
     const quals = new Map([
-      [WALLET, qualifiedWalletQualification({ avgEv: 0.02, qualified: false })],
+      [
+        WALLET,
+        qualifiedWalletQualification({
+          historicalResolvedVolumeTrusted: false,
+          qualified: false,
+        }),
+      ],
     ]);
     expect(isVisibleInClientFeed(trade, quals, new Map())).toBe(false);
   });

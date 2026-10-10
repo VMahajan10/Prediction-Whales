@@ -9,8 +9,11 @@ import { join } from "node:path";
 import { sql } from "drizzle-orm";
 import { getDb } from "@/lib/crossmarket/store/db";
 import { feedTrades } from "@/lib/crossmarket/store/schema";
-import { clearWalletResolutionCache, resolveWalletForTrade } from "@/lib/resolveWhaleWallet";
-import { PolygonRpcClient } from "@/lib/walletLedger/onchain/rpc";
+import {
+  clearWalletResolutionCache,
+  fetchPolygonTransactionReceiptLogs,
+  resolveWalletForTrade,
+} from "@/lib/resolveWhaleWallet";
 import { resolveTraderFromReceiptLogs } from "@/lib/resolveWhaleWalletEconomic";
 
 const D91 = "0xd91e80cf2e7be2e162c6513ced06f1dd0da35296";
@@ -28,7 +31,6 @@ async function main(): Promise<void> {
     .from(feedTrades)
     .where(sql`lower(${feedTrades.proxyWallet}) = ${D91}`);
 
-  const rpc = new PolygonRpcClient();
   const frequency = new Map<string, number>();
   let previouslyD91 = rows.length;
   let correctedResolved = 0;
@@ -71,9 +73,9 @@ async function main(): Promise<void> {
       correctedWallet = resolved.wallet;
       source = resolved.source;
 
-      const receipt = await rpc.getTransactionReceipt(hash);
-      if (receipt?.logs?.length) {
-        const economic = resolveTraderFromReceiptLogs(receipt.logs as never, {
+      const receiptLogs = await fetchPolygonTransactionReceiptLogs(hash);
+      if (receiptLogs?.length) {
+        const economic = resolveTraderFromReceiptLogs(receiptLogs as never, {
           assetId,
           side,
           sizeShares: size,

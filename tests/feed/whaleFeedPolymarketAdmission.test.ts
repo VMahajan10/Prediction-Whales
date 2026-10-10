@@ -21,6 +21,8 @@ function qualifiedWalletQualification(
 ): WalletQualification {
   return {
     qualified: true,
+    hydrationState: "complete",
+    historicalResolvedVolumeTrusted: true,
     avgEv: 0.03,
     resolvedBetsCount: 10,
     avgStakeNotional: 30,
@@ -139,7 +141,13 @@ describe("whaleFeed Polymarket admission funnel", () => {
     expect(hydrated).not.toBeNull();
 
     const quals = new Map([
-      [WALLET, qualifiedWalletQualification({ avgEv: 0.01, qualified: false })],
+      [
+        WALLET,
+        qualifiedWalletQualification({
+          historicalResolvedVolumeTrusted: false,
+          qualified: false,
+        }),
+      ],
     ]);
     const funnel = runPolymarketFeedFunnel([hydrated!], quals);
 

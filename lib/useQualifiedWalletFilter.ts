@@ -81,6 +81,8 @@ export function useQualifiedWalletFilter(
                 resolvedBetsCount: result.resolvedBetsCount ?? null,
                 avgStakeNotional: result.avgStakeNotional ?? null,
                 resolvedVolumeUSD: result.resolvedVolumeUSD ?? null,
+                historicalResolvedVolumeTrusted:
+                  result.historicalResolvedVolumeTrusted === true,
                 identity: result.identity ?? EMPTY_IDENTITY,
               });
             }

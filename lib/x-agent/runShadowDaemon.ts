@@ -94,6 +94,8 @@ export async function socketTradeToWhale(trade: SocketTrade) {
   if (trade.transactionHash) {
     const resolved = await resolveWalletForTrade(trade.transactionHash, {
       assetId: trade.assetId,
+      side: trade.side,
+      sizeShares: trade.size,
     });
     proxyWallet = resolved.wallet ?? undefined;
   }

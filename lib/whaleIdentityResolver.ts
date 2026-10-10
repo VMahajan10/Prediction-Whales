@@ -71,6 +71,14 @@ export interface ResolvedWhaleIdentity {
 export type WalletQualificationApiEntry = WalletFeedQualificationInput & {
   qualified?: boolean;
   hydrationState?: "pending" | "complete" | "failed";
+  historicalVolumeUsd?: number | null;
+  historicalVolumeTrusted?: boolean;
+  historicalVolumeReason?:
+    | import("@/lib/feedQualification").ProductFeedHistoricalVolumeGateReason
+    | null;
+  productFeedWalletBlockReason?:
+    | import("@/lib/feedQualification").ProductFeedWalletBlockReason
+    | null;
   identity?: ResolvedWhaleIdentity;
 };
 

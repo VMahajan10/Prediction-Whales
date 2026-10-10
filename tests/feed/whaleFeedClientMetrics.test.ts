@@ -14,6 +14,8 @@ function qualifiedWalletQualification(
 ): WalletQualification {
   return {
     qualified: true,
+    hydrationState: "complete",
+    historicalResolvedVolumeTrusted: true,
     avgEv: 0.03,
     resolvedBetsCount: 10,
     avgStakeNotional: 30,
@@ -103,9 +105,15 @@ describe("aggregatePolymarketFeedMetrics", () => {
     expect(delta.passedWallets).toEqual([WALLET_A]);
   });
 
-  it("does not gate-pass when trade passes but wallet AVG EV fails", () => {
+  it("does not gate-pass when trade passes but wallet historical volume is untrusted", () => {
     const quals = new Map([
-      [WALLET_A, qualifiedWalletQualification({ avgEv: 0.01, qualified: false })],
+      [
+        WALLET_A,
+        qualifiedWalletQualification({
+          historicalResolvedVolumeTrusted: false,
+          qualified: false,
+        }),
+      ],
     ]);
     const delta = aggregate([polymarketTrade({ usdNotional: 1000, netEvPercent: 5 })], quals);
 
@@ -175,7 +183,13 @@ describe("aggregatePolymarketFeedMetrics", () => {
   it("counts mixed qualification batches correctly", () => {
     const quals = new Map([
       [WALLET_A, qualifiedWalletQualification()],
-      [WALLET_B, qualifiedWalletQualification({ avgEv: 0.01, qualified: false })],
+      [
+        WALLET_B,
+        qualifiedWalletQualification({
+          historicalResolvedVolumeTrusted: false,
+          qualified: false,
+        }),
+      ],
     ]);
     const trades = [
       polymarketTrade({ id: "full-1", transactionHash: "0xf1", proxyWallet: WALLET_A }),
@@ -232,9 +246,15 @@ describe("aggregatePolymarketFeedMetrics", () => {
     expect(afterQual.passedWallets).toEqual([WALLET_A]);
   });
 
-  it("example: high stake and trade EV but low wallet AVG EV is not gate-passed", () => {
+  it("example: high stake and trade EV but untrusted wallet volume is not gate-passed", () => {
     const quals = new Map([
-      [WALLET_A, qualifiedWalletQualification({ avgEv: 0.01, qualified: false })],
+      [
+        WALLET_A,
+        qualifiedWalletQualification({
+          historicalResolvedVolumeTrusted: false,
+          qualified: false,
+        }),
+      ],
     ]);
     const delta = aggregate(
       [
