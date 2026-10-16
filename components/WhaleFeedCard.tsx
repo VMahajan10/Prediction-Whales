@@ -37,6 +37,8 @@ export interface WhaleFeedCardProps {
  */
 const KALSHI_ANONYMOUS_LABEL = KALSHI_TRADER_ALIAS;
 
+const PROFILE_WALLET_PATTERN = /^0x[a-f0-9]{40}$/i;
+
 function resolveFeedWhaleIdentity(trade: WhaleTrade) {
   if (trade.source === "kalshi") {
     return {
@@ -44,6 +46,7 @@ function resolveFeedWhaleIdentity(trade: WhaleTrade) {
       initials: null,
       winRate: null,
       anonymous: true as const,
+      profileHref: null,
     };
   }
 
@@ -68,6 +71,10 @@ function resolveFeedWhaleIdentity(trade: WhaleTrade) {
       identity?.initials ?? whaleInitialsFromPseudonym(displayName),
     winRate: identity?.winRate ?? null,
     anonymous,
+    profileHref:
+      hasWallet && wallet && PROFILE_WALLET_PATTERN.test(wallet)
+        ? `/traders/${encodeURIComponent(wallet.toLowerCase())}`
+        : null,
   };
 }
 
@@ -167,7 +174,28 @@ export default function WhaleFeedCard({
     : "bg-pulse-no/15 text-pulse-no";
 
   const cardClassName =
-    "pulse-card block rounded-2xl p-4 transition-colors hover:border-pulse-accent/40 hover:bg-pulse-surface/30";
+    "pulse-card relative block rounded-2xl p-4 transition-colors hover:border-pulse-accent/40 hover:bg-pulse-surface/30";
+
+  const traderIdentity = (
+    <>
+      <div
+        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+          whale.anonymous
+            ? "bg-pulse-surface text-pulse-label"
+            : "bg-pulse-accent/20 text-pulse-accent"
+        }`}
+      >
+        {whale.anonymous ? <AnonymousTraderIcon /> : whale.initials}
+      </div>
+      <p
+        className={`min-w-0 flex-1 truncate text-sm font-semibold ${
+          whale.anonymous ? "text-pulse-muted" : "text-white"
+        } ${whale.profileHref ? "group-hover/trader:underline" : ""}`}
+      >
+        {whale.pseudonym}
+      </p>
+    </>
+  );
 
   const cardBody = (
     <>
@@ -192,22 +220,19 @@ export default function WhaleFeedCard({
       </h3>
 
       <div className="mt-3 flex items-center gap-3">
-        <div
-          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-            whale.anonymous
-              ? "bg-pulse-surface text-pulse-label"
-              : "bg-pulse-accent/20 text-pulse-accent"
-          }`}
-        >
-          {whale.anonymous ? <AnonymousTraderIcon /> : whale.initials}
-        </div>
-        <p
-          className={`min-w-0 flex-1 truncate text-sm font-semibold ${
-            whale.anonymous ? "text-pulse-muted" : "text-white"
-          }`}
-        >
-          {whale.pseudonym}
-        </p>
+        {whale.profileHref ? (
+          <Link
+            href={whale.profileHref}
+            className="group/trader pointer-events-auto relative z-10 flex min-w-0 flex-1 items-center gap-3 rounded-lg"
+            aria-label={`View ${whale.pseudonym}'s trader profile`}
+          >
+            {traderIdentity}
+          </Link>
+        ) : (
+          <div className="flex min-w-0 flex-1 items-center gap-3">
+            {traderIdentity}
+          </div>
+        )}
         {winRateLabel !== "—" ? (
           <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-pulse-yes">
             {winRateLabel} Win Rate
@@ -261,13 +286,17 @@ export default function WhaleFeedCard({
     return <article className={cardClassName}>{cardBody}</article>;
   }
 
+  // Stretched-link layout: anchors can't nest, so the detail link covers the
+  // card and the trader link sits above it via pointer-events + z-index.
   return (
-    <Link
-      href={detailHref}
-      onClick={onNavigate}
-      className={`${cardClassName} cursor-pointer`}
-    >
-      {cardBody}
-    </Link>
+    <article className={`${cardClassName} cursor-pointer`}>
+      <Link
+        href={detailHref}
+        onClick={onNavigate}
+        className="absolute inset-0 z-0 rounded-2xl"
+        aria-label={`View trade details: ${trade.title}`}
+      />
+      <div className="pointer-events-none relative">{cardBody}</div>
+    </article>
   );
 }
