@@ -4,13 +4,15 @@ import {
   orderFilledInvolvesWallet,
   tokenAmountToNumber,
 } from "@/lib/walletLedger/onchain/decode";
+import {
+  deriveOrderFilledLegEconomics,
+  isExchangeCollateralAssetId,
+} from "@/lib/walletLedger/onchain/orderFilledEconomics";
 import type {
   ParsedOnChainEvent,
   ParsedOrderFilled,
 } from "@/lib/walletLedger/onchain/types";
 import type { WalletLedgerEvent } from "@/lib/walletLedger/types";
-
-const USDC_ASSET_ID = "0";
 
 export function orderFilledToLedgerEvents(
   event: ParsedOrderFilled,
@@ -19,45 +21,11 @@ export function orderFilledToLedgerEvents(
 ): WalletLedgerEvent[] {
   if (!orderFilledInvolvesWallet(event, wallet)) return [];
   const w = wallet.toLowerCase();
-  const isMaker = event.maker === w;
-  const isTaker = event.taker === w;
-  if (!isMaker && !isTaker) return [];
+  const leg = deriveOrderFilledLegEconomics(event, w);
+  if (!leg) return [];
 
-  const makerAssetId = event.makerAssetId;
-  const takerAssetId = event.takerAssetId;
-  const makerAmount = tokenAmountToNumber(event.makerAmountFilled);
-  const takerAmount = tokenAmountToNumber(event.takerAmountFilled);
-
-  let side: "BUY" | "SELL";
-  let asset: string;
-  let shares: number;
-  let cashUsd: number;
-
-  if (isMaker) {
-    if (makerAssetId === USDC_ASSET_ID) {
-      side = "BUY";
-      asset = takerAssetId;
-      shares = takerAmount;
-      cashUsd = makerAmount;
-    } else {
-      side = "SELL";
-      asset = makerAssetId;
-      shares = makerAmount;
-      cashUsd = takerAmount;
-    }
-  } else if (makerAssetId === USDC_ASSET_ID) {
-    side = "SELL";
-    asset = takerAssetId;
-    shares = takerAmount;
-    cashUsd = makerAmount;
-  } else {
-    side = "BUY";
-    asset = makerAssetId;
-    shares = makerAmount;
-    cashUsd = takerAmount;
-  }
-
-  if (!asset || asset === USDC_ASSET_ID || shares <= 0) return [];
+  const { side, asset, shares, cashUsd } = leg;
+  if (!asset || isExchangeCollateralAssetId(asset) || shares <= 0) return [];
 
   const type = side;
   const price = shares > 0 ? cashUsd / shares : 0;

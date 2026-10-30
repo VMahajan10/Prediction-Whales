@@ -594,6 +594,70 @@ describe("MERGE/SPLIT materiality", () => {
   });
 });
 
+describe("lifecycle asset grouping", () => {
+  it("merges events with conflicting condition_id under the same asset token", async () => {
+    const events = [
+      event({
+        type: "BUY",
+        timestamp: 1,
+        conditionId: "0xcond-a",
+        asset: ASSET_YES,
+        shares: 10,
+        price: 0.5,
+        cashUsd: 5,
+      }),
+      event({
+        type: "SELL",
+        timestamp: 2,
+        conditionId: "0xcond-b",
+        asset: ASSET_YES,
+        shares: 10,
+        price: 0.6,
+        cashUsd: 6,
+      }),
+    ];
+    const { positions } = await buildPositionLifecycles(WALLET, events);
+    expect(positions).toHaveLength(1);
+    expect(positions[0]?.completed).toBe(true);
+    expect(positions[0]?.realizedPnl).toBeCloseTo(1, 6);
+  });
+
+  it("completes on resolved market even when shares are zero (loser at $0)", () => {
+    const events = [
+      event({
+        type: "BUY",
+        timestamp: 1,
+        shares: 10,
+        price: 0.5,
+        cashUsd: 5,
+      }),
+    ];
+    const resolution: GammaMarketResolution = {
+      conditionId: CONDITION,
+      marketFound: true,
+      closed: true,
+      resolved: true,
+      resolutionFinal: true,
+      outcomes: ["Yes", "No"],
+      outcomePrices: [0, 1],
+      winningOutcome: "No",
+      winningAsset: ASSET_NO,
+      winningIndex: 1,
+      resolvedAt: null,
+      umaResolutionStatus: "resolved",
+      resolutionStatus: "resolved",
+      question: "q",
+      slug: "s",
+      clobTokenIds: [ASSET_YES, ASSET_NO],
+      source: "condition_id",
+      confidence: "high",
+    };
+    const economics = computePositionEconomics(events, resolution, ASSET_YES);
+    expect(economics.completed).toBe(true);
+    expect(economics.realizedPnl).toBeCloseTo(-5, 6);
+  });
+});
+
 describe("lifecycle episode splitting", () => {
   it("keeps one completed lifecycle after BUY -> SELL exit -> later BUY re-entry", async () => {
     const events = [

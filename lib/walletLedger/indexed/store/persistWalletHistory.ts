@@ -12,6 +12,7 @@ import { mergeMonotonicCoverageFields } from "@/lib/walletLedger/indexed/authori
 import { withDbCircuit } from "@/lib/walletLedger/indexed/shadow/dbCircuitBreaker";
 import { retryTransient } from "@/lib/walletLedger/indexed/shadow/transientRetry";
 import { withDbQueryTimeout } from "@/lib/walletLedger/indexed/store/dbQueryTimeout";
+import { patchPersistedEventTimestampsFromEvents } from "@/lib/walletLedger/indexed/store/eventMetadataEnrichment";
 import { assertPersistenceNotAborted } from "@/lib/walletLedger/indexed/store/persistenceAbort";
 import { WALLET_LEDGER_VERSION, WALLET_METRIC_VERSION } from "@/lib/walletLedger/indexed/metricVersion";
 import type { IndexedAuditWalletResult } from "@/lib/walletLedger/indexed/types";
@@ -55,7 +56,7 @@ import type { PositionLifecycle, WalletLedgerEvent } from "@/lib/walletLedger/ty
 export type { AuthoritativePersistDiagnostics, LogIndexCompletenessReport };
 
 /** Bounded insert batch size for wallet_ledger_events (scale-tested 100–500). */
-export const EVENT_PERSIST_CHUNK_SIZE = 250;
+export const EVENT_PERSIST_CHUNK_SIZE = 1_000;
 
 export function walletHistoryDbEnabled(): boolean {
   return isDatabaseEnabled();
@@ -207,39 +208,10 @@ function walletLedgerEventRow(
 
 export async function patchPersistedEventTimestamps(
   wallet: string,
-  events: WalletLedgerEvent[]
+  events: WalletLedgerEvent[],
+  options: { abortSignal?: AbortSignal } = {}
 ): Promise<number> {
-  const db = getDb();
-  const walletAddress = normalizeWalletAddress(wallet);
-  const timestampByBlock = new Map<number, number>();
-  for (const event of events) {
-    if (!event.blockNumber || !event.timestamp || event.timestamp <= 0) {
-      continue;
-    }
-    timestampByBlock.set(event.blockNumber, event.timestamp);
-  }
-  if (timestampByBlock.size === 0) return 0;
-
-  let patched = 0;
-  for (const [blockNumber, blockTimestamp] of timestampByBlock) {
-    const rows = await withDbCircuit("patchPersistedEventTimestamps", () =>
-      withDbQueryTimeout("patchPersistedEventTimestamps", () =>
-        db
-          .update(walletLedgerEvents)
-          .set({ blockTimestamp, updatedAt: new Date() })
-          .where(
-            and(
-              eq(walletLedgerEvents.walletAddress, walletAddress),
-              eq(walletLedgerEvents.blockNumber, blockNumber),
-              sql`${walletLedgerEvents.blockTimestamp} IS NULL`
-            )
-          )
-          .returning({ id: walletLedgerEvents.id })
-      )
-    );
-    patched += rows.length;
-  }
-  return patched;
+  return patchPersistedEventTimestampsFromEvents(wallet, events, options);
 }
 
 export async function upsertWalletLedgerEvents(
@@ -790,7 +762,8 @@ export async function persistAuthoritativePhase(
   }
   const timestampPatches = await patchPersistedEventTimestamps(
     audit.wallet,
-    authoritativeEvents
+    authoritativeEvents,
+    { abortSignal: options.abortSignal }
   );
   if (timestampPatches > 0) {
     console.error(

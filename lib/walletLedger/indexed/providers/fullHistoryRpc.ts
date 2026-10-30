@@ -3,8 +3,10 @@ import {
   CTF_EXCHANGE_LEGACY_ADDRESS,
   CTF_EXCHANGE_V1_ADDRESS,
   CTF_EXCHANGE_V2_ADDRESS,
+  NEG_RISK_ADAPTER_ADDRESS,
   NEG_RISK_CTF_EXCHANGE_ADDRESS,
   TOPIC_ORDER_FILLED_NEG_RISK,
+  TOPIC_POSITIONS_CONVERTED,
   TOPIC_ORDER_FILLED_V1,
   TOPIC_PAYOUT_REDEMPTION,
   TOPIC_POSITION_SPLIT,
@@ -196,5 +198,17 @@ export function buildWalletLogQueries(
     topics: [topic0, walletTopicPadded] as (string | string[] | null)[],
   }));
 
-  return [...orderFilledQueries, ...ctfQueries];
+  const negRiskAdapterQueries = [
+    TOPIC_POSITION_SPLIT,
+    TOPIC_POSITIONS_MERGE,
+    TOPIC_PAYOUT_REDEMPTION,
+    TOPIC_POSITIONS_CONVERTED,
+  ].map((topic0) => ({
+    fromBlock,
+    toBlock,
+    address: NEG_RISK_ADAPTER_ADDRESS,
+    topics: [topic0, walletTopicPadded] as (string | string[] | null)[],
+  }));
+
+  return [...orderFilledQueries, ...ctfQueries, ...negRiskAdapterQueries];
 }

@@ -219,3 +219,21 @@ export function deduplicateLedgerEvents(
 export function positionKey(event: Pick<WalletLedgerEvent, "conditionId" | "asset">): string {
   return `${event.conditionId}::${event.asset}`;
 }
+
+/** One lifecycle stream per outcome token; condition_id may vary across enrichment passes. */
+export function lifecycleAssetKey(asset: string): string {
+  return asset.trim();
+}
+
+export function canonicalConditionIdForEvents(
+  events: Pick<WalletLedgerEvent, "conditionId">[]
+): string {
+  const counts = new Map<string, number>();
+  for (const event of events) {
+    const conditionId = event.conditionId?.trim();
+    if (!conditionId) continue;
+    counts.set(conditionId, (counts.get(conditionId) ?? 0) + 1);
+  }
+  if (counts.size === 0) return "";
+  return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]![0];
+}

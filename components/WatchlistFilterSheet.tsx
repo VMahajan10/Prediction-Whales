@@ -1,6 +1,10 @@
 "use client";
 
 import type { ReactNode } from "react";
+import {
+  DEFAULT_MIN_POSITION_COUNT,
+  DIRECTORY_DEFAULT_MIN_PROFIT_FACTOR,
+} from "@/lib/walletProfitFactor";
 import type { WatchlistFilters } from "@/lib/watchlistFilters";
 import {
   DEFAULT_WATCHLIST_FILTERS,
@@ -53,15 +57,21 @@ function FilterPill({
 }
 
 const SORT_OPTIONS: { value: WatchlistSort; label: string }[] = [
+  { value: "highest_profit_factor", label: "Highest PF" },
+  { value: "top_pnl", label: "Top PnL" },
+  { value: "highest_win_rate", label: "Highest win rate" },
+  { value: "most_positions", label: "Most positions" },
   { value: "recently_active", label: "Recently active" },
   { value: "top_roi", label: "Top ROI" },
-  { value: "highest_win_rate", label: "Highest win rate" },
   { value: "highest_ev", label: "Highest EV%" },
   { value: "most_open_positions", label: "Most open plays" },
 ];
 
 const MARKET_OPTIONS: { value: WatchlistMarketFilter; label: string }[] = [
-  { value: "all", label: "All" },
+  { value: "all", label: "All categories" },
+  { value: "NFL", label: "NFL" },
+  { value: "NBA", label: "NBA" },
+  { value: "MLB", label: "MLB" },
   { value: "SPORTS", label: "Sports" },
   { value: "POLITICS", label: "Politics" },
   { value: "CULTURE", label: "Culture" },
@@ -72,6 +82,14 @@ const PLATFORM_OPTIONS: { value: WatchlistPlatformFilter; label: string }[] = [
   { value: "kalshi", label: "Kalshi" },
   { value: "polymarket", label: "Polymarket" },
 ];
+
+const MIN_PF_OPTIONS: { value: number; label: string }[] = [
+  { value: 0, label: "Any PF" },
+  { value: 1.2, label: "PF ≥ 1.2" },
+  { value: 1.5, label: "PF ≥ 1.5" },
+  { value: 2, label: "PF ≥ 2.0" },
+];
+const MIN_POSITION_OPTIONS = [10, 30, 50, 100];
 
 export default function WatchlistFilterSheet({
   open,
@@ -90,7 +108,7 @@ export default function WatchlistFilterSheet({
         className="absolute inset-0 bg-black/70"
         onClick={onClose}
       />
-      <div className="relative z-10 w-full max-w-md animate-slide-up rounded-t-2xl border border-pulse-border bg-pulse-card px-4 pb-6 pt-3 lg:max-w-lg">
+      <div className="relative z-10 max-h-[90vh] w-full max-w-md animate-slide-up overflow-y-auto rounded-t-2xl border border-pulse-border bg-pulse-card px-4 pb-6 pt-3 lg:max-w-lg">
         <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-pulse-border" />
 
         <div className="mb-6 flex items-center justify-between">
@@ -116,7 +134,35 @@ export default function WatchlistFilterSheet({
           ))}
         </FilterSection>
 
-        <FilterSection title="Markets">
+        <FilterSection title="Minimum profit factor">
+          {MIN_PF_OPTIONS.map((option) => (
+            <FilterPill
+              key={option.value}
+              active={filters.minProfitFactor === option.value}
+              onClick={() =>
+                onChange({ ...filters, minProfitFactor: option.value })
+              }
+            >
+              {option.label}
+            </FilterPill>
+          ))}
+        </FilterSection>
+
+        <FilterSection title="Minimum closed positions">
+          {MIN_POSITION_OPTIONS.map((minPos) => (
+            <FilterPill
+              key={minPos}
+              active={filters.minPositionCount === minPos}
+              onClick={() =>
+                onChange({ ...filters, minPositionCount: minPos })
+              }
+            >
+              ≥ {minPos}
+            </FilterPill>
+          ))}
+        </FilterSection>
+
+        <FilterSection title="Category">
           {MARKET_OPTIONS.map((option) => (
             <FilterPill
               key={option.value}
@@ -182,6 +228,11 @@ export default function WatchlistFilterSheet({
             />
           </button>
         </div>
+
+        <p className="mb-4 text-[10px] text-pulse-muted">
+          Defaults: any PF, ≥ {DEFAULT_MIN_POSITION_COUNT} closed positions,
+          sorted by highest PF.
+        </p>
 
         <button type="button" onClick={onClose} className="pulse-btn-primary">
           Show {resultCount} whale{resultCount === 1 ? "" : "s"}

@@ -2,7 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "@/lib/crossmarket/store/db";
 import { walletPositionLifecycles } from "@/lib/crossmarket/store/schema";
 import { WALLET_METRIC_VERSION } from "@/lib/walletLedger/indexed/metricVersion";
-import { positionKey } from "@/lib/walletLedger/normalize";
+import { lifecycleAssetKey } from "@/lib/walletLedger/normalize";
 import { withDbCircuit } from "@/lib/walletLedger/indexed/shadow/dbCircuitBreaker";
 import { retryTransient } from "@/lib/walletLedger/indexed/shadow/transientRetry";
 import { withDbQueryTimeout } from "@/lib/walletLedger/indexed/store/dbQueryTimeout";
@@ -159,7 +159,6 @@ export async function upsertLifecycleWriteBatch(
             .onConflictDoUpdate({
               target: [
                 walletPositionLifecycles.walletAddress,
-                walletPositionLifecycles.conditionId,
                 walletPositionLifecycles.assetId,
                 walletPositionLifecycles.metricVersion,
                 walletPositionLifecycles.lifecycleEpisode,
@@ -173,22 +172,19 @@ export async function upsertLifecycleWriteBatch(
 }
 
 export function lifecycleBaseKeyString(key: {
-  conditionId: string;
+  conditionId?: string;
   assetId: string;
 }): string {
-  return `${key.conditionId}::${key.assetId}`;
+  return lifecycleAssetKey(key.assetId);
 }
 
 export function lifecycleKeyString(key: LifecyclePositionKey): string {
   const episode = key.lifecycleEpisode ?? 0;
-  return `${key.conditionId}::${key.assetId}::${episode}`;
+  return `${lifecycleAssetKey(key.assetId)}::${episode}`;
 }
 
 export function lifecycleBaseKeyFromPosition(position: PositionLifecycle): string {
-  return lifecycleBaseKeyString({
-    conditionId: position.conditionId,
-    assetId: position.asset,
-  });
+  return lifecycleAssetKey(position.asset);
 }
 
 export function lifecycleKeyFromPosition(position: PositionLifecycle): string {
@@ -358,19 +354,18 @@ export async function deleteStaleLifecycleEpisodes(
   if (affectedBaseKeys.size === 0) return 0;
   const db = getDb();
   let deleted = 0;
-  for (const baseKey of affectedBaseKeys) {
-    const [conditionId, assetId] = baseKey.split("::");
-    if (!conditionId || !assetId) continue;
+  for (const assetId of affectedBaseKeys) {
+    if (!assetId) continue;
     const expectedEpisodes = new Set(
       computedPositions
-        .filter((position) => lifecycleBaseKeyFromPosition(position) === baseKey)
+        .filter((position) => lifecycleBaseKeyFromPosition(position) === assetId)
         .map((position) => position.lifecycleEpisode)
     );
     const existing = await db
       .select({ lifecycleEpisode: walletPositionLifecycles.lifecycleEpisode })
       .from(walletPositionLifecycles)
       .where(
-        sql`lower(${walletPositionLifecycles.walletAddress}) = ${walletAddress} AND ${walletPositionLifecycles.conditionId} = ${conditionId} AND ${walletPositionLifecycles.assetId} = ${assetId} AND ${walletPositionLifecycles.metricVersion} = ${WALLET_METRIC_VERSION}`
+        sql`lower(${walletPositionLifecycles.walletAddress}) = ${walletAddress} AND ${walletPositionLifecycles.assetId} = ${assetId} AND ${walletPositionLifecycles.metricVersion} = ${WALLET_METRIC_VERSION}`
       );
     for (const row of existing) {
       if (expectedEpisodes.has(row.lifecycleEpisode)) continue;
@@ -381,7 +376,6 @@ export async function deleteStaleLifecycleEpisodes(
             .where(
               and(
                 sql`lower(${walletPositionLifecycles.walletAddress}) = ${walletAddress}`,
-                eq(walletPositionLifecycles.conditionId, conditionId),
                 eq(walletPositionLifecycles.assetId, assetId),
                 eq(walletPositionLifecycles.metricVersion, WALLET_METRIC_VERSION),
                 eq(walletPositionLifecycles.lifecycleEpisode, row.lifecycleEpisode)
@@ -681,6 +675,12 @@ export async function atomicReplaceCurrentVersionWalletLifecycles(
 ): Promise<AtomicLifecycleReplaceStats> {
   const started = Date.now();
   const walletAddress = wallet.toLowerCase();
+  const dedupedByKey = new Map<string, PositionLifecycle>();
+  for (const position of allPositions) {
+    if (!position.asset?.trim() || !position.conditionId?.trim()) continue;
+    dedupedByKey.set(lifecycleKeyFromPosition(position), position);
+  }
+  const positions = [...dedupedByKey.values()];
   assertPersistenceNotAborted(input.abortSignal, "lifecycle-persist-load");
 
   const persistedRowsBefore = await withDbCircuit("loadPersistedLifecycleRows", () =>
@@ -689,7 +689,7 @@ export async function atomicReplaceCurrentVersionWalletLifecycles(
     )
   );
   const lifecycleRowsBefore = persistedRowsBefore.length;
-  const expectedKeys = new Set(allPositions.map(lifecycleKeyFromPosition));
+  const expectedKeys = new Set(positions.map(lifecycleKeyFromPosition));
   const persistedByKey = new Map(
     persistedRowsBefore.map((row) => [
       lifecycleKeyString({
@@ -701,7 +701,7 @@ export async function atomicReplaceCurrentVersionWalletLifecycles(
     ])
   );
 
-  const writes: LifecycleWriteEntry[] = allPositions.map((position) => {
+  const writes: LifecycleWriteEntry[] = positions.map((position) => {
     const key = lifecycleKeyFromPosition(position);
     const row = positionToPersistedRow(position);
     const persisted = persistedByKey.get(key);
@@ -765,7 +765,6 @@ export async function atomicReplaceCurrentVersionWalletLifecycles(
           .where(
             and(
               sql`lower(${walletPositionLifecycles.walletAddress}) = ${walletAddress}`,
-              eq(walletPositionLifecycles.conditionId, row.conditionId),
               eq(walletPositionLifecycles.assetId, row.assetId),
               eq(walletPositionLifecycles.metricVersion, WALLET_METRIC_VERSION),
               eq(walletPositionLifecycles.lifecycleEpisode, row.lifecycleEpisode)
@@ -779,14 +778,14 @@ export async function atomicReplaceCurrentVersionWalletLifecycles(
 
   const persistedRowsAfter = await loadPersistedLifecycleRows(walletAddress);
   const lifecycleRowsAfter = persistedRowsAfter.length;
-  const lifecycleParityAudit = auditLifecycleParity(allPositions, persistedRowsAfter);
+  const lifecycleParityAudit = auditLifecycleParity(positions, persistedRowsAfter);
   const lifecycleParity =
     lifecycleParityAudit.exactParity &&
-    lifecycleRowsAfter === allPositions.length;
+    lifecycleRowsAfter === positions.length;
 
   return {
     lifecycleMode: "full",
-    lifecyclesAffected: allPositions.length,
+    lifecyclesAffected: positions.length,
     lifecyclesInserted,
     lifecyclesUpdated,
     lifecyclesUnchanged: writes.filter((entry) => entry.action === "unchanged").length,
@@ -795,7 +794,7 @@ export async function atomicReplaceCurrentVersionWalletLifecycles(
     lifecycleRowsUpserted: lifecyclesInserted + lifecyclesUpdated,
     staleLifecycleRowsDeleted,
     lifecycleRowsAfter,
-    replayLifecycleEpisodeCount: allPositions.length,
+    replayLifecycleEpisodeCount: positions.length,
     lifecycleParity,
     lifecycleParityAudit,
   };
@@ -883,5 +882,38 @@ export async function upsertWalletPositionLifecyclesIncremental(
 
 /** Re-export for tests that build keys from raw events. */
 export function eventPositionKey(event: WalletLedgerEvent): string {
-  return positionKey(event);
+  const asset = event.asset?.trim();
+  return asset ? lifecycleAssetKey(asset) : "";
+}
+
+/**
+ * Remove duplicate rows for the same (wallet, asset_id, lifecycle_episode).
+ * Keeps the row with the highest buy_notional, then largest id.
+ */
+export async function dedupeWalletLifecycleRowsByAssetEpisode(
+  walletAddress: string,
+  metricVersion = WALLET_METRIC_VERSION
+): Promise<number> {
+  const db = getDb();
+  const wallet = walletAddress.toLowerCase();
+  const result = await withDbCircuit("dedupeWalletLifecycleRows", () =>
+    withDbQueryTimeout("dedupeWalletLifecycleRows", () =>
+      db.execute(sql`
+        DELETE FROM wallet_position_lifecycles AS victim
+        USING wallet_position_lifecycles AS keeper
+        WHERE lower(victim.wallet_address) = lower(${wallet})
+          AND lower(keeper.wallet_address) = lower(${wallet})
+          AND victim.metric_version = ${metricVersion}
+          AND keeper.metric_version = ${metricVersion}
+          AND victim.asset_id = keeper.asset_id
+          AND victim.lifecycle_episode = keeper.lifecycle_episode
+          AND victim.id <> keeper.id
+          AND (
+            keeper.buy_notional > victim.buy_notional
+            OR (keeper.buy_notional = victim.buy_notional AND keeper.id > victim.id)
+          )
+      `)
+    )
+  );
+  return Number(result.rowCount ?? 0);
 }

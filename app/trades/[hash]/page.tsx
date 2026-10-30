@@ -172,28 +172,28 @@ export default function TradeDetailPage() {
     async (found: TradeSummary, signal: AbortSignal) => {
       setMarketsLoading(true);
       try {
-        const [pmResult, piResult] = await Promise.allSettled([
-          fetchWithTimeout("/api/markets", { signal }),
-          fetchWithTimeout("/api/kalshi", { signal }),
-        ]);
-        if (signal.aborted) return;
-
-        const allMarkets: MarketSummary[] = [];
-        if (pmResult.status === "fulfilled" && pmResult.value.ok) {
-          const pmData: { markets?: MarketSummary[] } =
-            await pmResult.value.json();
-          allMarkets.push(...(pmData.markets ?? []));
-        }
-        if (piResult.status === "fulfilled" && piResult.value.ok) {
-          const piData: { markets?: MarketSummary[] } =
-            await piResult.value.json();
-          allMarkets.push(...(piData.markets ?? []));
+        const slug =
+          found.slug?.trim() || found.eventSlug?.trim() || "";
+        if (!slug) {
+          setMatchedMarket(null);
+          setCurrentProbability(found.price);
+          return;
         }
 
-        const market = findMarketForTrade(found, allMarkets);
+        const res = await fetchWithTimeout(
+          `/api/markets?slug=${encodeURIComponent(slug)}`,
+          { signal }
+        );
         if (signal.aborted) return;
-        setMatchedMarket(market);
-        setCurrentProbability(market?.probability ?? found.price);
+
+        if (res.ok) {
+          const pmData: { markets?: MarketSummary[] } = await res.json();
+          const allMarkets = pmData.markets ?? [];
+          const market = findMarketForTrade(found, allMarkets);
+          if (signal.aborted) return;
+          setMatchedMarket(market);
+          setCurrentProbability(market?.probability ?? found.price);
+        }
       } catch {
         // Market enrichment is optional
       } finally {

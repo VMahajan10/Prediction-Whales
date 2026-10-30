@@ -191,7 +191,11 @@ export interface PositionLifecycle {
   fullyExited: boolean;
   accountingStatus: PositionAccountingStatus;
   completed: boolean;
-  completionReason: "fully_exited" | "held_through_resolution" | null;
+  completionReason:
+    | "fully_exited"
+    | "held_through_resolution"
+    | "market_resolved"
+    | null;
   resolution: GammaMarketResolution | null;
   resolutionPayoutUsd: number;
   realizedPnl: number | null;

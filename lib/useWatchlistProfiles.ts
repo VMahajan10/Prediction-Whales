@@ -3,13 +3,16 @@
 import { useEffect, useMemo, useState } from "react";
 import type { BookmarkedTrader } from "@/lib/bookmarkedTraders";
 import { repairTrackRecord, type TrackRecord } from "@/lib/polymarket";
-import type { TraderOpenPosition } from "@/lib/traderProfile";
+import type { TraderClosedPosition, TraderOpenPosition } from "@/lib/traderProfile";
+import type { WalletProfitFactorStats } from "@/lib/walletProfitFactor";
 import type { WatchlistProfile } from "@/lib/watchlistFilters";
 
 interface ProfileFetchResult {
   trackRecord: TrackRecord | null;
   openPositions: TraderOpenPosition[];
+  closedPositions: TraderClosedPosition[];
   avgEv: number | null;
+  profitFactorStats: WalletProfitFactorStats | null;
 }
 
 export function useWatchlistProfiles(bookmarks: BookmarkedTrader[]) {
@@ -40,7 +43,13 @@ export function useWatchlistProfiles(bookmarks: BookmarkedTrader[]) {
             if (!res.ok) {
               return [
                 trader.wallet,
-                { trackRecord: null, openPositions: [], avgEv: null },
+                {
+                  trackRecord: null,
+                  openPositions: [],
+                  closedPositions: [],
+                  avgEv: null,
+                  profitFactorStats: null,
+                },
               ] as const;
             }
             const data = await res.json();
@@ -51,13 +60,21 @@ export function useWatchlistProfiles(bookmarks: BookmarkedTrader[]) {
                   ? repairTrackRecord(data.trackRecord)
                   : null,
                 openPositions: data.openPositions ?? [],
+                closedPositions: data.closedPositions ?? [],
                 avgEv: data.pipelineEvAnalytics?.averageEv ?? null,
+                profitFactorStats: data.profitFactorStats ?? null,
               },
             ] as const;
           } catch {
             return [
               trader.wallet,
-              { trackRecord: null, openPositions: [], avgEv: null },
+              {
+                trackRecord: null,
+                openPositions: [],
+                closedPositions: [],
+                avgEv: null,
+                profitFactorStats: null,
+              },
             ] as const;
           }
         })
@@ -85,6 +102,7 @@ export function useWatchlistProfiles(bookmarks: BookmarkedTrader[]) {
           openPositionCount: fetched?.openPositions.length ?? 0,
           openPositions: fetched?.openPositions ?? [],
           avgEv: fetched?.avgEv ?? null,
+          profitFactorStats: fetched?.profitFactorStats ?? null,
           loading: loading && !fetched,
         };
       }),

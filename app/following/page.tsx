@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import FeedEmptyState from "@/components/FeedEmptyState";
 import MobileAppShell from "@/components/MobileAppShell";
@@ -34,7 +35,15 @@ function WatchlistContent() {
   return (
     <main className="min-h-screen px-4 py-5">
       <header className="mb-4 flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold text-white">Watchlist</h1>
+        <div>
+          <h1 className="text-2xl font-bold text-white">Watchlist</h1>
+          <Link
+            href="/wallets"
+            className="text-xs font-semibold text-pulse-accent"
+          >
+            Browse all wallet stats →
+          </Link>
+        </div>
         <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-pulse-yes">
           <span className="h-1.5 w-1.5 rounded-full bg-pulse-yes" />
           Live
@@ -86,7 +95,10 @@ function WatchlistContent() {
         <ul className="space-y-3">
           {filtered.map((profile) => (
             <li key={profile.trader.wallet}>
-              <WatchlistTraderCard profile={profile} />
+              <WatchlistTraderCard
+                profile={profile}
+                marketFilter={filters.market}
+              />
             </li>
           ))}
         </ul>

@@ -934,7 +934,6 @@ export const walletPositionLifecycles = pgTable(
   (table) => [
     unique("wallet_position_lifecycles_position_version_unique").on(
       table.walletAddress,
-      table.conditionId,
       table.assetId,
       table.metricVersion,
       table.lifecycleEpisode
@@ -1200,6 +1199,72 @@ export type PolicyACoverageDailyMetrics =
   typeof policyACoverageDailyMetrics.$inferSelect;
 export type PolicyAProductionWalletHydration =
   typeof policyAProductionWalletHydration.$inferSelect;
+
+/** Polymarket Data API v2 positions cache (profit factor / reconciliation). */
+export const walletApiSyncState = pgTable("wallet_api_sync_state", {
+  walletAddress: text("wallet_address").primaryKey(),
+  maxLastEventAt: bigint("max_last_event_at", { mode: "number" })
+    .notNull()
+    .default(0),
+  headlineRealizedPnl: doublePrecision("headline_realized_pnl"),
+  positionsSumClosedRealized: doublePrecision("positions_sum_closed_realized"),
+  reconciliationGapPct: doublePrecision("reconciliation_gap_pct"),
+  reconciliationPassed: boolean("reconciliation_passed").notNull().default(false),
+  positionsSumReconciliation: doublePrecision("positions_sum_reconciliation"),
+  fullSyncStatus: text("full_sync_status").notNull().default("idle"),
+  closedPositionsCached: integer("closed_positions_cached").notNull().default(0),
+  lastFullSyncAt: timestamp("last_full_sync_at", {
+    withTimezone: true,
+    mode: "date",
+  }),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+    .defaultNow()
+    .notNull(),
+});
+
+export const walletApiPositions = pgTable(
+  "wallet_api_positions",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    walletAddress: text("wallet_address").notNull(),
+    tokenId: text("token_id").notNull(),
+    conditionId: text("condition_id"),
+    status: text("status").notNull(),
+    realizedPnl: doublePrecision("realized_pnl").notNull().default(0),
+    unrealizedPnl: doublePrecision("unrealized_pnl").notNull().default(0),
+    totalPnl: doublePrecision("total_pnl").notNull().default(0),
+    currentPrice: doublePrecision("current_price"),
+    redeemable: boolean("redeemable").notNull().default(false),
+    eventId: text("event_id"),
+    eventSlug: text("event_slug"),
+    categoryLabel: text("category_label"),
+    title: text("title"),
+    lastEventAt: bigint("last_event_at", { mode: "number" })
+      .notNull()
+      .default(0),
+    firstEntryAt: bigint("first_entry_at", { mode: "number" }),
+    syncedAt: timestamp("synced_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    unique("wallet_api_positions_wallet_token_unique").on(
+      table.walletAddress,
+      table.tokenId
+    ),
+    index("wallet_api_positions_wallet_status_idx").on(
+      table.walletAddress,
+      table.status
+    ),
+    index("wallet_api_positions_wallet_last_event_idx").on(
+      table.walletAddress,
+      table.lastEventAt
+    ),
+  ]
+);
+
+export type WalletApiSyncStateRow = typeof walletApiSyncState.$inferSelect;
+export type WalletApiPositionRow = typeof walletApiPositions.$inferSelect;
 
 export type WalletLedgerEventRow = typeof walletLedgerEvents.$inferSelect;
 export type WalletPositionLifecycleRow = typeof walletPositionLifecycles.$inferSelect;

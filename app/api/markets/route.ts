@@ -1,17 +1,24 @@
 import { NextResponse } from "next/server";
 import { publicApiErrorMessage } from "@/lib/apiError";
-import { fetchMarketBySlug, fetchMarkets } from "@/lib/polymarket";
+import { fetchMarkets } from "@/lib/polymarket";
+import { getCachedMarketBySlug } from "@/lib/trades/marketBySlugCache";
 
 export const dynamic = "force-dynamic";
-export const revalidate = 0;
 
 export async function GET(request: Request) {
   const slug = new URL(request.url).searchParams.get("slug");
 
   try {
     if (slug) {
-      const market = await fetchMarketBySlug(slug);
-      return NextResponse.json({ markets: market ? [market] : [] });
+      const market = await getCachedMarketBySlug(slug);
+      return NextResponse.json(
+        { markets: market ? [market] : [] },
+        {
+          headers: {
+            "Cache-Control": "private, max-age=60, stale-while-revalidate=120",
+          },
+        }
+      );
     }
 
     const markets = await fetchMarkets();

@@ -5,10 +5,17 @@ import {
   categoryBadgeClass,
   inferCategoryBadge,
 } from "@/lib/marketCategory";
+import { WalletProfitFactorStatsBlock } from "@/components/WalletProfitFactorStats";
 import {
-  formatRoi,
+  LEDGER_STATS_UNVERIFIED_LABEL,
+  WALLET_POSITIONS_SYNCING_LABEL,
+  isProfitFactorStatsVerified,
+} from "@/lib/walletLedger/ledgerDerivedStatsGate";
+import {
   formatWinRate,
+  profitFactorSliceForFilter,
   roiColorClass,
+  type WatchlistFilters,
   type WatchlistProfile,
 } from "@/lib/watchlistFilters";
 import {
@@ -36,10 +43,12 @@ function displayName(trader: WatchlistProfile["trader"]): string {
 function StatCell({
   label,
   value,
+  sub,
   valueClass = "text-white",
 }: {
   label: string;
   value: string;
+  sub?: string;
   valueClass?: string;
 }) {
   return (
@@ -48,21 +57,36 @@ function StatCell({
         {label}
       </p>
       <p className={`mt-1.5 text-lg font-bold ${valueClass}`}>{value}</p>
+      {sub ? (
+        <p className="mt-1 text-[9px] leading-tight text-pulse-muted">{sub}</p>
+      ) : null}
     </div>
   );
 }
 
 export default function WatchlistTraderCard({
   profile,
+  marketFilter = "all",
 }: {
   profile: WatchlistProfile;
+  marketFilter?: WatchlistFilters["market"];
 }) {
-  const { trader, trackRecord, openPositions, openPositionCount, loading } =
-    profile;
+  const {
+    trader,
+    trackRecord,
+    openPositions,
+    openPositionCount,
+    loading,
+    profitFactorStats,
+  } = profile;
+  const pfSlice = profitFactorSliceForFilter(profile, marketFilter);
   const recentOpen = openPositions.slice(0, 3);
   const name = displayName(trader);
   const initials = traderInitials(name, trader.wallet);
-  const roi = trackRecord?.roi ?? null;
+  const pfSyncing = profitFactorStats?.availability === "syncing";
+  const pfVerified = isProfitFactorStatsVerified(profitFactorStats);
+  const winRatePct = profitFactorStats?.winRatePct ?? null;
+  const headlinePnl = profitFactorStats?.headlineRealizedPnl ?? null;
 
   return (
     <article className="rounded-2xl border border-pulse-border bg-pulse-card p-4">
@@ -83,20 +107,73 @@ export default function WatchlistTraderCard({
 
       <div className="mt-4 grid grid-cols-3 gap-2">
         <StatCell
-          label="Open Positions"
+          label="Open (overall)"
           value={loading ? "…" : String(openPositionCount)}
         />
         <StatCell
-          label="Win Rate"
-          value={loading ? "…" : formatWinRate(trackRecord?.winRate)}
+          label={
+            marketFilter === "all"
+              ? "Win rate (overall)"
+              : `Win rate (${marketFilter})`
+          }
+          value={
+            loading
+              ? "…"
+              : pfVerified
+                ? formatWinRate(winRatePct)
+                : "—"
+          }
+          sub={
+            pfSlice?.positionCount
+              ? `${pfSlice.positionCount} closed positions (overall)`
+              : undefined
+          }
           valueClass="text-pulse-yes"
         />
         <StatCell
-          label="ROI"
-          value={loading ? "…" : formatRoi(roi)}
-          valueClass={roiColorClass(roi)}
+          label={
+            marketFilter === "all" ? "PnL (overall)" : `PnL (${marketFilter})`
+          }
+          value={
+            loading
+              ? "…"
+              : pfVerified && headlinePnl != null
+                ? `$${Math.round(headlinePnl).toLocaleString()}`
+                : "—"
+          }
+          sub={
+            pfSlice?.positionCount
+              ? `${pfSlice.positionCount} closed for PF`
+              : undefined
+          }
+          valueClass={roiColorClass(headlinePnl)}
         />
       </div>
+
+      {!loading ? (
+        <div className="mt-3 rounded-xl border border-pulse-border bg-pulse-surface/40 px-3 py-2.5">
+          <WalletProfitFactorStatsBlock
+            stats={profitFactorStats}
+            categoryFilter={marketFilter}
+          />
+          <p className="mt-2 text-[10px] text-pulse-label">
+            {pfVerified
+              ? (
+                  <>
+                    Profile PnL (overall):{" "}
+                    {profitFactorStats?.headlineRealizedPnl != null
+                      ? `$${Math.round(profitFactorStats.headlineRealizedPnl).toLocaleString()}`
+                      : "—"}{" "}
+                    · {pfSlice?.positionCount ?? 0} closed positions
+                    {marketFilter !== "all" ? ` (${marketFilter})` : ""}
+                  </>
+                )
+              : pfSyncing
+                ? WALLET_POSITIONS_SYNCING_LABEL
+                : LEDGER_STATS_UNVERIFIED_LABEL}
+          </p>
+        </div>
+      ) : null}
 
       {recentOpen.length > 0 ? (
         <div className="mt-4">

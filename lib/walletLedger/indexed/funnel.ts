@@ -1,6 +1,7 @@
 import {
   CONDITIONAL_TOKENS_ADDRESS,
   EXCHANGE_ADDRESSES,
+  NEG_RISK_ADAPTER_ADDRESS,
   ORDER_FILLED_TOPICS,
 } from "@/lib/walletLedger/onchain/contracts";
 import {
@@ -41,7 +42,8 @@ function isRecognizedContract(address: string): boolean {
   const a = address.toLowerCase();
   return (
     EXCHANGE_ADDRESSES.includes(a as (typeof EXCHANGE_ADDRESSES)[number]) ||
-    a === CONDITIONAL_TOKENS_ADDRESS
+    a === CONDITIONAL_TOKENS_ADDRESS ||
+    a === NEG_RISK_ADAPTER_ADDRESS
   );
 }
 

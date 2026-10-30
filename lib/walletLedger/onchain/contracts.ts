@@ -27,6 +27,10 @@ export const CTF_EXCHANGE_LEGACY_ADDRESS =
 export const NEG_RISK_CTF_EXCHANGE_ADDRESS =
   "0xe2222d279d744050d28e00520010520000310f59";
 
+/** Neg Risk Adapter (conversions, split/merge, redemptions) */
+export const NEG_RISK_ADAPTER_ADDRESS =
+  "0xd91e80cf2e7be2e162c6513ced06f1dd0da35296";
+
 /** Polymarket CTF Exchange v2 (deployed ~2026) */
 export const CTF_EXCHANGE_V2_ADDRESS =
   "0xe111180000d2663c0091e4f400237545b87b996b";
@@ -70,9 +74,19 @@ export const TOPIC_ORDER_FILLED_NEG_RISK =
 export const TOPIC_ORDERS_MATCHED_NEG_RISK =
   "0x55bb3cade9d43b798a4fe5ffdd05024b2d7870df53920673bfc7e68047cd0ab1";
 
+export const TOPIC_POSITIONS_CONVERTED =
+  "0xb03d19dddbc72a87e735ff0ea3b57bef133ebe44e1894284916a84044deb367e";
+
 /** Emitted by proxy wallet contract (observed from 0xd91e... proxy) */
 export const TOPIC_PROXY_WALLET_EXECUTION =
   "0xbbed930dbfb7907ae2d60ddf78345610214f26419a0128df39b6cc3d9e5df9b0";
+
+/** Neg Risk Adapter PositionSplit (stakeholder, conditionId, amount). */
+export const TOPIC_NEG_RISK_ADAPTER_POSITION_SPLIT = TOPIC_PROXY_WALLET_EXECUTION;
+
+/** Neg Risk Adapter PositionsMerge — distinct topic from CTF merge. */
+export const TOPIC_NEG_RISK_ADAPTER_POSITIONS_MERGE =
+  "0xba33ac50d8894676597e6e35dc09cff59854708b642cd069d21eb9c7ca072a04";
 
 export const EXCHANGE_ADDRESSES = [
   CTF_EXCHANGE_LEGACY_ADDRESS,

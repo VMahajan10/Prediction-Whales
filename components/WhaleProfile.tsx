@@ -8,8 +8,10 @@ import {
   inferCategoryBadge,
 } from "@/lib/marketCategory";
 import { useBookmarkedTraders } from "@/lib/useBookmarkedTraders";
-import { isClvAverageEvComputable } from "@/lib/averageEvDisplay";
-import type { CategoryStats } from "@/lib/polymarket";
+import type { ProfitFactorSlice } from "@/lib/walletProfitFactor";
+import {
+  formatProfitFactorValue,
+} from "@/lib/walletProfitFactor";
 import {
   generateDeterministicWhalePseudonym,
   isUsableCustomWhaleName,
@@ -22,6 +24,12 @@ import {
   type TraderClosedPosition,
   type TraderOpenPosition,
 } from "@/lib/traderProfile";
+import { WalletProfitFactorStatsBlock } from "@/components/WalletProfitFactorStats";
+import {
+  LEDGER_STATS_UNVERIFIED_LABEL,
+  WALLET_POSITIONS_SYNCING_LABEL,
+  isProfitFactorStatsVerified,
+} from "@/lib/walletLedger/ledgerDerivedStatsGate";
 import { useWhaleTrackRecord } from "@/lib/useWhaleTrackRecord";
 
 type ProfileTab = "positions" | "trades";
@@ -264,16 +272,45 @@ function StatCard({
   );
 }
 
-function CategoryCard({
-  stat,
-  showClv,
-  avgClv,
-}: {
-  stat: CategoryStats;
-  showClv: boolean;
-  avgClv: number | null;
-}) {
-  const meta = CATEGORY_META[stat.category] ?? CATEGORY_META.Other;
+function pfCategoryMeta(label: string): {
+  icon: string;
+  pillClass: string;
+  label: string;
+} {
+  const key = label.trim();
+  const upper = key.toUpperCase();
+  if (
+    upper === "POLITICS" ||
+    upper === "CONGRESS" ||
+    upper === "FEDERAL"
+  ) {
+    return CATEGORY_META.Politics;
+  }
+  if (upper === "CULTURE") return CATEGORY_META.Culture;
+  if (upper === "CRYPTO") return CATEGORY_META.Crypto;
+  if (
+    upper === "NFL" ||
+    upper === "NBA" ||
+    upper === "MLB" ||
+    upper === "NHL" ||
+    upper === "SOCCER" ||
+    upper === "SPORTS" ||
+    upper === "ESPORTS"
+  ) {
+    return CATEGORY_META.Sports;
+  }
+  return {
+    icon: "📊",
+    pillClass: categoryBadgeClass("default"),
+    label: key,
+  };
+}
+
+function PfCategoryCard({ slice }: { slice: ProfitFactorSlice }) {
+  const meta = pfCategoryMeta(slice.categoryLabel);
+  const netPnl = slice.grossProfit - slice.grossLoss;
+  const winRate =
+    slice.winRatePct != null ? Math.round(slice.winRatePct) : null;
 
   return (
     <div className="rounded-2xl border border-pulse-border bg-pulse-card p-4">
@@ -285,66 +322,43 @@ function CategoryCard({
           {meta.label}
         </span>
         <span className="text-[10px] font-bold uppercase tracking-wide text-pulse-yes">
-          {Math.round(stat.winRate)}% Win Rate
+          {winRate != null ? `${winRate}% Win Rate` : "Win rate —"}
         </span>
       </div>
-      <div className={`grid gap-3 ${showClv ? "grid-cols-2" : "grid-cols-3"}`}>
+      <div className="grid grid-cols-3 gap-3">
         <div>
           <p className="text-[10px] font-bold uppercase tracking-wide text-pulse-label">
-            Net Gain & Loss
-          </p>
-          <p
-            className={`mt-1 text-sm font-bold ${
-              stat.pnl >= 0 ? "text-pulse-yes" : "text-pulse-no"
-            }`}
-          >
-            {formatCompactMoney(stat.pnl)}
-          </p>
-        </div>
-        <div>
-          <p className="text-[10px] font-bold uppercase tracking-wide text-pulse-label">
-            Invested
+            Profit factor
           </p>
           <p className="mt-1 text-sm font-bold text-white">
-            {formatCompactMoney(stat.staked, false)}
+            {formatProfitFactorValue(slice.profitFactor)}
           </p>
         </div>
         <div>
           <p className="text-[10px] font-bold uppercase tracking-wide text-pulse-label">
-            ROI
+            Net gain & loss
           </p>
           <p
             className={`mt-1 text-sm font-bold ${
-              stat.roi >= 0 ? "text-pulse-yes" : "text-pulse-no"
+              netPnl >= 0 ? "text-pulse-yes" : "text-pulse-no"
             }`}
           >
-            {formatPct(stat.roi)}
+            {formatCompactMoney(netPnl)}
           </p>
         </div>
-        {showClv ? (
-          <div>
-            <div className="flex items-center gap-1">
-              <p className="text-[10px] font-bold uppercase tracking-wide text-pulse-label">
-                Avg. CLV
-              </p>
-              <MetricInfoButton
-                label="Avg. CLV"
-                tooltip={WHALE_METRIC_TOOLTIPS.avgClv}
-              />
-            </div>
-            <p
-              className={`mt-1 text-sm font-bold ${
-                avgClv != null && avgClv >= 0
-                  ? "text-pulse-yes"
-                  : avgClv != null
-                    ? "text-pulse-no"
-                    : "text-pulse-muted"
-              }`}
-            >
-              {formatClvPct(avgClv)}
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-pulse-label">
+            Positions
+          </p>
+          <p className="mt-1 text-sm font-bold text-white">
+            {slice.positionCount.toLocaleString()}
+          </p>
+          {slice.limitedData ? (
+            <p className="mt-0.5 text-[9px] font-semibold uppercase text-amber-300/90">
+              Limited data
             </p>
-          </div>
-        ) : null}
+          ) : null}
+        </div>
       </div>
     </div>
   );
@@ -500,27 +514,29 @@ export default function WhaleProfile({
     openPositions,
   } = record;
 
-  const showClv = isClvAverageEvComputable(data?.clvStats);
-  const avgClv = data?.clvStats?.avgClv ?? null;
+  const pfStatsSyncing = data?.profitFactorStats?.availability === "syncing";
+  const pfStatsVerified = isProfitFactorStatsVerified(data?.profitFactorStats);
 
   const financials = useMemo(() => {
-    let totalGain = 0;
-    let totalLoss = 0;
-    for (const p of closedPositions) {
-      if (p.realizedPnl > 0) totalGain += p.realizedPnl;
-      else if (p.realizedPnl < 0) totalLoss += Math.abs(p.realizedPnl);
-    }
+    const pfOverall = data?.profitFactorStats?.overall;
+    const totalGain =
+      pfStatsVerified && pfOverall ? pfOverall.grossProfit : 0;
+    const totalLoss =
+      pfStatsVerified && pfOverall ? pfOverall.grossLoss : 0;
 
     const openValue = openPositions.reduce(
       (sum, p) => sum + openCurrentValue(p),
       0
     );
     const invested = trackRecord?.totalInvested ?? 0;
-    const realized = trackRecord?.totalRealizedPnl ?? 0;
+    const realized =
+      pfStatsVerified && data?.profitFactorStats?.headlineRealizedPnl != null
+        ? data.profitFactorStats.headlineRealizedPnl
+        : 0;
     const netWorth = openValue + invested + realized;
 
     return { totalGain, totalLoss, netWorth, openValue };
-  }, [closedPositions, openPositions, trackRecord]);
+  }, [closedPositions, openPositions, trackRecord, data?.profitFactorStats, pfStatsVerified]);
 
   const { wins, losses } = useMemo(() => {
     const closedCount = trackRecord?.closedCount ?? 0;
@@ -533,16 +549,11 @@ export default function WhaleProfile({
   }, [trackRecord]);
 
   const categories = useMemo(() => {
-    const stats = data?.categoryStats ?? [];
-    const preferred = ["Politics", "Culture", "Sports"];
-    const ordered = [
-      ...preferred
-        .map((name) => stats.find((s) => s.category === name))
-        .filter(Boolean),
-      ...stats.filter((s) => !preferred.includes(s.category)),
-    ] as CategoryStats[];
-    return ordered.slice(0, 3);
-  }, [data?.categoryStats]);
+    if (!pfStatsVerified || !data?.profitFactorStats?.byCategoryLabel?.length) {
+      return [];
+    }
+    return data.profitFactorStats.byCategoryLabel.slice(0, 3);
+  }, [data?.profitFactorStats?.byCategoryLabel, pfStatsVerified]);
 
   const marketFilterOptions = useMemo(() => {
     const rows = tab === "positions" ? openPositions : closedPositions;
@@ -718,32 +729,56 @@ export default function WhaleProfile({
           {bookmarked ? "★ On Watchlist" : "🔔 Add to Watchlist"}
         </button>
 
+        {pfStatsSyncing ? (
+          <p className="mb-4 rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs text-sky-100/90">
+            {WALLET_POSITIONS_SYNCING_LABEL}
+          </p>
+        ) : !pfStatsVerified ? (
+          <p className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100/90">
+            {LEDGER_STATS_UNVERIFIED_LABEL}
+          </p>
+        ) : null}
+
         <div className="mb-6 flex gap-3">
           <StatCard
-            label="Win Rate"
+            label="Win rate (overall)"
             value={
-              trackRecord?.winRate != null
-                ? `${Math.round(trackRecord.winRate)}%`
+              pfStatsVerified && data?.profitFactorStats?.winRatePct != null
+                ? `${Math.round(data.profitFactorStats.winRatePct)}%`
                 : "—"
             }
             sub={
-              wins + losses > 0
-                ? `${wins.toLocaleString()} W · ${losses.toLocaleString()} L`
+              pfStatsVerified
+                ? `${(data?.profitFactorStats?.closedWinCount ?? wins).toLocaleString()} W · ${(data?.profitFactorStats?.closedLossCount ?? losses).toLocaleString()} L · ${(data?.profitFactorStats?.overall?.positionCount ?? trackRecord?.closedCount ?? 0).toLocaleString()} closed`
                 : undefined
             }
             valueClass={
-              trackRecord?.winRate != null && trackRecord.winRate >= 55
+              pfStatsVerified &&
+              data?.profitFactorStats?.winRatePct != null &&
+              data.profitFactorStats.winRatePct >= 55
                 ? "text-pulse-yes"
                 : "text-white"
             }
             tooltipKey="winRate"
           />
           <StatCard
-            label="ROI"
-            value={formatPct(trackRecord?.roi)}
+            label="ROI (overall)"
+            value={
+              pfStatsVerified &&
+              data?.profitFactorStats?.headlineRealizedPnl != null
+                ? formatPct(
+                    (data.profitFactorStats.headlineRealizedPnl /
+                      Math.max(
+                        data.profitFactorStats.overall?.positionCount ?? 1,
+                        1
+                      )) *
+                      100
+                  )
+                : "—"
+            }
             sub={
-              trackRecord && trackRecord.closedCount > 0
-                ? `On ${trackRecord.closedCount.toLocaleString()} plays`
+              pfStatsVerified && data?.profitFactorStats?.headlineRealizedPnl != null
+                ? `Profile PnL $${Math.round(data.profitFactorStats.headlineRealizedPnl).toLocaleString()} (API v2)`
                 : undefined
             }
             valueClass={
@@ -757,15 +792,34 @@ export default function WhaleProfile({
           />
         </div>
 
-        {categories.length > 0 ? (
+        <div className="mb-6 rounded-2xl border border-pulse-border bg-pulse-surface/50 px-4 py-3">
+          <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-pulse-label">
+            Profit factor (closed positions)
+          </p>
+          <WalletProfitFactorStatsBlock
+            stats={data?.profitFactorStats ?? null}
+            categoryFilter="all"
+          />
+          {data?.profitFactorStats?.byCategoryLabel[0] ? (
+            <p className="mt-2 text-[11px] text-pulse-muted">
+              Top category:{" "}
+              {data.profitFactorStats.byCategoryLabel[0].categoryLabel} · PF{" "}
+              {formatProfitFactorValue(
+                data.profitFactorStats.byCategoryLabel[0].profitFactor
+              )}{" "}
+              · {data.profitFactorStats.byCategoryLabel[0].positionCount}{" "}
+              positions
+            </p>
+          ) : null}
+        </div>
+
+        {pfStatsVerified && categories.length > 0 ? (
           <section className="mb-6 space-y-3">
-            {categories.map((cat) => (
-              <CategoryCard
-                key={cat.category}
-                stat={cat}
-                showClv={showClv}
-                avgClv={avgClv}
-              />
+            <p className="text-[10px] font-bold uppercase tracking-wide text-pulse-label">
+              Category performance (verified closed positions)
+            </p>
+            {categories.map((slice) => (
+              <PfCategoryCard key={slice.categoryLabel} slice={slice} />
             ))}
           </section>
         ) : null}

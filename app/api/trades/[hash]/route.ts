@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { publicApiErrorMessage } from "@/lib/apiError";
-import { fetchTrades } from "@/lib/polymarket";
 import { enrichTradesWithWhaleAlias } from "@/lib/trades/getTrades";
-import { findRelatedTrades, findTradeByHash } from "@/lib/whaleProfile";
+import { resolvePolymarketTradeDetail } from "@/lib/trades/resolveTradeByHash";
 
 export const dynamic = "force-dynamic";
-export const revalidate = 0;
+
+const CACHE_CONTROL = "private, max-age=60, stale-while-revalidate=120";
 
 export async function GET(
   _request: Request,
@@ -17,16 +17,17 @@ export async function GET(
   }
 
   try {
-    const trades = await fetchTrades();
-    const trade = findTradeByHash(trades, hash);
+    const { trade, relatedTrades } = await resolvePolymarketTradeDetail(hash);
 
     if (!trade) {
-      return NextResponse.json({ trade: null }, { status: 404 });
+      return NextResponse.json(
+        { trade: null },
+        { status: 404, headers: { "Cache-Control": CACHE_CONTROL } }
+      );
     }
 
-    const related = findRelatedTrades(trades, trade);
     const enriched = await enrichTradesWithWhaleAlias(
-      [trade, ...related].map((row) => ({
+      [trade, ...relatedTrades].map((row) => ({
         ...row,
         source: "polymarket" as const,
         proxyWallet: row.proxyWallet ?? undefined,
@@ -41,8 +42,7 @@ export async function GET(
       },
       {
         headers: {
-          "Cache-Control": "no-store, no-cache, must-revalidate",
-          Pragma: "no-cache",
+          "Cache-Control": CACHE_CONTROL,
         },
       }
     );

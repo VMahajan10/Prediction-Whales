@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { CategoryStats, ClvStats, TrackRecord, TraderIntelligence } from "@/lib/polymarket";
+import type { WalletProfitFactorStats } from "@/lib/walletProfitFactor";
 import { repairTrackRecord } from "@/lib/polymarket";
 import type { CrossMarketEvStats } from "@/lib/crossMarketEvStats";
 import {
@@ -28,6 +29,7 @@ export interface WhaleTrackRecordResponse {
   openPositions?: TraderOpenPosition[];
   closedPositionsFetched?: number;
   closedPositionsApiLimit?: number;
+  profitFactorStats?: WalletProfitFactorStats | null;
   resolved: boolean;
   cached?: boolean;
   error?: string;

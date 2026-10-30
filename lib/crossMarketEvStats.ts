@@ -8,6 +8,60 @@ import {
 } from "@/lib/crossMarketEv";
 import { resolveCrossMarketEvForTrade } from "@/lib/resolveTradeCrossMarketEv";
 
+/** The book index is market-wide (Kalshi + PM moneylines + Manifold + books), not per wallet. */
+const BOOK_INDEX_TTL_MS = 2 * 60 * 1000;
+
+type BookIndexCache = {
+  key: string;
+  index: Map<string, OutcomeBooks>;
+  at: number;
+  inFlight: Promise<Map<string, OutcomeBooks>> | null;
+  inFlightKey: string | null;
+};
+
+function bookIndexCache(): BookIndexCache {
+  const g = globalThis as typeof globalThis & {
+    __crossMarketBookIndexCache?: BookIndexCache;
+  };
+  if (!g.__crossMarketBookIndexCache) {
+    g.__crossMarketBookIndexCache = {
+      key: "",
+      index: new Map(),
+      at: 0,
+      inFlight: null,
+      inFlightKey: null,
+    };
+  }
+  return g.__crossMarketBookIndexCache;
+}
+
+async function getSharedBookIndex(options: {
+  includeManifold: boolean;
+  includeSportsbook: boolean;
+}): Promise<Map<string, OutcomeBooks>> {
+  const key = `${options.includeManifold}:${options.includeSportsbook}`;
+  const cache = bookIndexCache();
+  if (cache.key === key && Date.now() - cache.at < BOOK_INDEX_TTL_MS) {
+    return cache.index;
+  }
+  if (cache.inFlight && cache.inFlightKey === key) return cache.inFlight;
+
+  const pending = buildCrossMarketBookIndex(options)
+    .then((index) => {
+      cache.key = key;
+      cache.index = index;
+      cache.at = Date.now();
+      return index;
+    })
+    .finally(() => {
+      cache.inFlight = null;
+      cache.inFlightKey = null;
+    });
+  cache.inFlight = pending;
+  cache.inFlightKey = key;
+  return pending;
+}
+
 export interface CrossMarketEvPositionResult {
   slug: string;
   title: string;
@@ -112,12 +166,17 @@ export async function computeCrossMarketEvStats(
   });
   const totalClosed = resolved.length;
 
+  const hasSportsPositions = [...resolved, ...openPositions].some((raw) =>
+    isSportsMoneylinePosition(raw as { slug?: string })
+  );
   const bookIndex =
     options?.index ??
-    (await buildCrossMarketBookIndex({
-      includeManifold: options?.includeManifold !== false,
-      includeSportsbook: options?.includeSportsbook !== false,
-    }));
+    (hasSportsPositions
+      ? await getSharedBookIndex({
+          includeManifold: options?.includeManifold !== false,
+          includeSportsbook: options?.includeSportsbook !== false,
+        })
+      : new Map<string, OutcomeBooks>());
   const positions: CrossMarketEvPositionResult[] = [];
 
   for (const raw of resolved) {

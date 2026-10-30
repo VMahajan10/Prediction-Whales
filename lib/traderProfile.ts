@@ -3,6 +3,7 @@ import {
   positionCostBasis,
   type CategoryStats,
 } from "@/lib/polymarket";
+import type { ProfitFactorPosition } from "@/lib/walletProfitFactor";
 import { buildPolymarketMarketUrl } from "@/lib/platformTradeUrls";
 
 /** Polymarket closed-positions API max per request. */
@@ -91,6 +92,16 @@ export function normalizeClosedPositions(
   }
 
   return rows.sort((a, b) => (b.resolvedAt ?? 0) - (a.resolvedAt ?? 0));
+}
+
+export function traderClosedPositionsForProfitFactor(
+  positions: TraderClosedPosition[]
+): ProfitFactorPosition[] {
+  return positions.map((p) => ({
+    realizedPnl: p.realizedPnl,
+    title: p.title,
+    excludedFromStats: p.excludedFromStats,
+  }));
 }
 
 /** Active open bet — excludes redeemable / fully settled rows still in /positions. */

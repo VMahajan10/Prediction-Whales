@@ -10,7 +10,11 @@ import {
   type ResolvedWhaleIdentity,
   type WhaleRegistryStats,
 } from "@/lib/whaleIdentityResolver";
-import { getWhaleAlias } from "@/lib/x-agent/getWhaleAlias";
+import { getPrisma, isPrismaEnabled } from "@/lib/prisma";
+import {
+  getWhaleAlias,
+  needsGeneratedWhalePseudonym,
+} from "@/lib/x-agent/getWhaleAlias";
 import { KALSHI_TRADER_ALIAS } from "@/lib/trades/whaleAliasConstants";
 
 export {
@@ -20,6 +24,71 @@ export {
 } from "@/lib/trades/whaleAliasConstants";
 
 const WHALE_ALIAS_CONCURRENCY = 8;
+/** Aliases are stable once persisted; skip the registry round-trip on repeat views. */
+const WHALE_ALIAS_CACHE_TTL_MS = 30 * 60 * 1000;
+
+function whaleAliasCache(): Map<string, { alias: string; at: number }> {
+  const g = globalThis as typeof globalThis & {
+    __whaleAliasCache?: Map<string, { alias: string; at: number }>;
+  };
+  if (!g.__whaleAliasCache) g.__whaleAliasCache = new Map();
+  return g.__whaleAliasCache;
+}
+
+/**
+ * One registry query for every uncached wallet. Wallets without a usable pseudonym get
+ * the deterministic generated alias immediately; persisting it happens off the request path.
+ */
+async function prefetchWhaleAliases(wallets: string[]): Promise<void> {
+  const cache = whaleAliasCache();
+  const now = Date.now();
+  const missing = wallets
+    .map((w) => normalizeResolvableWallet(w))
+    .filter((w): w is string => {
+      if (!w) return false;
+      const hit = cache.get(w);
+      return !hit || now - hit.at >= WHALE_ALIAS_CACHE_TTL_MS;
+    });
+  if (missing.length === 0 || !isPrismaEnabled()) return;
+  const prisma = getPrisma();
+  if (!prisma) return;
+
+  let rows: Array<{ walletAddress: string; pseudonym: string | null }>;
+  try {
+    rows = await prisma.whaleRegistry.findMany({
+      where: { walletAddress: { in: missing } },
+      select: { walletAddress: true, pseudonym: true },
+    });
+  } catch {
+    return;
+  }
+  const pseudonymByWallet = new Map(
+    rows.map((r) => [r.walletAddress.toLowerCase(), r.pseudonym])
+  );
+
+  for (const wallet of missing) {
+    const pseudonym = pseudonymByWallet.get(wallet);
+    if (pseudonym && !needsGeneratedWhalePseudonym(wallet, pseudonym)) {
+      cache.set(wallet, { alias: pseudonym.trim(), at: now });
+      continue;
+    }
+    cache.set(wallet, { alias: generateUniqueTraderName(wallet), at: now });
+    void getWhaleAlias(wallet)
+      .then((alias) => {
+        if (alias) cache.set(wallet, { alias, at: Date.now() });
+      })
+      .catch(() => undefined);
+  }
+}
+
+async function getWhaleAliasCached(wallet: string): Promise<string | null> {
+  const cache = whaleAliasCache();
+  const hit = cache.get(wallet);
+  if (hit && Date.now() - hit.at < WHALE_ALIAS_CACHE_TTL_MS) return hit.alias;
+  const alias = await getWhaleAlias(wallet);
+  if (alias) cache.set(wallet, { alias, at: Date.now() });
+  return alias;
+}
 
 export type TradeWhaleAliasSource = "polymarket" | "kalshi";
 
@@ -79,7 +148,7 @@ export async function resolveTradeWhaleAlias(
     });
   }
 
-  const alias = await getWhaleAlias(wallet);
+  const alias = await getWhaleAliasCached(wallet);
   return alias ?? generateUniqueTraderName(wallet);
 }
 
@@ -109,6 +178,7 @@ export async function enrichTradesWithWhaleAlias<T extends AliasEnrichableTrade>
     )
   );
 
+  await prefetchWhaleAliases(wallets);
   const aliasByWallet = new Map<string, string>();
   await mapWithConcurrency(wallets, WHALE_ALIAS_CONCURRENCY, async (wallet) => {
     aliasByWallet.set(wallet, await resolveTradeWhaleAlias(wallet, "polymarket"));

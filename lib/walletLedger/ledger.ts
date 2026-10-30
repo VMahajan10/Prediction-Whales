@@ -1,7 +1,10 @@
 import { SHARE_BALANCE_EPSILON } from "@/lib/walletLedger/constants";
 import { sortLedgerEventsCanonical } from "@/lib/walletLedger/eventOrder";
 import { GammaResolutionCache, isWinningAsset } from "@/lib/walletLedger/gamma";
-import { positionKey } from "@/lib/walletLedger/normalize";
+import {
+  canonicalConditionIdForEvents,
+  lifecycleAssetKey,
+} from "@/lib/walletLedger/normalize";
 import type {
   GammaMarketResolution,
   PositionLifecycle,
@@ -38,9 +41,30 @@ function applyEvent(state: TimelineState, event: WalletLedgerEvent): TimelineSta
       next.cashOutlay -= cash;
       next.redeemCash += cash;
       break;
-    case "MERGE":
-    case "SPLIT":
+    case "SPLIT": {
+      if (shares > 0) {
+        next.shares += shares;
+        if (cash > 0) {
+          next.cashOutlay += cash;
+          next.grossBuyCash += cash;
+        }
+      }
       break;
+    }
+    case "MERGE": {
+      if (shares > 0 && next.shares > SHARE_BALANCE_EPSILON) {
+        const merged = Math.min(shares, next.shares);
+        const costReleased =
+          next.cashOutlay * (merged / Math.max(next.shares, merged));
+        next.shares -= merged;
+        next.cashOutlay = Math.max(0, next.cashOutlay - costReleased);
+        if (cash > 0) {
+          next.grossSellCash += cash;
+          next.cashOutlay -= cash;
+        }
+      }
+      break;
+    }
     default:
       break;
   }
@@ -144,13 +168,16 @@ async function buildPositionLifecycleFromEvents(
   const fullyExited = isFullyExited(state.shares);
   const capitalAtRisk = computeCapitalAtRisk(state);
 
-  const resolution = conditionId
-    ? (gammaCache.get(conditionId) ??
-      (await gammaCache.resolve(conditionId, {
+  const resolutionKey = conditionId.startsWith("unresolved:asset:")
+    ? ""
+    : conditionId;
+  const resolution = resolutionKey
+    ? (gammaCache.get(resolutionKey) ??
+      (await gammaCache.resolve(resolutionKey, {
         slugs: slug ? [slug] : [],
         assets: asset ? [asset] : [],
       })))
-    : null;
+    : (await gammaCache.resolveByAsset(asset, { slugs: slug ? [slug] : [] }));
 
   let resolutionPayoutUsd = 0;
   let heldThroughResolution = false;
@@ -158,18 +185,22 @@ async function buildPositionLifecycleFromEvents(
   let completionReason: PositionLifecycle["completionReason"] = null;
 
   if (accountingStatus === "ok") {
-    if (fullyExited && state.grossBuyCash > 0) {
+    if (fullyExited && state.grossBuyCash > SHARE_BALANCE_EPSILON) {
       completed = true;
       completionReason = "fully_exited";
     } else if (
-      !fullyExited &&
-      state.shares > SHARE_BALANCE_EPSILON &&
-      resolution?.resolutionFinal
+      resolution?.resolutionFinal &&
+      state.grossBuyCash > SHARE_BALANCE_EPSILON
     ) {
-      heldThroughResolution = true;
-      resolutionPayoutUsd = settlementPayoutUsd(state, resolution, asset);
+      if (state.shares > SHARE_BALANCE_EPSILON) {
+        heldThroughResolution = true;
+        resolutionPayoutUsd = settlementPayoutUsd(state, resolution, asset);
+        completionReason = "held_through_resolution";
+      } else {
+        resolutionPayoutUsd = 0;
+        completionReason = "market_resolved";
+      }
       completed = true;
-      completionReason = "held_through_resolution";
     }
   }
 
@@ -186,13 +217,6 @@ async function buildPositionLifecycleFromEvents(
     excludedFromMetrics = true;
     exclusionReason = "invalid_capital_accounting";
     accountingStatus = "invalid_capital_accounting";
-  } else if (
-    heldThroughResolution &&
-    resolution &&
-    !resolution.resolutionFinal
-  ) {
-    excludedFromMetrics = true;
-    exclusionReason = "gamma_resolution_missing";
   } else if (completed) {
     realizedPnl = computeRealizedPnl(state, resolutionPayoutUsd);
     if (capitalAtRisk > 0) {
@@ -274,8 +298,9 @@ export async function buildPositionLifecycles(
 ): Promise<BuildPositionLifecyclesResult> {
   const grouped = new Map<string, WalletLedgerEvent[]>();
   for (const event of events) {
-    if (!event.conditionId && !event.asset) continue;
-    const key = positionKey(event);
+    const asset = event.asset?.trim();
+    if (!asset) continue;
+    const key = lifecycleAssetKey(asset);
     const list = grouped.get(key) ?? [];
     list.push(event);
     grouped.set(key, list);
@@ -284,9 +309,21 @@ export async function buildPositionLifecycles(
   const positions: PositionLifecycle[] = [];
   const sortedKeys = [...grouped.keys()].sort();
 
-  for (const key of sortedKeys) {
-    const positionEvents = grouped.get(key)!;
-    const [conditionId, asset] = key.split("::");
+  for (const asset of sortedKeys) {
+    const positionEvents = grouped.get(asset)!;
+    let conditionId = canonicalConditionIdForEvents(positionEvents);
+    if (!conditionId) {
+      const slugs = [
+        ...new Set(
+          positionEvents.map((e) => e.slug?.trim()).filter(Boolean) as string[]
+        ),
+      ];
+      const byAsset = await gammaCache.resolveByAsset(asset, { slugs });
+      conditionId = byAsset.conditionId?.trim() ?? "";
+    }
+    if (!conditionId) {
+      conditionId = `unresolved:asset:${asset}`;
+    }
     const episodes = splitEventsIntoEpisodes(positionEvents);
     for (let episodeIndex = 0; episodeIndex < episodes.length; episodeIndex += 1) {
       const sorted = sortLedgerEventsCanonical(episodes[episodeIndex]);
@@ -330,14 +367,16 @@ export function computePositionEconomics(
   let completed = false;
 
   if (accountingStatus === "ok") {
-    if (fullyExited && state.grossBuyCash > 0) {
+    if (fullyExited && state.grossBuyCash > SHARE_BALANCE_EPSILON) {
       completed = true;
     } else if (
-      !fullyExited &&
-      state.shares > SHARE_BALANCE_EPSILON &&
-      resolution?.resolutionFinal
+      resolution?.resolutionFinal &&
+      state.grossBuyCash > SHARE_BALANCE_EPSILON
     ) {
-      resolutionPayoutUsd = settlementPayoutUsd(state, resolution, asset);
+      resolutionPayoutUsd =
+        state.shares > SHARE_BALANCE_EPSILON
+          ? settlementPayoutUsd(state, resolution, asset)
+          : 0;
       completed = true;
     }
   }

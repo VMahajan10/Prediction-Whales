@@ -7,7 +7,9 @@ import { withDbQueryTimeout } from "@/lib/walletLedger/indexed/store/dbQueryTime
 import { assertPersistenceNotAborted } from "@/lib/walletLedger/indexed/store/persistenceAbort";
 import type { WalletLedgerEvent } from "@/lib/walletLedger/types";
 
-const METADATA_ENRICH_CHUNK_SIZE = 250;
+const METADATA_ENRICH_CHUNK_SIZE = 500;
+/** Batched UPDATE … FROM (VALUES …) row count per statement. */
+export const METADATA_PATCH_BATCH_SIZE = 1_500;
 
 export type MetadataEnrichmentField =
   | "logIndex"
@@ -242,8 +244,10 @@ async function applyLogIndexPatchBatch(
   patches: PlannedMetadataPatch[]
 ): Promise<number> {
   if (patches.length === 0) return 0;
+  let patched = 0;
+  for (const chunk of chunkItems(patches, METADATA_PATCH_BATCH_SIZE)) {
   const db = getDb();
-  const valueTuples = patches.map(
+    const valueTuples = chunk.map(
     (patch) => sql`(${patch.dedupeKey}, ${patch.patch.logIndex!})`
   );
   const rows = await withDbCircuit("patchPersistedEventLogIndexBatch", () =>
@@ -267,7 +271,9 @@ async function applyLogIndexPatchBatch(
       )
     )
   );
-  return Array.isArray(rows) ? rows.length : rows.rows?.length ?? 0;
+    patched += Array.isArray(rows) ? rows.length : rows.rows?.length ?? 0;
+  }
+  return patched;
 }
 
 async function applyTimestampPatchBatch(
@@ -275,8 +281,10 @@ async function applyTimestampPatchBatch(
   patches: PlannedMetadataPatch[]
 ): Promise<number> {
   if (patches.length === 0) return 0;
+  let patched = 0;
+  for (const chunk of chunkItems(patches, METADATA_PATCH_BATCH_SIZE)) {
   const db = getDb();
-  const valueTuples = patches.map(
+    const valueTuples = chunk.map(
     (patch) =>
       sql`(${patch.dedupeKey}::text, ${patch.patch.blockTimestamp!}::bigint)`
   );
@@ -301,7 +309,9 @@ async function applyTimestampPatchBatch(
       )
     )
   );
-  return Array.isArray(rows) ? rows.length : rows.rows?.length ?? 0;
+    patched += Array.isArray(rows) ? rows.length : rows.rows?.length ?? 0;
+  }
+  return patched;
 }
 
 async function applyBlockNumberPatchBatch(
@@ -309,8 +319,10 @@ async function applyBlockNumberPatchBatch(
   patches: PlannedMetadataPatch[]
 ): Promise<number> {
   if (patches.length === 0) return 0;
+  let patched = 0;
+  for (const chunk of chunkItems(patches, METADATA_PATCH_BATCH_SIZE)) {
   const db = getDb();
-  const valueTuples = patches.map(
+    const valueTuples = chunk.map(
     (patch) =>
       sql`(${patch.dedupeKey}::text, ${patch.patch.blockNumber!}::bigint)`
   );
@@ -335,7 +347,39 @@ async function applyBlockNumberPatchBatch(
       )
     )
   );
-  return Array.isArray(rows) ? rows.length : rows.rows?.length ?? 0;
+    patched += Array.isArray(rows) ? rows.length : rows.rows?.length ?? 0;
+  }
+  return patched;
+}
+
+/**
+ * Idempotent timestamp backfill keyed by (wallet_address, dedupe_key).
+ * Safe to rerun after a partial persist — only rows with NULL block_timestamp update.
+ */
+export async function patchPersistedEventTimestampsFromEvents(
+  wallet: string,
+  events: WalletLedgerEvent[],
+  options: { abortSignal?: AbortSignal } = {}
+): Promise<number> {
+  const walletAddress = normalizeWalletAddress(wallet);
+  const byKey = new Map<string, number>();
+  for (const event of events) {
+    if (!event.dedupeKey?.trim()) continue;
+    if (!event.timestamp || event.timestamp <= 0) continue;
+    byKey.set(event.dedupeKey, event.timestamp);
+  }
+  const patches: PlannedMetadataPatch[] = [...byKey.entries()].map(
+    ([dedupeKey, blockTimestamp]) => ({
+      dedupeKey,
+      patch: { blockTimestamp },
+    })
+  );
+  let patched = 0;
+  for (const chunk of chunkItems(patches, METADATA_PATCH_BATCH_SIZE)) {
+    assertPersistenceNotAborted(options.abortSignal, "timestamp-patch");
+    patched += await applyTimestampPatchBatch(walletAddress, chunk);
+  }
+  return patched;
 }
 
 async function applyMixedMetadataPatch(

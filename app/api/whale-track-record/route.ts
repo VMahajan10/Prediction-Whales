@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { publicApiErrorMessage } from "@/lib/apiError";
+import { buildWhaleTrackRecordWithPf } from "@/lib/buildWhaleTrackRecordWithPf";
+import { resolveWalletProfitFactorStats } from "@/lib/polymarketDataApi/profitFactorService";
 import {
-  buildWhaleTrackRecord,
   needsTrackRecordRecompute,
   repairTrackRecord,
   resolveWalletByTradeHash,
@@ -64,6 +65,9 @@ export async function GET(request: Request) {
     const cached = await getCachedTrackRecord(wallet);
     if (cached && !needsTrackRecordRecompute(cached.trackRecord)) {
       const trackRecord = repairTrackRecord(cached.trackRecord);
+      const profitFactorStats =
+        cached.profitFactorStats ??
+        (await resolveWalletProfitFactorStats(wallet, { forceSync: false }));
       const traderIntelligence =
         resolveTraderIntelligence(
           cached.clvStats ?? null,
@@ -86,13 +90,14 @@ export async function GET(request: Request) {
           cached.closedPositionsFetched ?? cached.closedPositions?.length ?? 0,
         closedPositionsApiLimit:
           cached.closedPositionsApiLimit ?? CLOSED_POSITIONS_API_LIMIT,
+        profitFactorStats,
         resolved: true,
         cached: true,
         cacheEnabled: isTrackRecordCacheEnabled(),
       });
     }
 
-    const result = await buildWhaleTrackRecord(wallet);
+    const result = await buildWhaleTrackRecordWithPf(wallet);
     const trackRecord = result.trackRecord
       ? repairTrackRecord(result.trackRecord)
       : null;
@@ -108,7 +113,8 @@ export async function GET(request: Request) {
         result.closedPositions,
         result.openPositions,
         result.closedPositionsFetched,
-        result.closedPositionsApiLimit
+        result.closedPositionsApiLimit,
+        result.profitFactorStats
       );
     }
 

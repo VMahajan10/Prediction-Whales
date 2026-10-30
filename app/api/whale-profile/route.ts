@@ -3,9 +3,9 @@ import { publicApiErrorMessage } from "@/lib/apiError";
 import { getAppBaseUrl } from "@/lib/appBaseUrl";
 import {
   fetchMarkets,
-  fetchTrades,
   type MarketSummary,
 } from "@/lib/polymarket";
+import { fetchTradesCached } from "@/lib/trades/fetchTradesServer";
 import {
   buildMarketContext,
   findMarketForTrade,
@@ -43,7 +43,7 @@ export async function GET(request: Request) {
     }
 
     const [trades, pmMarkets, kalshiMarkets] = await Promise.all([
-      fetchTrades(),
+      fetchTradesCached(),
       fetchMarkets().catch(() => []),
       fetchKalshiMarkets(),
     ]);

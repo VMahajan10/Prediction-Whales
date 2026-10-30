@@ -818,7 +818,7 @@ export async function buildWhaleTrackRecord(
     crossMarketEvStats,
     trackRecord
   );
-
+  const normalizedClosed = normalizeClosedPositions(eligible, slugToCategory);
   return {
     wallet,
     trackRecord,
@@ -828,7 +828,7 @@ export async function buildWhaleTrackRecord(
     clvStats,
     crossMarketEvStats,
     traderIntelligence,
-    closedPositions: normalizeClosedPositions(eligible, slugToCategory),
+    closedPositions: normalizedClosed,
     openPositions: normalizeOpenPositions(openPositions),
     closedPositionsFetched: closedPositions.length,
     closedPositionsApiLimit: CLOSED_POSITIONS_API_LIMIT,
@@ -888,7 +888,7 @@ export async function fetchMarketBySlug(
   }
 }
 
-export async function fetchTrades(): Promise<TradeSummary[]> {
+export async function fetchTradesFromDataApi(): Promise<TradeSummary[]> {
   const url = `${DATA_API_BASE}/trades?limit=${POLYMARKET_TRADES_POLL_LIMIT}`;
   const res = await polymarketFetch(url, { next: { revalidate: 0 } });
 
@@ -902,6 +902,10 @@ export async function fetchTrades(): Promise<TradeSummary[]> {
   }
 
   return (data as DataTrade[]).map((trade, i) => normalizeTrade(trade, i));
+}
+
+export async function fetchTrades(): Promise<TradeSummary[]> {
+  return fetchTradesFromDataApi();
 }
 
 export async function fetchWhaleBackfill(): Promise<TradeSummary[]> {

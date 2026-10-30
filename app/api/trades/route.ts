@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { publicApiErrorMessage } from "@/lib/apiError";
-import { fetchTrades } from "@/lib/polymarket";
+import { fetchTradesCached } from "@/lib/trades/fetchTradesServer";
 import { filterQualifiedPolymarketFeedTrades } from "@/lib/feedQualificationServer";
 import { enrichTradesWithWhaleAlias } from "@/lib/trades/getTrades";
 
@@ -9,7 +9,7 @@ export const revalidate = 0;
 
 export async function GET() {
   try {
-    const trades = (await fetchTrades())
+    const trades = (await fetchTradesCached())
       .sort((a, b) => b.timestamp - a.timestamp)
       .slice(0, 20);
 

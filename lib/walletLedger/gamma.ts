@@ -286,6 +286,31 @@ export class GammaResolutionCache {
     return this.frozen;
   }
 
+  async resolveByAsset(
+    asset: string,
+    hint?: { slugs?: string[] }
+  ): Promise<GammaMarketResolution> {
+    const token = asset.trim();
+    if (!token) return classifyGammaMarketRow(null, "", "missing");
+    for (const [, resolution] of this.cache.entries()) {
+      if (resolution.clobTokenIds?.includes(token)) {
+        return resolution;
+      }
+    }
+    if (this.frozen) {
+      return classifyGammaMarketRow(null, token, "missing");
+    }
+    const resolution = await resolveOneMarket({
+      conditionId: "",
+      slugs: hint?.slugs ?? [],
+      assets: [token],
+    });
+    if (resolution.conditionId) {
+      this.cache.set(normalizeConditionId(resolution.conditionId), resolution);
+    }
+    return resolution;
+  }
+
   async resolve(
     conditionId: string,
     hint?: Partial<MarketResolveHint>
@@ -435,7 +460,13 @@ export function buildMarketResolveHints(
     string,
     { conditionId: string; slugs: Set<string>; assets: Set<string> }
   >();
+  const assetOnly = new Map<string, { slugs: Set<string> }>();
   for (const event of events) {
+    const asset = event.asset?.trim();
+    if (asset) {
+      if (!assetOnly.has(asset)) assetOnly.set(asset, { slugs: new Set() });
+      if (event.slug?.trim()) assetOnly.get(asset)!.slugs.add(event.slug.trim());
+    }
     const conditionId = event.conditionId?.trim();
     if (!conditionId) continue;
     const key = normalizeConditionId(conditionId);
@@ -446,11 +477,24 @@ export function buildMarketResolveHints(
     if (event.slug?.trim()) entry.slugs.add(event.slug.trim());
     if (event.asset?.trim()) entry.assets.add(event.asset.trim());
   }
-  return [...map.values()].map((value) => ({
+  const hints = [...map.values()].map((value) => ({
     conditionId: value.conditionId,
     slugs: [...value.slugs],
     assets: [...value.assets],
   }));
+  const assetsWithCondition = new Set<string>();
+  for (const value of map.values()) {
+    for (const asset of value.assets) assetsWithCondition.add(asset);
+  }
+  for (const [asset, meta] of assetOnly) {
+    if (assetsWithCondition.has(asset)) continue;
+    hints.push({
+      conditionId: asset,
+      slugs: [...meta.slugs],
+      assets: [asset],
+    });
+  }
+  return hints;
 }
 
 export function isWinningAsset(

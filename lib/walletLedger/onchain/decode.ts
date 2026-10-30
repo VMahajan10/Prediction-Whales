@@ -1,7 +1,10 @@
 import {
   CONDITIONAL_TOKENS_ADDRESS,
+  NEG_RISK_ADAPTER_ADDRESS,
   ORDER_FILLED_TOPICS,
   TOPIC_CONDITION_RESOLUTION,
+  TOPIC_NEG_RISK_ADAPTER_POSITION_SPLIT,
+  TOPIC_NEG_RISK_ADAPTER_POSITIONS_MERGE,
   TOPIC_ERC1155_TRANSFER_SINGLE,
   TOPIC_ORDER_FILLED_V1,
   TOPIC_ORDER_FILLED_NEG_RISK,
@@ -179,6 +182,50 @@ export function decodePositionsMerge(log: RpcLog): ParsedPositionsMerge | null {
   };
 }
 
+function decodeNegRiskAdapterPositionSplit(
+  log: RpcLog
+): ParsedPositionSplit | null {
+  if (log.topics[0]?.toLowerCase() !== TOPIC_NEG_RISK_ADAPTER_POSITION_SPLIT) {
+    return null;
+  }
+  if (log.address.toLowerCase() !== NEG_RISK_ADAPTER_ADDRESS) return null;
+  const stakeholder = topicToAddress(log.topics[1]);
+  const conditionId = log.topics[2];
+  if (!stakeholder || !conditionId) return null;
+  return {
+    stakeholder,
+    collateralToken: "",
+    parentCollectionId: "",
+    conditionId: conditionId.toLowerCase(),
+    amount: readUint256(log.data, 0),
+    blockNumber: parseBlockNumber(log.blockNumber),
+    transactionHash: log.transactionHash.toLowerCase(),
+    logIndex: Number.parseInt(log.logIndex, 16),
+  };
+}
+
+function decodeNegRiskAdapterPositionsMerge(
+  log: RpcLog
+): ParsedPositionsMerge | null {
+  if (log.topics[0]?.toLowerCase() !== TOPIC_NEG_RISK_ADAPTER_POSITIONS_MERGE) {
+    return null;
+  }
+  if (log.address.toLowerCase() !== NEG_RISK_ADAPTER_ADDRESS) return null;
+  const stakeholder = topicToAddress(log.topics[1]);
+  const conditionId = log.topics[2];
+  if (!stakeholder || !conditionId) return null;
+  return {
+    stakeholder,
+    collateralToken: "",
+    parentCollectionId: "",
+    conditionId: conditionId.toLowerCase(),
+    amount: readUint256(log.data, 0),
+    blockNumber: parseBlockNumber(log.blockNumber),
+    transactionHash: log.transactionHash.toLowerCase(),
+    logIndex: Number.parseInt(log.logIndex, 16),
+  };
+}
+
 export function decodePayoutRedemption(
   log: RpcLog
 ): ParsedPayoutRedemption | null {
@@ -211,9 +258,11 @@ export function decodeLog(log: RpcLog): ParsedOnChainEvent {
   if (transfer) return { type: "erc1155_transfer", event: transfer };
   const resolution = decodeConditionResolution(log);
   if (resolution) return { type: "condition_resolution", event: resolution };
-  const split = decodePositionSplit(log);
+  const split =
+    decodePositionSplit(log) ?? decodeNegRiskAdapterPositionSplit(log);
   if (split) return { type: "position_split", event: split };
-  const merge = decodePositionsMerge(log);
+  const merge =
+    decodePositionsMerge(log) ?? decodeNegRiskAdapterPositionsMerge(log);
   if (merge) return { type: "positions_merge", event: merge };
   const redeem = decodePayoutRedemption(log);
   if (redeem) return { type: "payout_redemption", event: redeem };
